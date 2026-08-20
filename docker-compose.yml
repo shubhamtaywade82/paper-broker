@@ -1,0 +1,18 @@
+services:
+  paper-broker:
+    build: .
+    image: paper-broker:latest
+    container_name: paper-broker
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DB_FILE=/app/data/paper.sqlite3
+      - EVENT_LOG_FILE=/app/data/events.jsonl
+      - SNAPSHOT_DIR=/app/data/snapshots
+      - ANALYTICS_DIR=/app/data/analytics

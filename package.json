@@ -1,0 +1,48 @@
+{
+  "name": "paper-broker",
+  "version": "1.0.0",
+  "description": "Crypto futures paper trading engine with Binance market data",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:init": "tsx scripts/init-db.ts",
+    "cli": "node dist/cli.js",
+    "paper:trade": "tsx src/cli.ts trade",
+    "paper:monitor": "tsx src/cli.ts monitor",
+    "paper:backtest": "tsx src/cli.ts backtest",
+    "docker:build": "docker build -t paper-broker .",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
+  },
+  "dependencies": {
+    "@nemesis-oss/binance-sdk": "^1.0.0",
+    "@nemesis-oss/ollama-sdk": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "dayjs": "^1.11.0",
+    "decimal.js": "^10.4.3",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.0",
+    "node-cron": "^3.0.3",
+    "pino": "^9.0.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "eslint": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "prettier": "^3.2.5",
+    "tsx": "^4.10.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^2.0.0"
+  }
+}
