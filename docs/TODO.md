@@ -17,21 +17,15 @@
 
 ## 🔴 High Priority
 
-### TODO-1: Investigate transient 11-open-orders
-**Observation:** During SOLUSDT run, `openOrdersCount` showed 11 once while grid ladder is 10 orders. Current state and DB show exactly 10 open orders; likely a transient NEW/PARTIALLY_FILLED moment during a fill read, or grid re-arm overlap.
-- [ ] Read `grid-15m.ts` fully — understand re-arm logic and when it cancels vs places.
-- [ ] Check `getOpenOrders()` counting: counts `NEW || PARTIALLY_FILLED`.
-- [ ] Reproduce by running engine + spamming `/account` while grid places/cancels.
-- [ ] Fix if it's a real bug (double-count or missed cancel).
+### TODO-1: Investigate transient 11-open-orders ✅ DONE
+**Resolution:** Transient race between MARKET order reception and instant fill. `getOpenOrders()` counts `NEW || PARTIALLY_FILLED`; a MARKET order can be briefly visible before atomic fill. Not reproducible, no double-count bug found. Current state and DB consistently show 10 grid orders.
 
-### TODO-2: Ported strategies only trade one hardcoded symbol
-**Affected:** `momentum-5m.ts`, `grid-15m.ts`, `mean-reversion-5m.ts`
-- Each filters `if (candle.symbol !== targetSymbol) return null` with hardcoded default (`SOLUSDT`, `SOLUSDT`, `ETHUSDT`).
-- Engine passes `symbols` (from `SYMBOLS` env) to each factory, but the filter ignores it.
-- **Fix:** Make each strategy iterate over `options.symbols` (or the strategy's `symbols` field) and emit signals for any matching candle.
-  - `momentum`: track last-premium per symbol, emit OPEN/CLOSE per symbol.
-  - `grid`: per-symbol ladder state; place 10 orders per active symbol (respect `maxOpenOrders` risk limit).
-  - `mean-reversion`: per-symbol Bollinger band state, emit per symbol.
+### TODO-2: Ported strategies only trade one hardcoded symbol ✅ DONE
+**Fixed:** `momentum-5m.ts`, `grid-15m.ts`, `mean-reversion-5m.ts` now iterate over `options.symbols` (passed from engine via `SYMBOLS` env). Each strategy maintains per-symbol state:
+- `momentum`: per-symbol cooldown + premium tracking, emits OPEN/CLOSE per symbol.
+- `grid`: per-symbol ladder state in `Map`, re-arms on fills/cancellations/price drift.
+- `mean-reversion`: per-symbol cooldown + Bollinger band calculation.
+**Verified:** Build clean, lint 0 errors, 50/50 tests pass.
 
 ### TODO-9: Initial git commit
 **Status:** Repo is `git init` + `.gitignore` ready, but **uncommitted** (per policy — needs explicit user approval).
@@ -42,11 +36,11 @@
 
 ## 🟡 Medium Priority
 
-### TODO-3: Grid ladder never re-arms after fills/cancellations
-**Current:** Grid places ladder once on 15m candle close when flat. If orders fill or get canceled, it does **not** re-place.
-- [ ] Read `grid-15m.ts` fully — find re-arm trigger condition.
-- [ ] Implement per-symbol ladder maintenance: on each 15m close, check open orders for that symbol; if fewer than expected levels, re-place the missing side.
-- [ ] Track `placed` state per symbol (not global).
+### TODO-3: Grid ladder never re-arms after fills/cancellations ✅ DONE
+**Fixed in `grid-15m.ts`:** Per-symbol `Map<string, GridSymbolState>` tracks `ordersPlaced` and `lastMidPrice`. On each 15m close:
+- Checks open grid orders for that symbol; if fewer than expected (`2 × gridLevels`), re-places missing.
+- Re-places if mid price moved > `gridSpacing` from `lastMidPrice`.
+- Uses `postOnly` LIMIT orders; respects risk limit via `maxOpenOrders` in broker.
 
 ### TODO-4: Real backtesting via `paper:backtest` CLI
 **Current:** CLI stub prints a message.
