@@ -331,4 +331,60 @@ describe('PaperBroker', () => {
       expect.objectContaining({ eventType: 'OPEN', qtyAfter: 0.1 })
     );
   });
+
+  it('records correct position qty before/after on fills', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 100,
+      ask: 100.1,
+      last: 100.05,
+      mark: 100,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    broker.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: 0.1,
+      leverage: 5,
+    });
+
+    const fill = broker.getFills()[0];
+    expect(fill?.positionQtyBefore).toBe(0);
+    expect(fill?.positionQtyAfter).toBeCloseTo(0.1, 10);
+    expect(fill?.positionEntryAfter).toBeCloseTo(100.12, 2);
+  });
+
+  it('accumulates per-position fees across fills', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 100,
+      ask: 100.1,
+      last: 100.05,
+      mark: 100,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    broker.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: 0.1,
+      leverage: 5,
+    });
+    broker.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: 0.1,
+      leverage: 5,
+    });
+
+    const fees = broker.getFills().reduce((sum, f) => sum + f.fee, 0);
+    expect(broker.getPosition('BTCUSDT')?.totalFees).toBeCloseTo(fees, 10);
+    expect(broker.getPosition('BTCUSDT')?.qty).toBeCloseTo(0.2, 10);
+  });
 });

@@ -123,6 +123,28 @@ describe('ported strategies', () => {
     expect(submitted.length).toBe(0);
   });
 
+  it('momentum closes a long when premium flips negative', async () => {
+    const { engine, submitted, setMarket } = setup([{ qty: 1 }]);
+    engine.register(createMomentumStrategy({ symbol: 'SOLUSDT', symbols: ['SOLUSDT'] }));
+    await engine.start();
+
+    setMarket({ ...market, last: 99.8, mark: 100.2 });
+    await engine.onCandleClose(candle);
+    expect(submitted.length).toBe(1);
+    expect(submitted[0]?.action).toBe('CLOSE_LONG');
+  });
+
+  it('momentum closes a short when premium flips positive', async () => {
+    const { engine, submitted, setMarket } = setup([{ qty: -1 }]);
+    engine.register(createMomentumStrategy({ symbol: 'SOLUSDT', symbols: ['SOLUSDT'] }));
+    await engine.start();
+
+    setMarket({ ...market, last: 100.6, mark: 100.2 });
+    await engine.onCandleClose(candle);
+    expect(submitted.length).toBe(1);
+    expect(submitted[0]?.action).toBe('CLOSE_SHORT');
+  });
+
   it('grid places a limit order ladder once', async () => {
     const { engine, directOrders } = setup();
     engine.register(createGridStrategy({ symbol: 'SOLUSDT', symbols: ['SOLUSDT'] }));

@@ -435,6 +435,10 @@ export class PaperBroker {
     this.walletBalance = D(this.walletBalance).sub(fee).toNumber();
     this.totalFees = D(this.totalFees).add(fee).toNumber();
 
+    const position = this.positions.get(order.symbol);
+    const qtyBefore = position?.qty ?? 0;
+    const entryBefore = position?.entryPrice;
+
     const realizedPnl = this.applyPositionFill(
       order.symbol,
       order.side,
@@ -443,6 +447,12 @@ export class PaperBroker {
       order.leverage,
       nowIso
     );
+
+    const positionAfter = this.positions.get(order.symbol);
+    if (positionAfter) {
+      positionAfter.totalFees = D(positionAfter.totalFees).add(fee).toNumber();
+      this.persister?.savePosition(positionAfter);
+    }
 
     this.walletBalance = D(this.walletBalance).add(realizedPnl).toNumber();
     this.totalRealizedPnl = D(this.totalRealizedPnl).add(realizedPnl).toNumber();
@@ -458,7 +468,6 @@ export class PaperBroker {
             .toNumber();
 
     const market = this.getMarket(order.symbol);
-    const position = this.positions.get(order.symbol);
 
     const fill: Fill = {
       id: ulid(),
@@ -475,10 +484,10 @@ export class PaperBroker {
       feeAsset: 'USDT',
       liquidity,
       realizedPnl,
-      positionQtyBefore: position?.qty ?? 0,
-      positionQtyAfter: (position?.qty ?? 0) + (order.side === 'BUY' ? quantity : -quantity),
-      positionEntryBefore: position?.entryPrice,
-      positionEntryAfter: position?.entryPrice,
+      positionQtyBefore: qtyBefore,
+      positionQtyAfter: positionAfter?.qty ?? qtyBefore,
+      positionEntryBefore: entryBefore,
+      positionEntryAfter: positionAfter?.entryPrice,
       marketBid: market?.bid,
       marketAsk: market?.ask,
       marketLast: market?.last,
