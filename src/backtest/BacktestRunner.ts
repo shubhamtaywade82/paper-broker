@@ -226,18 +226,21 @@ export class BacktestRunner {
   private candleCache = new Map<string, Candle[]>();
 
   private async loadKlines(symbol: string): Promise<void> {
+    const startIso = new Date(this.config.startTime).toISOString();
+    const endIso = new Date(this.config.endTime).toISOString();
+
     const rows = this.db.raw.prepare(`
       SELECT symbol, open_time_utc, open, high, low, close, volume
       FROM klines_1m
       WHERE symbol = ? AND open_time_utc >= ? AND open_time_utc <= ?
       ORDER BY open_time_utc ASC
-    `).all(symbol, this.config.startTime, this.config.endTime);
+    `).all(symbol, startIso, endIso);
 
-    for (const row of rows as Array<{ symbol: string; open_time_utc: number; open: string; high: string; low: string; close: string; volume: string }>) {
+    for (const row of rows as Array<{ symbol: string; open_time_utc: string; open: string; high: string; low: string; close: string; volume: string }>) {
       const candle: Candle = {
         symbol: row.symbol,
         interval: '1m',
-        openTime: row.open_time_utc,
+        openTime: new Date(row.open_time_utc).getTime(),
         open: Number(row.open),
         high: Number(row.high),
         low: Number(row.low),
@@ -279,7 +282,7 @@ export class BacktestRunner {
     let currentCandle: Candle | null = null;
 
     for (const c of srcSeries) {
-      const bucketStart = Math.floor(c.openTime / dstMs) * dstMs;
+      const bucketStart = Math.floor(new Date(c.openTime).getTime() / dstMs) * dstMs;
 
       if (!currentCandle || currentCandle.openTime !== bucketStart) {
         if (currentCandle) {

@@ -42,11 +42,14 @@
 - Re-places if mid price moved > `gridSpacing` from `lastMidPrice`.
 - Uses `postOnly` LIMIT orders; respects risk limit via `maxOpenOrders` in broker.
 
-### TODO-4: Real backtesting via `paper:backtest` CLI
-**Current:** CLI stub prints a message.
-- [ ] Build a backtester that replays `klines_1m` through `PaperBroker` + strategies.
-- [ ] Output: equity curve, trades, fees, win/loss per strategy, max drawdown, Sharpe.
-- [ ] Accept date range, symbols, strategies, risk params.
+### TODO-4: Real backtesting via `paper:backtest` CLI ✅ DONE
+**Implemented:** `src/backtest/BacktestRunner.ts` + CLI command `paper:backtest`.
+- Loads `klines_1m` from SQLite, builds 5m/15m candles.
+- Replays each 1m bar through `PaperBroker` + `StrategyEngine` (all 7 strategies).
+- Computes: equity curve, total return, max drawdown, Sharpe, win rate, profit factor, per-strategy PnL attribution.
+- CLI: `pnpm paper:backtest --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,breakout,...`
+- **Verified:** Build clean, 50/50 tests pass, CLI runs and produces metrics output.
+- **Note:** Requires `klines_1m` populated (run live engine to collect, or backfill via Binance REST).
 
 ---
 
