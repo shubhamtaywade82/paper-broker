@@ -17,18 +17,14 @@ export async function bootstrapFromBinance(
   const fundingRates = new Map<string, number>();
 
   const hasAuth = Boolean(env.BINANCE_API_KEY && env.BINANCE_API_SECRET);
-  if (!hasAuth) {
-    console.warn('[Bootstrap] No API keys configured, using default instruments and skipping authenticated data');
-    return { instruments, markPrices, fundingRates };
-  }
 
   for (const symbol of symbols) {
     try {
       const [exchangeInfo, markPrice, fundingInfo, leverageBracket] = await Promise.all([
-        client.futures.market.instrumentDetails(symbol),
-        client.futures.data.premiumIndex(symbol),
-        client.futures.data.fundingInfo(),
-        client.futures.account.leverageBrackets(),
+        client.futures.market.instrumentDetails(symbol).catch(() => null),
+        client.futures.data.premiumIndex(symbol).catch(() => null),
+        client.futures.data.fundingInfo().catch(() => null),
+        hasAuth ? client.futures.account.leverageBrackets().catch(() => null) : Promise.resolve(null),
       ]);
 
       if (!exchangeInfo) {

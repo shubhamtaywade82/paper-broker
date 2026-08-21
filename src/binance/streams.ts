@@ -12,6 +12,7 @@ export interface StreamHandlerOptions {
   symbols: string[];
   timeframes: string[];
   marketState: MarketStateManager;
+  onKlineTick?: (kline: NormalizedKline) => void;
   onKlineClose?: (kline: NormalizedKline) => void;
   onSystemEvent?: (type: string, payload: Record<string, unknown>) => void;
 }
@@ -111,8 +112,11 @@ export class BinanceStreamHandler {
         }
       } else if (streamName.includes('@kline')) {
         const normalized = normalizeKline(payload);
-        if (normalized && normalized.closed) {
-          this.options.onKlineClose?.(normalized);
+        if (normalized) {
+          this.options.onKlineTick?.(normalized);
+          if (normalized.closed) {
+            this.options.onKlineClose?.(normalized);
+          }
         }
       }
     } catch (error) {
