@@ -8,6 +8,7 @@ import type { EventLog } from '../persistence/EventLog.js';
 import type { RuntimeProfile } from '../config/modes/types.js';
 import type { MarketDataSupervisor } from '../market/supervisor/MarketDataSupervisor.js';
 import type { ErrorNormalizer } from '../notifications/error-pipeline/ErrorNormalizer.js';
+import type { KlineStore } from '../market/Klines.js';
 import type { WebSocket } from 'ws';
 import { DASHBOARD_HTML } from './dashboardHtml.js';
 import { WebSocketGateway } from './websocket/WebSocketGateway.js';
@@ -44,6 +45,7 @@ export interface ApiServerOptions {
   engine: StrategyEngine;
   signals: SignalRepository;
   events: EventLog;
+  klines?: KlineStore;
   profile?: RuntimeProfile;
   supervisor?: MarketDataSupervisor;
   errorNormalizer?: ErrorNormalizer;
@@ -58,6 +60,7 @@ export class ApiServer {
   private engine: StrategyEngine;
   private signals: SignalRepository;
   private events: EventLog;
+  private klines?: KlineStore;
   private profile?: RuntimeProfile;
   private supervisor?: MarketDataSupervisor;
   private errorNormalizer?: ErrorNormalizer;
@@ -71,6 +74,7 @@ export class ApiServer {
     this.engine = options.engine;
     this.signals = options.signals;
     this.events = options.events;
+    this.klines = options.klines;
     this.profile = options.profile;
     this.supervisor = options.supervisor;
     this.errorNormalizer = options.errorNormalizer;
@@ -131,6 +135,10 @@ export class ApiServer {
       return reply.type('text/html').send(DASHBOARD_HTML);
     });
 
+    this.app.get('/favicon.ico', async (_req, reply) => {
+      return reply.status(204).send();
+    });
+
     this.app.get('/api/v1/dashboard', async () => {
       const [account, positions, recentSignals] = await Promise.all([
         this.broker.getAccount(),
@@ -164,6 +172,14 @@ export class ApiServer {
     this.app.get('/api/v1/incidents', async () => ({
       incidents: this.errorNormalizer?.getRecentIncidents(50) ?? [],
     }));
+
+    this.app.get('/api/v1/klines', async (request) => {
+      const query = request.query as { symbol?: string; interval?: string; limit?: string };
+      const symbol = query.symbol || 'SOLUSDT';
+      const interval = query.interval || '15m';
+      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      return this.klines?.getCandles(symbol, interval, limit) ?? [];
+    });
   }
 
   private registerCommandRoutes(): void {

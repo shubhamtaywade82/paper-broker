@@ -179,10 +179,44 @@ export async function startEngine(): Promise<EngineHandle> {
 
   await strategyEngine.start();
 
+  const api = new ApiServer({
+    broker,
+    engine: strategyEngine,
+    signals: db.signals,
+    events,
+    klines,
+    profile: runtimeProfile,
+    host: '0.0.0.0',
+    port: env.PORT,
+  });
+
+  await api.start();
+
   const streams = new BinanceStreamHandler(client, {
     symbols,
     timeframes,
     marketState,
+    onKlineTick: (kline) => {
+      const candle = {
+        symbol: kline.symbol,
+        interval: kline.interval,
+        openTime: kline.openTime,
+        open: kline.open,
+        high: kline.high,
+        low: kline.low,
+        close: kline.close,
+        volume: kline.volume,
+      };
+      klines.upsertCandle(candle);
+      api.wsGateway.broadcast({
+        type: 'market.tick',
+        payload: {
+          symbol: kline.symbol,
+          price: kline.close,
+          candle,
+        },
+      });
+    },
     onKlineClose: (kline) => {
       const candle = {
         symbol: kline.symbol,
@@ -216,17 +250,6 @@ export async function startEngine(): Promise<EngineHandle> {
   });
 
   await streams.connect();
-
-  const api = new ApiServer({
-    broker,
-    engine: strategyEngine,
-    signals: db.signals,
-    events,
-    host: '0.0.0.0',
-    port: env.PORT,
-  });
-
-  await api.start();
 
   const scheduler = new Scheduler({
     broker,

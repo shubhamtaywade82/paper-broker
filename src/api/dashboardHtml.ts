@@ -4,8 +4,9 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nemesis Trading Desk</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -74,7 +75,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       <div class="text-gray-400 text-xs font-medium">DATA FEED</div>
       <div id="metric-provider" class="text-sm font-semibold mono mt-1.5 text-blue-400 flex items-center space-x-1.5">
         <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-        <span id="metric-provider-name">BINANCE (38ms)</span>
+        <span id="metric-provider-name">BINANCE</span>
       </div>
     </div>
     <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
@@ -96,9 +97,9 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           <div class="flex items-center space-x-3">
             <span class="font-bold text-white tracking-wide">SOL/USDT</span>
             <span class="text-xs px-2 py-0.5 rounded bg-dark-700 text-gray-300 mono">15m</span>
-            <span id="chart-ltp" class="mono font-bold text-emerald-400">$91.24</span>
+            <span id="chart-ltp" class="mono font-bold text-emerald-400">--</span>
           </div>
-          <div class="text-xs text-gray-400 mono">SMC Structure: <span class="text-blue-400 font-semibold">BULLISH CHoCH</span></div>
+          <div class="text-xs text-gray-400 mono">Market Feed: <span id="smc-structure" class="text-blue-400 font-semibold">BINANCE FUTURES</span></div>
         </div>
         <div id="chart-container" class="w-full h-80 rounded bg-dark-900 border border-dark-700/50"></div>
       </div>
@@ -182,14 +183,14 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
               <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
               <span>Binance Futures WS</span>
             </span>
-            <span id="binance-lat" class="text-emerald-400 font-semibold">38ms</span>
+            <span id="binance-lat" class="text-emerald-400 font-semibold">--</span>
           </div>
           <div class="flex items-center justify-between p-2 rounded bg-dark-900/60 border border-dark-700/40">
             <span class="flex items-center space-x-2">
               <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
               <span>CoinDCX Derivatives</span>
             </span>
-            <span id="coindcx-lat" class="text-emerald-400 font-semibold">42ms</span>
+            <span id="coindcx-lat" class="text-emerald-400 font-semibold">--</span>
           </div>
           <div class="flex items-center justify-between p-2 rounded bg-dark-900/60 border border-dark-700/40">
             <span class="flex items-center space-x-2">
@@ -263,33 +264,49 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     const wsUrl = protocol + '//' + window.location.host + '/ws';
     let socket;
 
-    function initChart() {
+    async function initChart() {
       const container = document.getElementById('chart-container');
       chart = LightweightCharts.createChart(container, {
         layout: { background: { color: '#0b0f19' }, textColor: '#9ca3af' },
         grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
         timeScale: { timeVisible: true, secondsVisible: false }
       });
-      candleSeries = chart.addCandlestickSeries({
+      const seriesOptions = {
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#10b981', wickDownColor: '#ef4444'
-      });
+      };
 
-      // Seed initial dummy candles
-      const nowSec = Math.floor(Date.now() / 1000) - 3600;
-      let base = 89.5;
-      const data = [];
-      for (let i = 0; i < 60; i++) {
-        const time = nowSec + i * 60;
-        const open = base;
-        const close = open + (Math.random() - 0.48) * 0.4;
-        const high = Math.max(open, close) + Math.random() * 0.2;
-        const low = Math.min(open, close) - Math.random() * 0.2;
-        base = close;
-        data.push({ time, open, high, low, close });
+      if (typeof chart.addCandlestickSeries === 'function') {
+        candleSeries = chart.addCandlestickSeries(seriesOptions);
+      } else if (typeof chart.addSeries === 'function' && window.LightweightCharts && window.LightweightCharts.CandlestickSeries) {
+        candleSeries = chart.addSeries(window.LightweightCharts.CandlestickSeries, seriesOptions);
       }
-      candleSeries.setData(data);
+
       window.addEventListener('resize', () => chart.resize(container.clientWidth, container.clientHeight));
+      await loadRealKlines('SOLUSDT', '15m');
+    }
+
+    async function loadRealKlines(symbol, interval) {
+      try {
+        const res = await fetch(\`/api/v1/klines?symbol=\${symbol}&interval=\${interval}&limit=100\`);
+        const klines = await res.json();
+        if (Array.isArray(klines) && klines.length > 0) {
+          const chartData = klines.map(k => ({
+            time: Math.floor(k.openTime / 1000),
+            open: Number(k.open),
+            high: Number(k.high),
+            low: Number(k.low),
+            close: Number(k.close)
+          }));
+          candleSeries.setData(chartData);
+          const last = chartData[chartData.length - 1];
+          if (last) {
+            document.getElementById('chart-ltp').innerText = '$' + last.close.toFixed(2);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load real klines:', err);
+      }
     }
 
     async function fetchDashboard() {
@@ -316,6 +333,18 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('metric-positions-count').innerText = data.positions?.length || 0;
       document.getElementById('positions-total').innerText = (data.positions?.length || 0) + ' open';
 
+      // Provider matrix
+      if (data.health) {
+        const active = data.health.activeProvider || 'BINANCE';
+        const binanceLat = data.health.binance?.latencyMs ?? 0;
+        const coindcxLat = data.health.coindcx?.latencyMs ?? 0;
+        document.getElementById('metric-provider-name').innerText = \`\${active} (\${active === 'BINANCE' ? binanceLat : coindcxLat}ms)\`;
+        const bEl = document.getElementById('binance-lat');
+        const cEl = document.getElementById('coindcx-lat');
+        if (bEl) bEl.innerText = \`\${binanceLat}ms\`;
+        if (cEl) cEl.innerText = \`\${coindcxLat}ms\`;
+      }
+
       // Render positions
       const tbody = document.getElementById('positions-tbody');
       if (data.positions && data.positions.length > 0) {
@@ -333,6 +362,24 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         \`).join('');
       } else {
         tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-500">No open positions</td></tr>';
+      }
+
+      // Render signals
+      if (data.signals && data.signals.length > 0) {
+        const sigList = document.getElementById('signals-list');
+        sigList.innerHTML = data.signals.map(s => \`
+          <div class="p-2.5 rounded bg-dark-900/60 border border-dark-700/40 flex items-center justify-between">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-white text-xs">\${s.symbol}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold \${s.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">\${s.action}</span>
+                <span class="text-gray-400 text-[10px]">\${s.strategyId}</span>
+              </div>
+              <div class="text-gray-400 text-[10px] mt-1">Score: \${s.score ?? 80}/100 • Conf: \${s.confidence}</div>
+            </div>
+            <span class="text-gray-500 text-[10px]">\${new Date(s.createdAtUtc || Date.now()).toLocaleTimeString()}</span>
+          </div>
+        \`).join('');
       }
 
       // Render incidents
@@ -372,9 +419,12 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
     function handleWsEvent(msg) {
       if (msg.type === 'market.tick' && msg.payload) {
-        document.getElementById('chart-ltp').innerText = '$' + Number(msg.payload.price).toFixed(2);
+        const p = Number(msg.payload.lastPrice || msg.payload.price || 0);
+        if (p > 0) {
+          document.getElementById('chart-ltp').innerText = '$' + p.toFixed(2);
+        }
       }
-      if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed') {
+      if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed' || msg.type === 'signal.created') {
         fetchDashboard();
       }
     }
@@ -423,9 +473,9 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
-    window.onload = () => {
-      initChart();
-      fetchDashboard();
+    window.onload = async () => {
+      await initChart();
+      await fetchDashboard();
       connectWs();
       setInterval(fetchDashboard, 5000);
     };

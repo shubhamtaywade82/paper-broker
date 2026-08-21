@@ -14,7 +14,7 @@ const EnvSchema = z.object({
     .optional()
     .transform((val) => val === 'true'),
 
-  BINANCE_ENV: z.enum(['testnet', 'production']).default('testnet'),
+  BINANCE_ENV: z.enum(['testnet', 'mainnet', 'production']).default('testnet'),
   BINANCE_API_KEY: z.string().optional(),
   BINANCE_API_SECRET: z.string().optional(),
 
