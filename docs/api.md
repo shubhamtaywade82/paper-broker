@@ -242,6 +242,95 @@ Cancel all orders and stop the engine. Emergency stop.
 
 ---
 
+## GET /api/v1/dashboard
+
+Consolidated operational snapshot for the dashboard (account, positions, recent signals, health, and incidents).
+
+```json
+{
+  "mode": "shadow",
+  "liveArmed": false,
+  "realOrders": false,
+  "account": { "walletBalance": 10000, "equity": 10000 },
+  "positions": [],
+  "signals": [],
+  "health": {
+    "uptimeMs": 45000,
+    "activeProvider": "BINANCE",
+    "binance": { "status": "HEALTHY", "latencyMs": 38, "stale": false },
+    "coindcx": { "status": "HEALTHY", "latencyMs": 42, "stale": false }
+  },
+  "incidents": []
+}
+```
+
+---
+
+## GET /api/v1/health/providers
+
+Provider connection and latency health matrix for Binance and CoinDCX.
+
+```json
+{
+  "activeProvider": "BINANCE",
+  "binance": { "status": "HEALTHY", "latencyMs": 38, "stale": false },
+  "coindcx": { "status": "HEALTHY", "latencyMs": 42, "stale": false }
+}
+```
+
+---
+
+## GET /api/v1/incidents
+
+Recent normalized incidents from the error pipeline with deduplicated occurrence counts.
+
+```json
+{
+  "incidents": [
+    {
+      "incidentId": "INC-20260821-X9A21",
+      "timestampUtc": "2026-08-21T07:12:00.000Z",
+      "severity": "WARNING",
+      "classification": "RECOVERABLE",
+      "component": "BinanceWs",
+      "message": "Stream reconnecting",
+      "occurrenceCount": 1
+    }
+  ]
+}
+```
+
+---
+
+## POST /api/v1/mode/arm
+
+Arm live trading mode (enables order routing to CoinDCX when `TRADING_MODE=live`).
+
+```json
+{ "passcode": "optional-token" }
+```
+
+```json
+{ "armed": true }
+```
+
+---
+
+## WebSocket Stream: `ws://localhost:8080/ws`
+
+Real-time push events for the dashboard:
+
+- `market.tick` — Price updates
+- `signal.created` — Strategy and LLM setup detections
+- `order.updated` — Order placement, fill, and cancellation updates
+- `position.updated` — Position PnL and breakeven state changes
+- `health.updated` — Provider status and failover events
+- `incident.reported` — Normalized error alerts
+- `mode.changed` — Mode and live arming state transitions
+- `kill_switch.activated` — Emergency kill-switch trigger
+
+---
+
 ## Errors
 
 | Code | Meaning |
@@ -249,4 +338,4 @@ Cancel all orders and stop the engine. Emergency stop.
 | `INVALID_ORDER` | Body failed schema validation (`400`) |
 | `ORDER_FAILED` | Broker threw during submission (`400`) |
 | `ORDER_NOT_FOUND` | Unknown order id on cancel (`404`) |
-| `INVALID_REQUEST` | Body failed schema validation for cancel (`400`) |
+| `INVALID_REQUEST` | Body failed schema validation (`400`) |

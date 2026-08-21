@@ -9,54 +9,21 @@ This file records confirmed limitations of the current implementation.
 
 ## Execution & Trading Modes
 
-### ❌ Shadow Mode Not Implemented
+### ✅ Paper, Shadow & Live Routing Implemented
+- `TRADING_MODE=paper|shadow|live` resolution implemented via `resolveRuntimeProfile`.
+- `CoinDCXBroker` implements `ExecutionBroker` using `@nemesis-oss/coindcx-sdk`.
+- `ExecutionRouter` routes between simulation and live venue with `LiveTradingGuard` arming validation (`LIVE_TRADING_ARMED=true`).
 
-Shadow mode (read-only exchange account state with simulated execution) is planned but not yet implemented.
+### ✅ Provider Failover & Divergence Guard Implemented
+- `MarketDataSupervisor`, `ProviderHealthManager`, and `DivergenceGuard` implemented.
+- Automatic failover from Binance to CoinDCX occurs only when fallback is healthy and price divergence is within threshold (default 50 bps).
 
-Current status:
-- `TRADING_MODE` only supports `paper` behavior
-- No exchange account state reconciliation
-- No read-only position tracking from live exchange
-
-Work required:
-- Exchange account query integration
-- Reconciliation logic
-- Shadow-specific event types
-- Mode profile configuration
-
-### ❌ Live Mode Not Implemented
-
-Live trading with real order execution is not connected.
-
-Current status:
-- PaperBroker is the only broker implementation
-- No CoinDCX or Binance execution integration
-- No live trading guard / arm state
-- No reconciliation after disconnect/timeout
+### ❌ Exchange Position Reconciliation (Live Mode Ongoing Reconnects)
+- Startup and periodic reconciliation with exchange balance/positions for automated multi-day recovery is planned.
 
 Work required:
-- Live broker implementation
-- Risk engine enhancements
-- LiveTradingGuard
-- Execution router
-- Reconciliation flow
-- Explicit arm state mechanism
-
-### ❌ Provider Failover Not Continuity-Safe
-
-Switching between Binance and fallback providers (future CoinDCX) is not safe during active trades.
-
-Current status:
-- Binance is the sole market data provider
-- No health monitoring with automatic failover
-- No price divergence validation
-- No candle continuity checks on switch
-
-Work required:
-- Provider health monitoring
-- Failover decision logic
-- State validation on switch
-- Event emission for ProviderFailed/ProviderRecovered/ProviderSwitched
+- Live reconciliation loop on websocket reconnect
+- Blocking order submission if state discrepancy exceeds tolerance
 
 ---
 

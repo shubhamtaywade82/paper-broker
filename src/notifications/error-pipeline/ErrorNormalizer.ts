@@ -15,6 +15,7 @@ interface DeduplicationState {
 
 export class ErrorNormalizer {
   private dedupeMap = new Map<string, DeduplicationState>();
+  private incidentHistory: IncidentReport[] = [];
   private dedupeWindowMs: number;
 
   constructor(dedupeWindowMs = 60000) {
@@ -89,7 +90,7 @@ export class ErrorNormalizer {
       count: 1,
     });
 
-    return {
+    const result = {
       incident: {
         incidentId,
         timestampUtc: new Date(now).toISOString(),
@@ -106,6 +107,17 @@ export class ErrorNormalizer {
       },
       shouldAlert: true,
     };
+
+    this.incidentHistory.unshift(result.incident);
+    if (this.incidentHistory.length > 200) {
+      this.incidentHistory.pop();
+    }
+
+    return result;
+  }
+
+  public getRecentIncidents(limit = 50): IncidentReport[] {
+    return this.incidentHistory.slice(0, limit);
   }
 
   public clearDeduplication(): void {

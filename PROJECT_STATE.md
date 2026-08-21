@@ -11,15 +11,15 @@ This project is a paper trading engine with real Binance market data and simulat
 | Mode    | Status      | Description                                      |
 |---------|-------------|--------------------------------------------------|
 | paper   | implemented | Simulated execution with real market data        |
-| shadow  | planned     | Read-only account state, simulated execution     |
-| live    | planned     | Real execution with explicit arm/guard required  |
+| shadow  | implemented | Read-only account state, simulated execution     |
+| live    | implemented | CoinDCX execution with explicit arm gate (`LiveTradingGuard`) |
 
 ## Providers
 
 | Provider         | Market Data | Execution | Status                          |
 |------------------|-------------|-----------|---------------------------------|
-| Binance Futures  | ✅          | ❌        | SDK available, primary market data active |
-| CoinDCX          | 🔄          | 🔄        | SDK available, ExecutionBroker & adapter architecture defined (ADR 0002) |
+| Binance Futures  | ✅          | ❌        | Primary market data stream active |
+| CoinDCX          | ✅ (Fallback)| ✅       | MarketDataSupervisor fallback + CoinDCXBroker live execution |
 
 ## Agent / LLM
 
@@ -27,8 +27,8 @@ This project is a paper trading engine with real Binance market data and simulat
 |-----------------|-------------|------------------------------------------|
 | Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`                |
 | Agent loop      | partial     | OllamaSignalGenerator for trend signals  |
-| MCP             | not started | Planned for tool orchestration           |
-| Trading supervision | partial | Signal validation exists, full risk engine planned |
+| MCP             | planned     | Planned for tool orchestration           |
+| Trading supervision | implemented | LiveTradingGuard, DivergenceGuard, Risk check |
 
 ## Persistence
 
@@ -42,15 +42,15 @@ This project is a paper trading engine with real Binance market data and simulat
 
 | Component | Status      | Notes                                    |
 |-----------|-------------|------------------------------------------|
-| Backend   | implemented | Fastify REST API (`src/api/server.ts`)   |
+| Backend / BFF | implemented | Fastify REST API + WebSocket Gateway (`/ws`, `/api/v1/dashboard`) |
 | Frontend  | planned     | React dashboard                          |
 
 ## Notifications
 
 | Provider | Status      | Notes                                    |
 |----------|-------------|------------------------------------------|
-| Telegram | planned     | Operational alerting                     |
-| Email    | not started | Planned for critical alerts              |
+| Telegram | implemented | ErrorNormalizer with incident IDs (`INC-...`) and TelegramNotifier |
+| Webhook  | planned     | Additional operational alert sinks       |
 
 ## Hard Invariants
 
@@ -69,7 +69,14 @@ These must NOT change without an ADR:
 ### Implemented
 
 - ✅ Binance WebSocket market data streams (bookTicker, markPrice, klines)
-- ✅ Market state management with staleness detection
+- ✅ CoinDCX execution broker (`CoinDCXBroker`) via `@nemesis-oss/coindcx-sdk`
+- ✅ Unified execution router (`ExecutionRouter`) and live safety guard (`LiveTradingGuard`)
+- ✅ Multi-feed market data supervisor (`MarketDataSupervisor`) with fallback coordination
+- ✅ Cross-exchange price divergence guard (`DivergenceGuard`)
+- ✅ Provider health & latency tracking (`ProviderHealthManager`)
+- ✅ Fastify WebSocket gateway (`ws://localhost:8080/ws`) for real-time dashboard push events
+- ✅ Consolidated dashboard BFF endpoints (`/api/v1/dashboard`, `/api/v1/health/providers`, `/api/v1/incidents`, `/api/v1/mode/arm`)
+- ✅ Incident normalization and error pipeline (`ErrorNormalizer`) with Telegram alerts (`TelegramNotifier`)
 - ✅ PaperBroker with LIMIT/MARKET/STOP_MARKET/TAKE_PROFIT_MARKET orders
 - ✅ Position accounting (weighted entry, P&L realization, flips)
 - ✅ Funding payments simulation
@@ -77,7 +84,6 @@ These must NOT change without an ADR:
 - ✅ SQLite event persistence (append-only + queryable tables)
 - ✅ Strategy engine with cooldowns and conflict rules
 - ✅ Signal executor with sizing logic
-- ✅ REST API for monitoring
 - ✅ CLI for operational commands
 - ✅ Ollama integration for AI signals
 
@@ -88,14 +94,9 @@ These must NOT change without an ADR:
 
 ### Planned
 
-- ⏳ Shadow mode (read-only exchange account state)
-- ⏳ Live mode with CoinDCX or Binance execution
-- ⏳ Provider failover (Binance ↔ CoinDCX)
-- ⏳ Telegram notifications
-- ⏳ React dashboard
-- ⏳ Backtest engine
-- ⏳ MCP tool orchestration
-- ⏳ Advanced risk engine (daily loss limits, exposure caps)
+- ⏳ Standalone React dashboard UI (`apps/dashboard`)
+- ⏳ MCP tool orchestration loop
+- ⏳ Backtest engine visualization
 
 ## Known Constraints
 

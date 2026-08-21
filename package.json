@@ -23,7 +23,9 @@
     "verify:complete": "bash scripts/verify-complete.sh"
   },
   "dependencies": {
+    "@fastify/websocket": "^8.3.1",
     "@nemesis-oss/binance-sdk": "^1.0.0",
+    "@nemesis-oss/coindcx-sdk": "file:../sdk/coindcx-sdk",
     "@nemesis-oss/ollama-sdk": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "dayjs": "^1.11.0",
@@ -33,12 +35,14 @@
     "node-cron": "^3.0.3",
     "pino": "^9.0.0",
     "ulid": "^2.3.0",
+    "ws": "^8.21.3",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "prettier": "^3.2.5",
