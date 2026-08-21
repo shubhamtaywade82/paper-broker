@@ -1,31 +1,11 @@
 import type { Instrument } from '../broker/types.js';
 import { symbols } from './env.js';
 
-export const defaultInstruments: Instrument[] = symbols.map((symbol) => ({
-  symbol,
-  baseAsset: symbol.replace('USDT', ''),
-  quoteAsset: 'USDT',
-  contractType: 'PERPETUAL',
-  status: 'TRADING',
-  tickSize: '0.01',
-  stepSize: '0.001',
-  minQty: '0.001',
-  maxQty: '10000',
-  minNotional: '5',
-  pricePrecision: 2,
-  quantityPrecision: 3,
-  maintenanceMarginRate: '0.005',
-  createdAtUtc: new Date().toISOString(),
-  updatedAtUtc: new Date().toISOString(),
-}));
-
-export function getInstrumentConfig(symbol: string): Instrument {
-  const existing = defaultInstruments.find((i) => i.symbol === symbol);
-  if (existing) return existing;
-
+export const defaultInstruments: Instrument[] = symbols.map((symbol) => {
+  const baseAsset = symbol.replace('USDT', '');
   return {
     symbol,
-    baseAsset: symbol.replace('USDT', ''),
+    baseAsset,
     quoteAsset: 'USDT',
     contractType: 'PERPETUAL',
     status: 'TRADING',
@@ -37,6 +17,40 @@ export function getInstrumentConfig(symbol: string): Instrument {
     pricePrecision: 2,
     quantityPrecision: 3,
     maintenanceMarginRate: '0.005',
+    canonical: `${baseAsset}/USDT`,
+    venues: {
+      binance: symbol,
+      coindcx: `B-${baseAsset}_USDT`,
+    },
+    createdAtUtc: new Date().toISOString(),
+    updatedAtUtc: new Date().toISOString(),
+  };
+});
+
+export function getInstrumentConfig(symbol: string): Instrument {
+  const existing = defaultInstruments.find((i) => i.symbol === symbol);
+  if (existing) return existing;
+
+  const baseAsset = symbol.replace('USDT', '');
+  return {
+    symbol,
+    baseAsset,
+    quoteAsset: 'USDT',
+    contractType: 'PERPETUAL',
+    status: 'TRADING',
+    tickSize: '0.01',
+    stepSize: '0.001',
+    minQty: '0.001',
+    maxQty: '10000',
+    minNotional: '5',
+    pricePrecision: 2,
+    quantityPrecision: 3,
+    maintenanceMarginRate: '0.005',
+    canonical: `${baseAsset}/USDT`,
+    venues: {
+      binance: symbol,
+      coindcx: `B-${baseAsset}_USDT`,
+    },
     createdAtUtc: new Date().toISOString(),
     updatedAtUtc: new Date().toISOString(),
   };

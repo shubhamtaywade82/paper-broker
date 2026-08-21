@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { config } from 'dotenv';
+import { resolveRuntimeProfile } from './modes/resolver.js';
 
 config();
 
@@ -7,9 +8,26 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
 
+  TRADING_MODE: z.enum(['paper', 'shadow', 'live']).default('paper'),
+  LIVE_TRADING_ARMED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+
   BINANCE_ENV: z.enum(['testnet', 'production']).default('testnet'),
   BINANCE_API_KEY: z.string().optional(),
   BINANCE_API_SECRET: z.string().optional(),
+
+  COINDCX_API_KEY: z.string().optional(),
+  COINDCX_API_SECRET: z.string().optional(),
+
+  TELEGRAM_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_MIN_LEVEL: z.enum(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']).default('INFO'),
 
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
   OLLAMA_MODEL: z.string().default('qwen3.5:2b'),
@@ -55,3 +73,13 @@ export const env = parsed.data;
 
 export const symbols = env.SYMBOLS.split(',').map((s) => s.trim());
 export const timeframes = env.TIMEFRAMES.split(',').map((s) => s.trim());
+
+export const runtimeProfile = resolveRuntimeProfile({
+  TRADING_MODE: env.TRADING_MODE,
+  LIVE_TRADING_ARMED: env.LIVE_TRADING_ARMED,
+  TELEGRAM_ENABLED: env.TELEGRAM_ENABLED,
+  TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
+  COINDCX_API_KEY: env.COINDCX_API_KEY,
+  COINDCX_API_SECRET: env.COINDCX_API_SECRET,
+});

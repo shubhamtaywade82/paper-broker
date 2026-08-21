@@ -19,6 +19,7 @@ import type {
   BrokerPersister,
   FundingPayment,
   RiskCheckResult,
+  ExecutionBroker,
 } from './types.js';
 
 const D = (value: string | number) => new Decimal(value);
@@ -37,7 +38,7 @@ function parseNum(str: string | number | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export class PaperBroker {
+export class PaperBroker implements ExecutionBroker {
   private instruments = new Map<string, Instrument>();
   private orders = new Map<string, Order>();
   private positions = new Map<string, Position>();

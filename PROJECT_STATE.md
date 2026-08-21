@@ -18,8 +18,8 @@ This project is a paper trading engine with real Binance market data and simulat
 
 | Provider         | Market Data | Execution | Status                          |
 |------------------|-------------|-----------|---------------------------------|
-| Binance Futures  | ✅          | ❌        | SDK available, market data active |
-| CoinDCX          | ❌          | ❌        | Not integrated                  |
+| Binance Futures  | ✅          | ❌        | SDK available, primary market data active |
+| CoinDCX          | 🔄          | 🔄        | SDK available, ExecutionBroker & adapter architecture defined (ADR 0002) |
 
 ## Agent / LLM
 

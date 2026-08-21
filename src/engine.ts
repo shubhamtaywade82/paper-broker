@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { env, symbols, timeframes } from './config/env.js';
+import { env, symbols, timeframes, runtimeProfile } from './config/env.js';
 import { defaultInstruments } from './config/instruments.js';
 import { BinanceClient } from '@nemesis-oss/binance-sdk';
 import { bootstrapFromBinance } from './binance/bootstrap.js';
@@ -25,6 +25,7 @@ import { createOllamaTrendStrategy } from './strategy/strategies/ollama-trend-5m
 import { OllamaSignalGenerator } from './ai/ollama.js';
 import { ApiServer } from './api/server.js';
 import { Scheduler } from './scheduler/jobs.js';
+import { TelegramNotifier } from './notifications/TelegramNotifier.js';
 import { logger } from './telemetry/logger.js';
 import { metrics } from './telemetry/metrics.js';
 
@@ -32,8 +33,24 @@ export interface EngineHandle {
   stop(): Promise<void>;
 }
 
+function printStartupBanner(profile: typeof runtimeProfile, symbolsList: string[]): void {
+  const line = '═'.repeat(44);
+  console.log(`╔${line}╗`);
+  console.log(`║        TRADING SYSTEM STARTING             ║`);
+  console.log(`╠${line}╣`);
+  console.log(`║ Mode:             ${profile.mode.toUpperCase().padEnd(25)}║`);
+  console.log(`║ Execution Venue:  ${profile.executionVenue.padEnd(25)}║`);
+  console.log(`║ Real Orders:      ${(profile.realOrders ? 'YES (ARMED)' : 'NO').padEnd(25)}║`);
+  console.log(`║ Market Primary:   ${profile.marketDataPrimary.padEnd(25)}║`);
+  console.log(`║ Market Fallback:  ${profile.marketDataFallback.padEnd(25)}║`);
+  console.log(`║ Telegram Alerts:  ${(profile.telegramEnabled ? 'ONLINE' : 'DISABLED').padEnd(25)}║`);
+  console.log(`║ Symbols:          ${symbolsList.join(', ').slice(0, 25).padEnd(25)}║`);
+  console.log(`╚${line}╝`);
+}
+
 export async function startEngine(): Promise<EngineHandle> {
-  logger.info({ env: env.NODE_ENV, binanceEnv: env.BINANCE_ENV }, 'Starting paper-broker');
+  printStartupBanner(runtimeProfile, symbols);
+  logger.info({ mode: runtimeProfile.mode, venue: runtimeProfile.executionVenue }, 'Starting trading engine');
 
   const dataDir = env.DB_FILE.replace(/\/[^/]+$/, '');
 
@@ -225,7 +242,22 @@ export async function startEngine(): Promise<EngineHandle> {
   metrics.setGauge('instruments_total', instruments.length);
   metrics.setGauge('strategies_total', strategyEngine.listStrategies().length);
 
-  logger.info('paper-broker fully started');
+  const telegram = new TelegramNotifier({
+    enabled: runtimeProfile.telegramEnabled,
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    chatId: env.TELEGRAM_CHAT_ID,
+  });
+
+  if (telegram.isEnabled()) {
+    void telegram.notifySystemStartup(
+      runtimeProfile.mode,
+      runtimeProfile.executionVenue,
+      runtimeProfile.realOrders,
+      symbols
+    );
+  }
+
+  logger.info({ mode: runtimeProfile.mode }, 'Trading engine fully started');
 
   return {
     stop: async (): Promise<void> => {

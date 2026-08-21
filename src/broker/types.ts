@@ -51,6 +51,12 @@ export interface Instrument {
 
   maintenanceMarginRate: string;
 
+  canonical?: string;
+  venues?: {
+    binance?: string;
+    coindcx?: string;
+  };
+
   createdAtUtc: string;
   updatedAtUtc: string;
 }
@@ -358,4 +364,31 @@ export interface SystemEventType {
     | 'CLOCK_DRIFT_WARNING';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
+}
+
+export interface ExecutionBroker {
+  submitOrder(command: OrderCommand): Promise<Order> | Order;
+  cancelOrder(orderId: string, reason?: string, nowIso?: string): Promise<Order | undefined> | Order | undefined;
+  cancelAllOrders(symbol?: string): Promise<void> | void;
+  getOpenOrders(symbol?: string): Promise<Order[]> | Order[];
+  getPositions(): Promise<Position[]> | Position[];
+  getPosition(symbol: string): Promise<Position | undefined> | Position | undefined;
+  getAccount(): Promise<AccountState> | AccountState;
+}
+
+export type MarketDataProviderType = 'BINANCE' | 'COINDCX';
+export type ProviderHealthStatus = 'HEALTHY' | 'DEGRADED' | 'STALE' | 'DISCONNECTED' | 'RECOVERING';
+
+export interface ProviderHealth {
+  provider: MarketDataProviderType;
+  status: ProviderHealthStatus;
+  lastEventTimeMs: number;
+  latencyMs: number;
+  stale: boolean;
+  divergenceBps?: number;
+}
+
+export interface TradingContext {
+  signalVenue: MarketDataProviderType;
+  executionVenue: 'PAPER' | 'COINDCX';
 }

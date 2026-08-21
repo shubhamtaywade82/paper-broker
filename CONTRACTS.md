@@ -235,6 +235,44 @@ const pnl = qty * (close - entry); // float arithmetic
 
 ---
 
+## 15. Decoupled Execution & Market Data Contract (ADR 0002)
+
+**Market data source, strategy intelligence, and execution venues are strictly decoupled.**
+
+- Strategy & Risk engines consume normalized canonical domain events only.
+- Strategy never references exchange-specific pair syntax or exchange SDKs.
+- `ExecutionBroker` interface abstracts `PaperBroker` and `CoinDCXBroker`.
+- The system explicitly distinguishes `signalVenue` (market structure source) from `executionVenue` (order destination).
+
+---
+
+## 16. Feed Continuity & Failover Guard Contract (ADR 0002)
+
+**Failover to fallback data feeds requires multi-factor validation.**
+
+Failover from Binance to CoinDCX must NOT occur on single packet loss. Promotion of fallback feed requires:
+- Verified provider connection health & latency.
+- Fresh timestamps without drift.
+- Valid canonical symbol mapping.
+- Price divergence within configured threshold ($\Delta \text{price} \le \text{divergenceLimit}$).
+- Candle continuity validation.
+
+Cross-exchange divergence above threshold triggers `MARKET_DATA_DIVERGENCE` and halts new entries.
+
+---
+
+## 17. Uncertain Execution State Reconciliation Contract (ADR 0002)
+
+**Never retry or failover uncertain write operations blindly.**
+
+If an order submission or cancellation times out or returns an indeterminate status:
+1. Mark execution state `UNKNOWN`.
+2. Stop new order submissions on affected symbols.
+3. Query the exchange and reconcile positions and open orders.
+4. Resume execution only after exchange state is authoritatively confirmed.
+
+---
+
 ## Enforcement
 
 Violations of these contracts MUST be caught by:
