@@ -1,17 +1,14 @@
-import type { MarketState, Instrument } from '../broker/types.js';
+import type { Instrument } from '../broker/types.js';
 import { PaperBroker } from '../broker/PaperBroker.js';
 import { StrategyEngine } from '../strategy/StrategyEngine.js';
 import { SizingEngine } from '../strategy/SizingEngine.js';
 import { OrderFactory } from '../strategy/OrderFactory.js';
 import { SignalExecutor } from '../strategy/SignalExecutor.js';
 import { SignalRepository } from '../persistence/repositories/SignalRepository.js';
-import type { Signal } from '../strategy/signal.js';
 import { DatabaseManager } from '../persistence/db.js';
 import { EventLog } from '../persistence/EventLog.js';
 import { SnapshotStore } from '../persistence/SnapshotStore.js';
-import { SQLiteBrokerPersister } from '../persistence/BrokerPersister.js';
 import { defaultInstruments } from '../config/instruments.js';
-import { floorToInterval } from '../market/Klines.js';
 import { createEmaTrendStrategy } from '../strategy/strategies/ema-trend-5m.js';
 import { createBreakoutStrategy } from '../strategy/strategies/breakout-15m.js';
 import { createRsiMeanReversionStrategy } from '../strategy/strategies/rsi-mean-reversion-5m.js';
@@ -80,10 +77,6 @@ interface BacktestResult {
 
 function msToDate(ms: number): string {
   return new Date(ms).toISOString();
-}
-
-function round4(n: number): number {
-  return Math.round(n * 10000) / 10000;
 }
 
 export class BacktestRunner {
