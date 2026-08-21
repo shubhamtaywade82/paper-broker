@@ -208,13 +208,10 @@ export async function startEngine(): Promise<EngineHandle> {
         volume: kline.volume,
       };
       klines.upsertCandle(candle);
-      api.wsGateway.broadcast({
-        type: 'market.tick',
-        payload: {
-          symbol: kline.symbol,
-          price: kline.close,
-          candle,
-        },
+      api.wsGateway.broadcast('market.tick', {
+        symbol: kline.symbol,
+        price: kline.close,
+        candle,
       });
     },
     onKlineClose: (kline) => {
