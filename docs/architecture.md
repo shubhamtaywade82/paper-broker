@@ -94,6 +94,62 @@ Fastify server exposing the REST API, Prometheus metrics, and engine lifecycle e
 
 `OllamaSignalGenerator` wraps `@nemesis-oss/ollama-sdk`: `ping()` verifies the configured model exists; `generateSignal()` produces a structured BUY/SELL/HOLD recommendation consumed by `ollama-trend-5m`.
 
+## Target 4-Plane Platform Architecture (ADR 0003)
+
+```text
+                    ┌──────────────────────┐
+                    │    CONTROL PLANE     │
+                    │                      │
+                    │ React Dashboard      │
+                    │ Telegram Bot         │
+                    │ Operational CLI      │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │     TRADING API      │
+                    │   Fastify REST + WS  │
+                    └──────────┬───────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+        ▼                      ▼                      ▼
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│ OBSERVABILITY│       │ TRADING CORE │       │ AGENT PLANE  │
+│              │       │              │       │              │
+│ EventLog     │       │ Strategy     │       │ Ollama SDK   │
+│ Metrics      │       │ Risk Engine  │       │ MCP Tools    │
+│ Incidents    │       │ Exec Router  │       │ Reasoning    │
+└──────────────┘       └───────┬──────┘       └──────────────┘
+                               │
+                     ┌─────────┼─────────┐
+                     ▼         ▼         ▼
+                  Binance   CoinDCX   Paper
+```
+
+## Target Monorepo Packages
+
+```text
+trading-system/
+├── apps/
+│   ├── engine/              # Trading runtime composition root
+│   ├── api/                 # Fastify REST + WebSocket gateway
+│   └── dashboard/           # React + TypeScript frontend
+│
+├── packages/
+│   ├── binance-adapter/     # Binance WS/REST normalization
+│   ├── coindcx-adapter/     # CoinDCX WS/REST & execution
+│   ├── paper-broker/        # Deterministic paper broker
+│   ├── execution/           # Unified ExecutionRouter & broker interface
+│   ├── risk/                # RiskEngine & LiveTradingGuard
+│   ├── strategy/            # SMC market structure & setup engines
+│   ├── agent/               # Ollama agent & MCP tool integration
+│   ├── event-bus/           # Typed canonical domain events
+│   ├── observability/       # Metrics, Incident pipeline & telemetry
+│   ├── notifications/       # Telegram & webhook alerts
+│   └── shared/              # Common domain types & utilities
+```
+
 ## Persistence model
 
 - **Source of truth for history**: the `events` table + `events.jsonl` (append-only, never mutated).
