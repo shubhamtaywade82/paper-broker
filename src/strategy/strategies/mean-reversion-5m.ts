@@ -1,26 +1,31 @@
 import type { Strategy } from '../StrategyEngine.js';
 
 export interface MeanReversionStrategyOptions {
-  symbol?: string;
   lookbackPeriods?: number;
   symbols?: string[];
   cooldownMs?: number;
 }
 
 export function createMeanReversionStrategy(options: MeanReversionStrategyOptions = {}): Strategy {
-  const targetSymbol = options.symbol ?? 'ETHUSDT';
+  const targetSymbols = options.symbols ?? ['ETHUSDT'];
   const lookbackPeriods = options.lookbackPeriods ?? 20;
+  const cooldownMs = options.cooldownMs ?? 300_000;
+  const lastSignalAt = new Map<string, number>();
 
   return {
     id: 'mean-reversion-5m',
     name: 'Mean Reversion (5m)',
     enabled: true,
-    symbols: options.symbols ?? [targetSymbol],
+    symbols: targetSymbols,
     intervals: ['5m'],
     priority: 55,
-    cooldownMs: options.cooldownMs ?? 300_000,
+    cooldownMs,
     onCandleClose: (ctx, candle) => {
-      if (candle.symbol !== targetSymbol) return null;
+      if (!targetSymbols.includes(candle.symbol)) return null;
+
+      const now = Date.now();
+      const lastAt = lastSignalAt.get(candle.symbol) ?? 0;
+      if (now - lastAt < cooldownMs) return null;
 
       const market = ctx.getMarket(candle.symbol);
       if (!market?.mark) return null;
@@ -43,6 +48,7 @@ export function createMeanReversionStrategy(options: MeanReversionStrategyOption
       const price = market.mark;
 
       if (price <= lowerBand) {
+        lastSignalAt.set(candle.symbol, now);
         return {
           strategyId: 'mean-reversion-5m',
           symbol: candle.symbol,
@@ -55,6 +61,7 @@ export function createMeanReversionStrategy(options: MeanReversionStrategyOption
       }
 
       if (price >= upperBand) {
+        lastSignalAt.set(candle.symbol, now);
         return {
           strategyId: 'mean-reversion-5m',
           symbol: candle.symbol,

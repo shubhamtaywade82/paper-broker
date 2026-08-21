@@ -7,6 +7,6 @@ node_modules/
 
 # Environment
 .env
-.env.local
-*.env.*
-```
+*.log
+.DS_Store
+paper.sqlite3*
