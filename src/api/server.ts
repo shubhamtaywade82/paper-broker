@@ -9,6 +9,7 @@ import type { RuntimeProfile } from '../config/modes/types.js';
 import type { MarketDataSupervisor } from '../market/supervisor/MarketDataSupervisor.js';
 import type { ErrorNormalizer } from '../notifications/error-pipeline/ErrorNormalizer.js';
 import type { WebSocket } from 'ws';
+import { DASHBOARD_HTML } from './dashboardHtml.js';
 import { WebSocketGateway } from './websocket/WebSocketGateway.js';
 import { metrics } from '../telemetry/metrics.js';
 import { logger } from '../telemetry/logger.js';
@@ -122,6 +123,14 @@ export class ApiServer {
   }
 
   private registerDashboardRoutes(): void {
+    this.app.get('/', async (_req, reply) => {
+      return reply.type('text/html').send(DASHBOARD_HTML);
+    });
+
+    this.app.get('/dashboard', async (_req, reply) => {
+      return reply.type('text/html').send(DASHBOARD_HTML);
+    });
+
     this.app.get('/api/v1/dashboard', async () => {
       const [account, positions, recentSignals] = await Promise.all([
         this.broker.getAccount(),
