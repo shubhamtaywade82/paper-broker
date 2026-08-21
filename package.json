@@ -19,7 +19,8 @@
     "docker:build": "docker build -t paper-broker .",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:complete": "bash scripts/verify-complete.sh"
   },
   "dependencies": {
     "@nemesis-oss/binance-sdk": "^1.0.0",
