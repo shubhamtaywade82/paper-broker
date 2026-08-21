@@ -1,5 +1,4 @@
 import type {
-  BaseNotification,
   TradeNotification,
   PositionUpdateNotification,
   HealthNotification,

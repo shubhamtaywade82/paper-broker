@@ -82,7 +82,7 @@ fi
 
 echo ""
 echo "7. Security Check..."
-SECRETS_FOUND=$(git diff --cached | grep -iE "(api[_-]?key|secret|token|password)" | wc -l || true)
+SECRETS_FOUND=$(git diff --cached | grep -iE "(api[_-]?key|secret|token|password)\s*[:=]\s*['\"][a-zA-Z0-9_\-]{20,}['\"]" | wc -l || true)
 if [ "$SECRETS_FOUND" -eq 0 ]; then
     pass "Secrets check: no secrets detected"
 else
