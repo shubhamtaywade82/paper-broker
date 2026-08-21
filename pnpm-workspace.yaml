@@ -5,6 +5,7 @@ onlyBuiltDependencies:
   - esbuild
 minimumReleaseAgeExclude:
   - '@nemesis-oss/binance-sdk@1.0.0'
+  - '@nemesis-oss/coindcx-sdk@1.0.0'
 allowBuilds:
   better-sqlite3: true
   esbuild: true

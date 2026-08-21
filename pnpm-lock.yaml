@@ -15,8 +15,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@nemesis-oss/coindcx-sdk':
-        specifier: file:../sdk/coindcx-sdk
-        version: file:../sdk/coindcx-sdk(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: ^1.0.0
+        version: 1.0.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@nemesis-oss/ollama-sdk':
         specifier: ^1.0.0
         version: 1.0.0(zod@3.25.76)
@@ -485,8 +485,8 @@ packages:
     engines: {node: '>=22'}
     hasBin: true
 
-  '@nemesis-oss/coindcx-sdk@file:../sdk/coindcx-sdk':
-    resolution: {directory: ../sdk/coindcx-sdk, type: directory}
+  '@nemesis-oss/coindcx-sdk@1.0.0':
+    resolution: {integrity: sha512-5mcDKfO929YR35pBZV4mlKRXS56bYSZ37HurNhtekf4YP/A60cKEr7ATDyU93ZwSvZNgebcDe0CpQlv4+sfKtg==}
     engines: {node: '>=18'}
 
   '@nemesis-oss/ollama-sdk@1.0.0':
@@ -2259,7 +2259,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@nemesis-oss/coindcx-sdk@file:../sdk/coindcx-sdk(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@nemesis-oss/coindcx-sdk@1.0.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       axios: 1.19.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       eventemitter3: 5.0.4

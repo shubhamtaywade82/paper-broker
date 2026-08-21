@@ -25,7 +25,7 @@
   "dependencies": {
     "@fastify/websocket": "^8.3.1",
     "@nemesis-oss/binance-sdk": "^1.0.0",
-    "@nemesis-oss/coindcx-sdk": "file:../sdk/coindcx-sdk",
+    "@nemesis-oss/coindcx-sdk": "^1.0.0",
     "@nemesis-oss/ollama-sdk": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "dayjs": "^1.11.0",
