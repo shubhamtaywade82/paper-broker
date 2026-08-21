@@ -106,3 +106,117 @@ export interface TradeSetup {
     derivatives: string[];
   };
 }
+
+export type TradingEventType =
+  | 'CANDLE_CLOSED'
+  | 'TRADE'
+  | 'DEPTH_UPDATE'
+  | 'MARK_PRICE'
+  | 'LIQUIDATION'
+  | 'FUNDING_UPDATED'
+  | 'OPEN_INTEREST_UPDATED'
+  | 'SWING_CONFIRMED'
+  | 'BOS'
+  | 'CHOCH'
+  | 'LIQUIDITY_SWEEP'
+  | 'DISPLACEMENT'
+  | 'REGIME_CHANGED'
+  | 'SETUP_CREATED'
+  | 'SETUP_ARMED'
+  | 'SETUP_INVALIDATED'
+  | 'SETUP_EXPIRED'
+  | 'ENTRY_INTENT'
+  | 'CONTINUATION_INTENT'
+  | 'EXIT_INTENT'
+  | 'ADD_INTENT'
+  | 'REDUCE_INTENT'
+  | 'REVERSE_INTENT'
+  | 'RISK_APPROVED'
+  | 'RISK_REJECTED'
+  | 'ORDER_SUBMITTED'
+  | 'ORDER_ACCEPTED'
+  | 'ORDER_FILLED'
+  | 'PARTIAL_FILL'
+  | 'ORDER_CANCELED'
+  | 'ORDER_REJECTED'
+  | 'POSITION_OPENED'
+  | 'POSITION_INCREASED'
+  | 'POSITION_REDUCED'
+  | 'BREAKEVEN_ARMED'
+  | 'TRAIL_ARMED'
+  | 'POSITION_CLOSED';
+
+export interface TradingEvent<TPayload = unknown> {
+  id: string;
+  type: TradingEventType;
+  symbol: string;
+  timestamp: number;
+  source: string;
+  sequence: number;
+  payload: TPayload;
+}
+
+export interface CandleClosedPayload {
+  candle: Candle;
+}
+
+export interface StructureEventPayload {
+  event: StructureEvent;
+}
+
+export interface LiquiditySweepPayload {
+  sweep: LiquiditySweep;
+}
+
+export interface DisplacementPayload {
+  displacement: DisplacementEvent;
+}
+
+export interface RegimeChangedPayload {
+  previous: Bias;
+  current: Bias;
+  snapshot: MarketStateSnapshot;
+}
+
+export type SetupLifecycleStatus = 'WATCHING' | 'TRIGGER_ARMED' | 'INVALID' | 'EXPIRED' | 'INTENT_EMITTED';
+
+export interface SetupLifecyclePayload {
+  setup: TradeSetup;
+  status: SetupLifecycleStatus;
+  reason?: string;
+}
+
+export type ExitReason =
+  | 'STOP_LOSS'
+  | 'TAKE_PROFIT'
+  | 'TRAILING_STOP'
+  | 'STRUCTURE_BREAK'
+  | 'REGIME_FLIP'
+  | 'LIQUIDITY_TARGET'
+  | 'TIME_STOP'
+  | 'FLOW_REVERSAL'
+  | 'RISK_LIMIT'
+  | 'MANUAL';
+
+export type PositionAction = 'OPEN' | 'ADD' | 'REDUCE' | 'HOLD' | 'CLOSE' | 'REVERSE';
+export type PositionLifecycleState = 'FLAT' | 'PENDING_ENTRY' | 'LONG' | 'SHORT' | 'EXIT_PENDING';
+
+export interface IntentPayload {
+  setupId?: string;
+  symbol: string;
+  direction?: Direction;
+  action: PositionAction;
+  reason: SetupType | ExitReason;
+  entryZone?: { low: number; high: number };
+  invalidation?: number;
+  targets?: number[];
+  confidence: number;
+  evidence: TradeSetup['evidence'];
+}
+
+export interface PositionLifecyclePayload {
+  previous: PositionLifecycleState;
+  current: PositionLifecycleState;
+  action: PositionAction;
+  reason: string;
+}
