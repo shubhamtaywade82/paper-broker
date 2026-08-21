@@ -1,6 +1,12 @@
+```
+# Dependencies
 node_modules/
-dist/
-data/
+
+# Editors
+.cursor/
+
+# Environment
 .env
-*.log
-.DS_Store
+.env.local
+*.env.*
+```
