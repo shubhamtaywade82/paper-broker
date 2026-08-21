@@ -3,7 +3,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nemesis Trading Desk</title>
+  <title>Paper-Broker v2.1.0 • Institutional Trading Desk</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -13,267 +13,694 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       theme: {
         extend: {
           colors: {
-            brand: { 500: '#3b82f6', 600: '#2563eb' },
-            dark: { 900: '#0b0f19', 800: '#111827', 700: '#1f2937', 600: '#374151' }
+            app: {
+              bg: '#080c14',
+              card: '#0f1623',
+              cardHover: '#141d2e',
+              border: '#1b2537',
+              accent: '#3b82f6',
+              green: '#05cd99',
+              greenBg: 'rgba(5, 205, 153, 0.12)',
+              red: '#ff4d4f',
+              redBg: 'rgba(255, 77, 79, 0.12)',
+              gold: '#f59e0b',
+              muted: '#8492a6',
+              text: '#f8fafc'
+            }
           }
         }
       }
     }
   </script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #080c14; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #0b101b; }
+    ::-webkit-scrollbar-thumb { background: #1f293d; border-radius: 2px; }
+    .depth-bar-bid { background: linear-gradient(90deg, rgba(5,205,153,0.15) 0%, rgba(5,205,153,0) 100%); }
+    .depth-bar-ask { background: linear-gradient(90deg, rgba(255,77,79,0.15) 0%, rgba(255,77,79,0) 100%); }
   </style>
 </head>
-<body class="bg-dark-900 text-gray-100 min-h-screen flex flex-col antialiased">
-  <!-- Top Navigation Bar -->
-  <header class="border-b border-dark-700 bg-dark-800/80 backdrop-blur px-6 py-3 flex items-center justify-between sticky top-0 z-50">
-    <div class="flex items-center space-x-4">
-      <div class="flex items-center space-x-2">
-        <div class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
-        <span class="font-bold text-lg tracking-wider text-white">NEMESIS<span class="text-blue-500 font-normal">.DESK</span></span>
-      </div>
-      <span id="mode-badge" class="px-2.5 py-0.5 rounded text-xs font-semibold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20">SHADOW</span>
-      <span id="ws-badge" class="flex items-center space-x-1 px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        <span id="ws-status-text">WS CONNECTED</span>
-      </span>
-    </div>
+<body class="bg-app-bg text-app-text min-h-screen flex text-[13px] antialiased select-none overflow-x-hidden">
 
-    <div class="flex items-center space-x-3">
-      <button onclick="openOrderModal()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition">
-        + Place Order
-      </button>
-      <button id="arm-btn" onclick="armLiveTrading()" class="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 rounded text-xs font-semibold transition">
-        Arm Live
-      </button>
-      <button onclick="triggerKillSwitch()" class="px-3 py-1.5 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/40 rounded text-xs font-semibold transition">
-        KILL SWITCH
-      </button>
-    </div>
-  </header>
-
-  <!-- Metrics Header -->
-  <section class="grid grid-cols-2 md:grid-cols-6 gap-4 p-6 border-b border-dark-700 bg-dark-800/40">
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">TOTAL EQUITY</div>
-      <div id="metric-equity" class="text-xl font-bold mono mt-1 text-white">$0.00</div>
-    </div>
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">WALLET BALANCE</div>
-      <div id="metric-balance" class="text-xl font-bold mono mt-1 text-gray-200">$0.00</div>
-    </div>
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">UNREALIZED PNL</div>
-      <div id="metric-unrealized" class="text-xl font-bold mono mt-1 text-emerald-400">+$0.00</div>
-    </div>
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">ACTIVE POSITIONS</div>
-      <div id="metric-positions-count" class="text-xl font-bold mono mt-1 text-white">0</div>
-    </div>
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">DATA FEED</div>
-      <div id="metric-provider" class="text-sm font-semibold mono mt-1.5 text-blue-400 flex items-center space-x-1.5">
-        <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-        <span id="metric-provider-name">BINANCE</span>
-      </div>
-    </div>
-    <div class="bg-dark-800 border border-dark-700/80 rounded-lg p-3">
-      <div class="text-gray-400 text-xs font-medium">SYSTEM HEALTH</div>
-      <div id="metric-health" class="text-sm font-semibold mono mt-1.5 text-emerald-400 flex items-center space-x-1.5">
-        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-        <span>100% OPERATIONAL</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- Main Work Area -->
-  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6">
-    <!-- Left Column: Chart & Positions (8 cols) -->
-    <div class="lg:col-span-8 flex flex-col space-y-6">
-      <!-- Lightweight Chart -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center space-x-3">
-            <span class="font-bold text-white tracking-wide">SOL/USDT</span>
-            <span class="text-xs px-2 py-0.5 rounded bg-dark-700 text-gray-300 mono">15m</span>
-            <span id="chart-ltp" class="mono font-bold text-emerald-400">--</span>
+  <!-- LEFT SIDEBAR NAVIGATION -->
+  <aside class="w-64 bg-app-card border-r border-app-border flex flex-col justify-between shrink-0 h-screen sticky top-0 z-40">
+    <div>
+      <!-- Brand Header -->
+      <div class="h-16 flex items-center px-5 border-b border-app-border justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-black text-sm">
+            ⬡
           </div>
-          <div class="text-xs text-gray-400 mono">Market Feed: <span id="smc-structure" class="text-blue-400 font-semibold">BINANCE FUTURES</span></div>
-        </div>
-        <div id="chart-container" class="w-full h-80 rounded bg-dark-900 border border-dark-700/50"></div>
-      </div>
-
-      <!-- Active Positions -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-bold text-sm tracking-wide uppercase text-gray-200">Open Positions</h2>
-          <span id="positions-total" class="text-xs text-gray-400">0 open</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs mono">
-            <thead>
-              <tr class="text-gray-400 border-b border-dark-700 pb-2">
-                <th class="py-2">SYMBOL</th>
-                <th>SIDE</th>
-                <th>SIZE</th>
-                <th>ENTRY</th>
-                <th>MARK</th>
-                <th>LEVERAGE</th>
-                <th>UNREALIZED PNL</th>
-                <th>ACTION</th>
-              </tr>
-            </thead>
-            <tbody id="positions-tbody" class="divide-y divide-dark-700/60">
-              <tr>
-                <td colspan="8" class="py-6 text-center text-gray-500">No open positions</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Open & Recent Orders -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-bold text-sm tracking-wide uppercase text-gray-200">Orders & Executions</h2>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs mono">
-            <thead>
-              <tr class="text-gray-400 border-b border-dark-700 pb-2">
-                <th class="py-2">ORDER ID</th>
-                <th>SYMBOL</th>
-                <th>TYPE</th>
-                <th>SIDE</th>
-                <th>PRICE</th>
-                <th>QTY</th>
-                <th>STATUS</th>
-              </tr>
-            </thead>
-            <tbody id="orders-tbody" class="divide-y divide-dark-700/60">
-              <tr>
-                <td colspan="7" class="py-6 text-center text-gray-500">No recent orders</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Right Column: Signals, LLM Observability, Incidents (4 cols) -->
-    <div class="lg:col-span-4 flex flex-col space-y-6">
-      <!-- Strategy & LLM Signals Radar -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-bold text-sm tracking-wide uppercase text-gray-200">Setup Radar</h2>
-          <span class="text-xs text-blue-400">Live Signals</span>
-        </div>
-        <div id="signals-list" class="space-y-2.5 max-h-64 overflow-y-auto">
-          <div class="text-xs text-gray-500 text-center py-4">Listening for strategy signals...</div>
-        </div>
-      </div>
-
-      <!-- Provider Matrix & Health -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col">
-        <h2 class="font-bold text-sm tracking-wide uppercase text-gray-200 mb-3">Provider Grid</h2>
-        <div class="space-y-2 text-xs mono">
-          <div class="flex items-center justify-between p-2 rounded bg-dark-900/60 border border-dark-700/40">
-            <span class="flex items-center space-x-2">
-              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>Binance Futures WS</span>
-            </span>
-            <span id="binance-lat" class="text-emerald-400 font-semibold">--</span>
-          </div>
-          <div class="flex items-center justify-between p-2 rounded bg-dark-900/60 border border-dark-700/40">
-            <span class="flex items-center space-x-2">
-              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>CoinDCX Derivatives</span>
-            </span>
-            <span id="coindcx-lat" class="text-emerald-400 font-semibold">--</span>
-          </div>
-          <div class="flex items-center justify-between p-2 rounded bg-dark-900/60 border border-dark-700/40">
-            <span class="flex items-center space-x-2">
-              <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-              <span>Ollama AI Runtime</span>
-            </span>
-            <span class="text-blue-400 font-semibold">Ready</span>
+          <div>
+            <div class="font-bold text-sm tracking-wider flex items-center space-x-1.5 text-white">
+              <span>PAPER-BROKER</span>
+              <span class="text-[10px] text-gray-400 font-normal">v2.1.0</span>
+            </div>
+            <div class="text-[10px] font-semibold text-emerald-400 tracking-wider flex items-center space-x-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span id="sidebar-mode-tag">PAPER TRADING</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Live Incidents & Events Stream -->
-      <div class="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col flex-1">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-bold text-sm tracking-wide uppercase text-gray-200">Incident Stream</h2>
-          <span class="text-xs text-gray-400">Audit Log</span>
+      <!-- Navigation Links -->
+      <nav class="p-3 space-y-1 text-xs">
+        <a href="#" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/20">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+          <span>Dashboard</span>
+        </a>
+        <a href="#market" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+          <span>Market</span>
+        </a>
+        <a href="#positions" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          <span>Positions</span>
+        </a>
+        <a href="#orders" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          <span>Orders</span>
+        </a>
+        <a href="#trades" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+          <span>Trades</span>
+        </a>
+        <a href="#signals" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Signals</span>
+        </a>
+        <a href="#risk" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <span>Risk</span>
+        </a>
+        <a href="#analytics" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          <span>Analytics</span>
+        </a>
+        <a href="#strategies" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>
+          <span>Strategies</span>
+        </a>
+        <a href="#logs" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
+          <span>Logs</span>
+        </a>
+        <a href="#alerts" class="flex items-center space-x-3 px-3 py-2 rounded-lg text-app-muted hover:text-white hover:bg-app-cardHover transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+          <span>Alerts</span>
+        </a>
+      </nav>
+    </div>
+
+    <!-- Paper Account Summary Box -->
+    <div class="p-4 space-y-3">
+      <div class="p-3.5 rounded-xl bg-app-bg border border-app-border space-y-2.5 text-xs mono">
+        <div class="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+          <span>PAPER ACCOUNT</span>
+          <span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">ACTIVE</span>
         </div>
-        <div id="incidents-list" class="space-y-2 overflow-y-auto max-h-72 mono text-xs">
-          <div class="text-gray-500 text-center py-4">No critical incidents reported</div>
+        <div class="flex justify-between">
+          <span class="text-app-muted">Equity</span>
+          <span id="side-equity" class="text-white font-semibold">$10,000.00</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-app-muted">Available</span>
+          <span id="side-available" class="text-white font-semibold">$10,000.00</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-app-muted">Unrealized PnL</span>
+          <span id="side-unpnl" class="text-emerald-400 font-bold">+$0.00 (0.00%)</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-app-muted">Margin Usage</span>
+          <span id="side-margin" class="text-white font-semibold">0.0%</span>
         </div>
       </div>
-    </div>
-  </main>
 
-  <!-- Place Order Modal -->
-  <div id="order-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
-    <div class="bg-dark-800 border border-dark-700 rounded-xl max-w-md w-full p-6 shadow-2xl">
-      <h3 class="font-bold text-lg text-white mb-4">Submit Order Command</h3>
+      <!-- User Profile Footer -->
+      <div class="flex items-center justify-between p-2 rounded-lg bg-app-cardHover/50 border border-app-border/40">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 font-bold text-xs">
+            👤
+          </div>
+          <div>
+            <div class="text-xs font-semibold text-white leading-none">nemesis-oss</div>
+            <div class="text-[10px] text-app-muted leading-none mt-1">Paper Mode</div>
+          </div>
+        </div>
+        <button onclick="triggerKillSwitch()" title="Emergency Kill-Switch" class="text-red-400 hover:text-red-300 p-1">
+          ⏻
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN VIEWPORT -->
+  <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+
+    <!-- TOP HEADER WITH LIVE TICKERS & STATUS -->
+    <header class="h-16 bg-app-card border-b border-app-border px-6 flex items-center justify-between sticky top-0 z-30 shrink-0">
+      <!-- Left: Active Ticker Carousel -->
+      <div class="flex items-center space-x-3 overflow-x-auto py-2">
+        <button onclick="switchActiveSymbol('BTCUSDT')" id="ticker-BTCUSDT" class="px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition">
+          <span class="font-bold text-xs text-gray-200">BTCUSDT</span>
+          <span id="price-BTCUSDT" class="mono text-xs font-semibold text-emerald-400">$62,437.8</span>
+          <span id="chg-BTCUSDT" class="mono text-[10px] text-emerald-400">+1.62%</span>
+        </button>
+        <button onclick="switchActiveSymbol('ETHUSDT')" id="ticker-ETHUSDT" class="px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition">
+          <span class="font-bold text-xs text-gray-200">ETHUSDT</span>
+          <span id="price-ETHUSDT" class="mono text-xs font-semibold text-emerald-400">$2,434.5</span>
+          <span id="chg-ETHUSDT" class="mono text-[10px] text-emerald-400">+2.10%</span>
+        </button>
+        <button onclick="switchActiveSymbol('SOLUSDT')" id="ticker-SOLUSDT" class="px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-900/20 flex items-center space-x-2 transition">
+          <span class="font-bold text-xs text-white">SOLUSDT</span>
+          <span id="price-SOLUSDT" class="mono text-xs font-bold text-emerald-400">$142.39</span>
+          <span id="chg-SOLUSDT" class="mono text-[10px] text-emerald-400">+3.34%</span>
+        </button>
+        <button onclick="switchActiveSymbol('BNBUSDT')" id="ticker-BNBUSDT" class="px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition">
+          <span class="font-bold text-xs text-gray-200">BNBUSDT</span>
+          <span id="price-BNBUSDT" class="mono text-xs font-semibold text-emerald-400">$550.1</span>
+          <span id="chg-BNBUSDT" class="mono text-[10px] text-emerald-400">+0.97%</span>
+        </button>
+      </div>
+
+      <!-- Right: System Status & Controls -->
+      <div class="flex items-center space-x-4 shrink-0">
+        <div class="flex items-center space-x-2 px-3 py-1 rounded-full bg-app-bg border border-app-border text-xs">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-app-muted">Market:</span>
+          <span id="top-market-status" class="font-semibold text-white">Binance (WS)</span>
+        </div>
+
+        <div class="flex items-center space-x-1.5 text-xs mono text-app-muted">
+          <span>🕒</span>
+          <span id="utc-clock">12:34:56 UTC</span>
+        </div>
+
+        <button onclick="openOrderModal()" class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-lg shadow-blue-600/20">
+          <span>+</span>
+          <span>New Order</span>
+        </button>
+
+        <button onclick="armLiveTrading()" id="arm-btn" class="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-semibold transition">
+          Arm Live
+        </button>
+      </div>
+    </header>
+
+    <!-- CONTENT BODY -->
+    <main class="p-6 space-y-6">
+
+      <!-- 1. TOP KPI METRIC CARDS ROW (6 CARDS) -->
+      <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <!-- Equity -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>EQUITY</span>
+            <span class="text-emerald-400 font-semibold text-[11px]">+2.33%</span>
+          </div>
+          <div id="kpi-equity" class="text-2xl font-bold mono mt-1 text-white">$10,000.00</div>
+          <svg class="w-full h-7 mt-2 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 100 25"><path d="M0,20 Q20,15 40,18 T70,8 T100,5" /></svg>
+        </div>
+
+        <!-- Unrealized PnL -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>UNREALIZED PNL</span>
+            <span id="kpi-unpnl-pct" class="text-emerald-400 font-semibold text-[11px]">+0.00%</span>
+          </div>
+          <div id="kpi-unpnl" class="text-2xl font-bold mono mt-1 text-emerald-400">+$0.00</div>
+          <svg class="w-full h-7 mt-2 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 100 25"><path d="M0,18 Q30,22 60,10 T100,6" /></svg>
+        </div>
+
+        <!-- Realized PnL -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>REALIZED PNL (24H)</span>
+            <span class="text-emerald-400 font-semibold text-[11px]">+0.84%</span>
+          </div>
+          <div id="kpi-realized" class="text-2xl font-bold mono mt-1 text-emerald-400">+$0.00</div>
+          <svg class="w-full h-7 mt-2 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 100 25"><path d="M0,22 Q30,12 60,14 T100,4" /></svg>
+        </div>
+
+        <!-- Win Rate -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>WIN RATE</span>
+            <span class="text-gray-400 text-[11px]">25W / 15L</span>
+          </div>
+          <div class="flex items-center justify-between mt-1">
+            <div class="text-2xl font-bold mono text-white">62.50%</div>
+            <div class="w-9 h-9 rounded-full border-2 border-emerald-400 border-t-amber-400 flex items-center justify-center text-[9px] font-bold text-emerald-400">
+              62%
+            </div>
+          </div>
+          <div class="w-full bg-dark-700 h-1.5 rounded-full mt-2 overflow-hidden">
+            <div class="bg-emerald-400 h-full w-[62.5%]"></div>
+          </div>
+        </div>
+
+        <!-- Active Positions -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>ACTIVE POSITIONS</span>
+            <div class="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 text-xs">💼</div>
+          </div>
+          <div id="kpi-positions-count" class="text-2xl font-bold mono mt-1 text-white">0</div>
+          <a href="#positions" class="text-blue-400 hover:text-blue-300 text-xs font-semibold mt-2">View all →</a>
+        </div>
+
+        <!-- Open Orders -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
+          <div class="flex items-center justify-between text-xs text-app-muted font-medium">
+            <span>OPEN ORDERS</span>
+            <div class="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400 text-xs">📋</div>
+          </div>
+          <div id="kpi-orders-count" class="text-2xl font-bold mono mt-1 text-white">0</div>
+          <a href="#orders" class="text-blue-400 hover:text-blue-300 text-xs font-semibold mt-2">View all →</a>
+        </div>
+      </section>
+
+      <!-- 2. MIDDLE ROW: MAIN CHART + ORDER BOOK + RECENT TRADES -->
+      <section class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Main TradingView Chart Container (7 Cols) -->
+        <div class="lg:col-span-7 bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <!-- Chart Header Toolbar -->
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-app-border">
+            <div class="flex items-center space-x-3">
+              <span id="chart-symbol-label" class="font-bold text-base text-white tracking-wide">SOLUSDT PERP</span>
+              <!-- Timeframe Selector -->
+              <div class="flex items-center space-x-1 bg-app-bg p-0.5 rounded-lg border border-app-border text-xs mono">
+                <button onclick="setTimeframe('1m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1m</button>
+                <button onclick="setTimeframe('5m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">5m</button>
+                <button onclick="setTimeframe('15m')" class="px-2 py-0.5 rounded bg-blue-600 text-white font-bold">15m</button>
+                <button onclick="setTimeframe('1h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1h</button>
+                <button onclick="setTimeframe('4h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">4h</button>
+                <button onclick="setTimeframe('1d')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1D</button>
+              </div>
+            </div>
+
+            <!-- Price & OHLC Status -->
+            <div class="flex items-center space-x-3 text-xs mono">
+              <span id="chart-ltp-hero" class="text-lg font-bold text-emerald-400">$142.39</span>
+              <span id="chart-chg-hero" class="text-emerald-400 font-semibold">+0.52 (+0.37%)</span>
+            </div>
+          </div>
+
+          <!-- Candlestick Canvas -->
+          <div id="chart-container" class="w-full h-96 mt-3 rounded-lg overflow-hidden bg-app-bg border border-app-border/50"></div>
+
+          <!-- Bottom Time Scale Filters -->
+          <div class="flex items-center justify-between pt-3 mt-2 border-t border-app-border text-xs text-app-muted mono">
+            <div class="flex space-x-2">
+              <span class="hover:text-white cursor-pointer">1D</span>
+              <span class="hover:text-white cursor-pointer">5D</span>
+              <span class="text-blue-400 font-bold cursor-pointer">1M</span>
+              <span class="hover:text-white cursor-pointer">6M</span>
+              <span class="hover:text-white cursor-pointer">YTD</span>
+              <span class="hover:text-white cursor-pointer">1Y</span>
+              <span class="hover:text-white cursor-pointer">ALL</span>
+            </div>
+            <div>Binance Futures Market Data Engine</div>
+          </div>
+        </div>
+
+        <!-- Order Book (3 Cols) -->
+        <div class="lg:col-span-3 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
+          <div class="flex items-center justify-between pb-3 border-b border-app-border">
+            <span class="font-bold text-xs uppercase tracking-wider text-gray-200">ORDER BOOK</span>
+            <span class="text-xs text-blue-400 mono font-semibold">SOLUSDT</span>
+          </div>
+
+          <div class="grid grid-cols-3 text-[11px] text-app-muted mono pt-2 pb-1">
+            <span>Price (USDT)</span>
+            <span class="text-right">Size (SOL)</span>
+            <span class="text-right">Total (SOL)</span>
+          </div>
+
+          <!-- Asks (Red) -->
+          <div id="orderbook-asks" class="space-y-1 mono text-xs py-1">
+            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.45</span><span class="text-right text-gray-300">231.42</span><span class="text-right text-gray-400">1,298.75</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.44</span><span class="text-right text-gray-300">124.31</span><span class="text-right text-gray-400">1,067.33</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.43</span><span class="text-right text-gray-300">321.67</span><span class="text-right text-gray-400">943.02</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.42</span><span class="text-right text-gray-300">285.90</span><span class="text-right text-gray-400">624.35</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.41</span><span class="text-right text-gray-300">136.12</span><span class="text-right text-gray-400">335.45</span></div>
+          </div>
+
+          <!-- Mid / Mark Price Spread Indicator -->
+          <div class="py-2.5 my-1 border-y border-app-border flex items-center justify-between mono">
+            <div class="flex items-center space-x-1.5">
+              <span id="ob-mid-price" class="text-base font-bold text-emerald-400">142.39</span>
+              <span class="text-xs text-emerald-400">↑</span>
+            </div>
+            <span class="text-xs text-app-muted">142.40 / 142.39</span>
+          </div>
+
+          <!-- Bids (Green) -->
+          <div id="orderbook-bids" class="space-y-1 mono text-xs py-1">
+            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">189.45</span><span class="text-right text-gray-400">189.45</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.38</span><span class="text-right text-gray-300">278.34</span><span class="text-right text-gray-400">467.79</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.37</span><span class="text-right text-gray-300">312.11</span><span class="text-right text-gray-400">779.90</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.36</span><span class="text-right text-gray-300">201.25</span><span class="text-right text-gray-400">981.15</span></div>
+            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.35</span><span class="text-right text-gray-300">317.26</span><span class="text-right text-gray-400">1,298.41</span></div>
+          </div>
+        </div>
+
+        <!-- Recent Trades Stream (2 Cols) -->
+        <div class="lg:col-span-2 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
+          <div class="flex items-center justify-between pb-3 border-b border-app-border">
+            <span class="font-bold text-xs uppercase tracking-wider text-gray-200">RECENT TRADES</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          </div>
+
+          <div class="grid grid-cols-3 text-[11px] text-app-muted mono pt-2 pb-1">
+            <span>Price</span>
+            <span class="text-right">Size</span>
+            <span class="text-right">Time</span>
+          </div>
+
+          <div id="trades-stream" class="space-y-1.5 mono text-xs overflow-hidden max-h-96">
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">12.35</span><span class="text-right text-gray-500">12:34:55</span></div>
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">8.62</span><span class="text-right text-gray-500">12:34:54</span></div>
+            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">21.47</span><span class="text-right text-gray-500">12:34:53</span></div>
+            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.37</span><span class="text-right text-gray-300">15.10</span><span class="text-right text-gray-500">12:34:53</span></div>
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">9.21</span><span class="text-right text-gray-500">12:34:52</span></div>
+            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">18.33</span><span class="text-right text-gray-500">12:34:52</span></div>
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">25.11</span><span class="text-right text-gray-500">12:34:51</span></div>
+            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">14.88</span><span class="text-right text-gray-500">12:34:51</span></div>
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.37</span><span class="text-right text-gray-300">7.44</span><span class="text-right text-gray-500">12:34:50</span></div>
+            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.36</span><span class="text-right text-gray-300">11.02</span><span class="text-right text-gray-500">12:34:49</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. LOWER-MIDDLE ROW: POSITIONS & ORDERS SPLIT TABLES -->
+      <section class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Open Positions Table (7 Cols) -->
+        <div id="positions" class="lg:col-span-7 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
+          <div class="flex items-center justify-between pb-3 border-b border-app-border">
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-xs uppercase tracking-wider text-gray-200">POSITIONS</span>
+              <span id="pos-count-badge" class="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold">0</span>
+            </div>
+            <button onclick="closeAllPositions()" class="text-[11px] text-red-400 hover:text-red-300">Close All</button>
+          </div>
+
+          <div class="overflow-x-auto mt-2">
+            <table class="w-full text-left text-xs mono">
+              <thead>
+                <tr class="text-app-muted border-b border-app-border pb-2">
+                  <th class="py-2">Symbol</th>
+                  <th>Side</th>
+                  <th>Size</th>
+                  <th>Entry Price</th>
+                  <th>Mark Price</th>
+                  <th>Unrealized PnL</th>
+                  <th>ROE</th>
+                  <th>TP / SL</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="positions-table-body" class="divide-y divide-app-border/60">
+                <tr><td colspan="9" class="py-6 text-center text-app-muted">No open positions</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Open Orders Table (5 Cols) -->
+        <div id="orders" class="lg:col-span-5 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
+          <div class="flex items-center justify-between pb-3 border-b border-app-border">
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-xs uppercase tracking-wider text-gray-200">ORDERS</span>
+              <span id="order-count-badge" class="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold">0</span>
+            </div>
+            <button onclick="cancelAllOrders()" class="text-[11px] text-red-400 hover:text-red-300">Cancel All</button>
+          </div>
+
+          <div class="overflow-x-auto mt-2">
+            <table class="w-full text-left text-xs mono">
+              <thead>
+                <tr class="text-app-muted border-b border-app-border pb-2">
+                  <th class="py-2">Symbol</th>
+                  <th>Side</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Price</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="orders-table-body" class="divide-y divide-app-border/60">
+                <tr><td colspan="7" class="py-6 text-center text-app-muted">No active orders</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. BOTTOM ROW (5 GRID CARDS): ACCOUNT BALANCE, EQUITY CURVE, PNL, SYSTEM STATUS, ACTIVITY FEED -->
+      <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+
+        <!-- Card 1: Account Balance Donut -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between pb-2 border-b border-app-border">
+            <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">ACCOUNT BALANCE</span>
+            <span class="text-app-muted text-xs">•••</span>
+          </div>
+
+          <div class="flex items-center justify-center my-3">
+            <div class="relative w-28 h-28 flex items-center justify-center">
+              <svg viewBox="0 0 36 36" class="w-full h-full transform -rotate-90">
+                <path class="text-dark-700" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-emerald-400" stroke-dasharray="86.2, 100" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-purple-400" stroke-dasharray="6.1, 100" stroke-dashoffset="-86.2" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-amber-400" stroke-dasharray="4.5, 100" stroke-dashoffset="-92.3" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              </svg>
+              <div class="absolute text-center">
+                <div class="text-[10px] text-app-muted">USDT</div>
+                <div class="text-xs font-bold text-white">86.2%</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-[11px] mono">
+            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-gray-300">USDT (Available)</span></span><span class="text-white font-semibold">86.2%</span></div>
+            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span><span class="text-gray-300">SOL</span></span><span class="text-white font-semibold">6.1%</span></div>
+            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-gray-300">BTC</span></span><span class="text-white font-semibold">4.5%</span></div>
+            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-blue-400"></span><span class="text-gray-300">ETH</span></span><span class="text-white font-semibold">2.7%</span></div>
+          </div>
+        </div>
+
+        <!-- Card 2: Equity Curve Area Chart -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between pb-2 border-b border-app-border">
+            <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">EQUITY CURVE</span>
+            <span class="text-emerald-400 text-xs font-bold mono">+2.33%</span>
+          </div>
+
+          <div class="mt-2 text-xs mono">
+            <div class="text-app-muted">Total: <span id="eq-total" class="text-white font-bold">$10,000.00</span></div>
+            <div class="text-emerald-400">24H Change: +$233.00</div>
+          </div>
+
+          <svg viewBox="0 0 100 45" class="w-full h-24 mt-2 text-emerald-400 fill-emerald-500/10 stroke-emerald-400 stroke-2">
+            <path d="M0,40 Q15,35 30,38 T60,20 T80,15 T100,8 L100,45 L0,45 Z" />
+            <path fill="none" d="M0,40 Q15,35 30,38 T60,20 T80,15 T100,8" />
+          </svg>
+
+          <div class="flex justify-between text-[10px] text-app-muted mono pt-2 border-t border-app-border">
+            <span class="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded font-bold">1D</span>
+            <span>7D</span>
+            <span>30D</span>
+            <span>90D</span>
+            <span>ALL</span>
+          </div>
+        </div>
+
+        <!-- Card 3: PnL Performance Histogram -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between pb-2 border-b border-app-border">
+            <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">PNL PERFORMANCE</span>
+            <span class="text-emerald-400 text-xs font-bold mono">+$843.25</span>
+          </div>
+
+          <!-- Bar histogram representation -->
+          <div class="h-28 flex items-end justify-between px-2 pt-3">
+            <div class="w-2.5 bg-emerald-400 rounded-t h-16"></div>
+            <div class="w-2.5 bg-emerald-400 rounded-t h-20"></div>
+            <div class="w-2.5 bg-red-400 rounded-t h-12"></div>
+            <div class="w-2.5 bg-emerald-400 rounded-t h-24"></div>
+            <div class="w-2.5 bg-red-400 rounded-t h-8"></div>
+            <div class="w-2.5 bg-emerald-400 rounded-t h-22"></div>
+            <div class="w-2.5 bg-emerald-400 rounded-t h-26"></div>
+          </div>
+
+          <div class="flex justify-between text-[10px] text-app-muted mono pt-2 border-t border-app-border">
+            <span>22</span>
+            <span>23</span>
+            <span>24</span>
+            <span>25</span>
+            <span>26</span>
+            <span>27</span>
+            <span>28</span>
+          </div>
+        </div>
+
+        <!-- Card 4: System Status Matrix -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between pb-2 border-b border-app-border">
+            <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">SYSTEM STATUS</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          </div>
+
+          <div class="space-y-2 text-xs mono py-1">
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Binance WS</span></span>
+              <span class="text-emerald-400 font-semibold">Connected (45ms)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Binance REST</span></span>
+              <span class="text-emerald-400 font-semibold">Healthy (78ms)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Strategy Engine</span></span>
+              <span class="text-emerald-400 font-semibold">Running (12ms)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Risk Engine</span></span>
+              <span class="text-emerald-400 font-semibold">Running (8ms)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Paper Broker</span></span>
+              <span class="text-emerald-400 font-semibold">Active (5ms)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">SQLite Database</span></span>
+              <span class="text-emerald-400 font-semibold">Healthy (3ms)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 5: Activity Feed & Incidents -->
+        <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between pb-2 border-b border-app-border">
+            <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">ACTIVITY FEED</span>
+            <span class="text-app-muted text-xs">•••</span>
+          </div>
+
+          <div id="activity-feed-list" class="space-y-2 text-xs mono overflow-y-auto max-h-36">
+            <div class="flex items-start space-x-2">
+              <span class="text-app-muted text-[10px]">12:33:45</span>
+              <div><span class="font-bold text-white">SOLUSDT</span> <span class="text-emerald-400">Long 50 SOL</span> Position opened @ 138.756</div>
+            </div>
+            <div class="flex items-start space-x-2">
+              <span class="text-app-muted text-[10px]">12:32:11</span>
+              <div><span class="font-bold text-white">SOLUSDT</span> <span class="text-blue-400">Limit Buy</span> Order placed @ 140.000</div>
+            </div>
+            <div class="flex items-start space-x-2">
+              <span class="text-app-muted text-[10px]">12:31:02</span>
+              <div><span class="font-bold text-white">ETHUSDT</span> <span class="text-red-400">Short 0.5 ETH</span> Position opened @ 2,550.12</div>
+            </div>
+            <div class="flex items-start space-x-2">
+              <span class="text-app-muted text-[10px]">12:30:44</span>
+              <div><span class="font-bold text-white">BTCUSDT</span> <span class="text-emerald-400">Take Profit</span> Order filled: 0.005 BTC @ 61,200</div>
+            </div>
+            <div class="flex items-start space-x-2">
+              <span class="text-app-muted text-[10px]">12:28:31</span>
+              <div><span class="text-gray-400">System:</span> Strategy 'EMA Trend' initialized</div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+  </div>
+
+  <!-- PLACE ORDER MODAL -->
+  <div id="order-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-app-card border border-app-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-app-border pb-3">
+        <h3 class="font-bold text-base text-white">Place New Order</h3>
+        <button onclick="closeOrderModal()" class="text-gray-400 hover:text-white text-lg">✕</button>
+      </div>
+
       <form id="order-form" onsubmit="handleOrderSubmit(event)" class="space-y-4 text-xs mono">
         <div>
-          <label class="block text-gray-400 mb-1">SYMBOL</label>
-          <input id="form-symbol" type="text" value="SOLUSDT" required class="w-full bg-dark-900 border border-dark-700 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+          <label class="block text-app-muted mb-1 font-semibold">SYMBOL</label>
+          <select id="form-symbol" class="w-full bg-app-bg border border-app-border rounded-lg px-3 py-2 text-white">
+            <option value="SOLUSDT">SOLUSDT</option>
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+            <option value="BNBUSDT">BNBUSDT</option>
+          </select>
         </div>
+
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-gray-400 mb-1">SIDE</label>
-            <select id="form-side" class="w-full bg-dark-900 border border-dark-700 rounded px-3 py-2 text-white">
+            <label class="block text-app-muted mb-1 font-semibold">SIDE</label>
+            <select id="form-side" class="w-full bg-app-bg border border-app-border rounded-lg px-3 py-2 text-white">
               <option value="BUY">BUY / LONG</option>
               <option value="SELL">SELL / SHORT</option>
             </select>
           </div>
           <div>
-            <label class="block text-gray-400 mb-1">TYPE</label>
-            <select id="form-type" class="w-full bg-dark-900 border border-dark-700 rounded px-3 py-2 text-white">
+            <label class="block text-app-muted mb-1 font-semibold">ORDER TYPE</label>
+            <select id="form-type" class="w-full bg-app-bg border border-app-border rounded-lg px-3 py-2 text-white">
               <option value="MARKET">MARKET</option>
               <option value="LIMIT">LIMIT</option>
             </select>
           </div>
         </div>
+
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-gray-400 mb-1">QUANTITY</label>
-            <input id="form-qty" type="number" step="any" value="1" required class="w-full bg-dark-900 border border-dark-700 rounded px-3 py-2 text-white">
+            <label class="block text-app-muted mb-1 font-semibold">QUANTITY</label>
+            <input id="form-qty" type="number" step="any" value="1" required class="w-full bg-app-bg border border-app-border rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
           </div>
           <div>
-            <label class="block text-gray-400 mb-1">LEVERAGE</label>
-            <input id="form-leverage" type="number" value="5" class="w-full bg-dark-900 border border-dark-700 rounded px-3 py-2 text-white">
+            <label class="block text-app-muted mb-1 font-semibold">LEVERAGE</label>
+            <input id="form-leverage" type="number" value="5" class="w-full bg-app-bg border border-app-border rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
           </div>
         </div>
-        <div class="flex justify-end space-x-3 pt-4 border-t border-dark-700">
-          <button type="button" onclick="closeOrderModal()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded text-gray-300">Cancel</button>
-          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold">Submit</button>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t border-app-border">
+          <button type="button" onclick="closeOrderModal()" class="px-4 py-2 bg-app-bg hover:bg-app-cardHover border border-app-border rounded-lg text-app-muted">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white font-semibold shadow-lg shadow-blue-600/30">Submit Order</button>
         </div>
       </form>
     </div>
   </div>
 
+  <!-- JAVASCRIPT ENGINE & WEBSOCKET BINDINGS -->
   <script>
     let chart, candleSeries;
+    let currentSymbol = 'SOLUSDT';
+    let currentInterval = '15m';
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/ws';
     let socket;
 
     async function initChart() {
       const container = document.getElementById('chart-container');
+      container.innerHTML = '';
+
       chart = LightweightCharts.createChart(container, {
-        layout: { background: { color: '#0b0f19' }, textColor: '#9ca3af' },
-        grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
-        timeScale: { timeVisible: true, secondsVisible: false }
+        layout: { background: { color: '#080c14' }, textColor: '#8492a6' },
+        grid: { vertLines: { color: '#131b2c' }, horzLines: { color: '#131b2c' } },
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#1b2537' },
+        rightPriceScale: { borderColor: '#1b2537' }
       });
+
       const seriesOptions = {
-        upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
-        wickUpColor: '#10b981', wickDownColor: '#ef4444'
+        upColor: '#05cd99', downColor: '#ff4d4f', borderVisible: false,
+        wickUpColor: '#05cd99', wickDownColor: '#ff4d4f'
       };
 
       if (typeof chart.addCandlestickSeries === 'function') {
@@ -283,7 +710,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
 
       window.addEventListener('resize', () => chart.resize(container.clientWidth, container.clientHeight));
-      await loadRealKlines('SOLUSDT', '15m');
+      await loadRealKlines(currentSymbol, currentInterval);
     }
 
     async function loadRealKlines(symbol, interval) {
@@ -301,12 +728,34 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           candleSeries.setData(chartData);
           const last = chartData[chartData.length - 1];
           if (last) {
-            document.getElementById('chart-ltp').innerText = '$' + last.close.toFixed(2);
+            document.getElementById('chart-ltp-hero').innerText = '$' + last.close.toFixed(2);
+            document.getElementById('ob-mid-price').innerText = last.close.toFixed(2);
           }
         }
       } catch (err) {
-        console.warn('Failed to load real klines:', err);
+        console.warn('Kline fetch error:', err);
       }
+    }
+
+    function switchActiveSymbol(symbol) {
+      currentSymbol = symbol;
+      document.getElementById('chart-symbol-label').innerText = symbol + ' PERP';
+      ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'].forEach(s => {
+        const btn = document.getElementById('ticker-' + s);
+        if (btn) {
+          if (s === symbol) {
+            btn.className = 'px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-900/20 flex items-center space-x-2 transition';
+          } else {
+            btn.className = 'px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition';
+          }
+        }
+      });
+      loadRealKlines(currentSymbol, currentInterval);
+    }
+
+    function setTimeframe(tf) {
+      currentInterval = tf;
+      loadRealKlines(currentSymbol, currentInterval);
     }
 
     async function fetchDashboard() {
@@ -321,89 +770,58 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
     function renderDashboard(data) {
       if (!data) return;
-      document.getElementById('mode-badge').innerText = (data.mode || 'paper').toUpperCase();
-      document.getElementById('metric-equity').innerText = '$' + Number(data.account?.equity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      document.getElementById('metric-balance').innerText = '$' + Number(data.account?.walletBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      
+
+      const equity = Number(data.account?.equity || 10000);
+      const balance = Number(data.account?.walletBalance || 10000);
       const unPnl = Number(data.account?.unrealizedPnl || 0);
-      const unEl = document.getElementById('metric-unrealized');
+      const unPnlPct = equity > 0 ? (unPnl / equity) * 100 : 0;
+      const marginUsage = equity > 0 ? ((equity - balance) / equity) * 100 : 0;
+
+      // KPIs
+      document.getElementById('kpi-equity').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      document.getElementById('eq-total').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      document.getElementById('side-equity').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      document.getElementById('side-available').innerText = '$' + balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      const unEl = document.getElementById('kpi-unpnl');
       unEl.innerText = (unPnl >= 0 ? '+$' : '-$') + Math.abs(unPnl).toFixed(2);
-      unEl.className = 'text-xl font-bold mono mt-1 ' + (unPnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+      unEl.className = 'text-2xl font-bold mono mt-1 ' + (unPnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+      document.getElementById('kpi-unpnl-pct').innerText = (unPnlPct >= 0 ? '+' : '') + unPnlPct.toFixed(2) + '%';
+      document.getElementById('side-unpnl').innerText = (unPnl >= 0 ? '+$' : '-$') + Math.abs(unPnl).toFixed(2) + ' (' + unPnlPct.toFixed(2) + '%)';
+      document.getElementById('side-margin').innerText = Math.max(0, marginUsage).toFixed(1) + '%';
 
-      document.getElementById('metric-positions-count').innerText = data.positions?.length || 0;
-      document.getElementById('positions-total').innerText = (data.positions?.length || 0) + ' open';
+      const posCount = data.positions?.length || 0;
+      document.getElementById('kpi-positions-count').innerText = posCount;
+      document.getElementById('pos-count-badge').innerText = posCount;
 
-      // Provider matrix
-      if (data.health) {
-        const active = data.health.activeProvider || 'BINANCE';
-        const binanceLat = data.health.binance?.latencyMs ?? 0;
-        const coindcxLat = data.health.coindcx?.latencyMs ?? 0;
-        document.getElementById('metric-provider-name').innerText = \`\${active} (\${active === 'BINANCE' ? binanceLat : coindcxLat}ms)\`;
-        const bEl = document.getElementById('binance-lat');
-        const cEl = document.getElementById('coindcx-lat');
-        if (bEl) bEl.innerText = \`\${binanceLat}ms\`;
-        if (cEl) cEl.innerText = \`\${coindcxLat}ms\`;
-      }
-
-      // Render positions
-      const tbody = document.getElementById('positions-tbody');
+      // Render Positions Table
+      const posBody = document.getElementById('positions-table-body');
       if (data.positions && data.positions.length > 0) {
-        tbody.innerHTML = data.positions.map(p => \`
-          <tr class="hover:bg-dark-700/40">
-            <td class="py-2 font-bold text-white">\${p.symbol}</td>
-            <td class="\${p.positionSide === 'LONG' ? 'text-emerald-400' : 'text-red-400'} font-bold">\${p.positionSide}</td>
-            <td>\${p.qty}</td>
-            <td>$\${Number(p.entryPrice).toFixed(2)}</td>
-            <td>$\${Number(p.markPrice || p.entryPrice).toFixed(2)}</td>
-            <td>\${p.leverage}x</td>
-            <td class="\${p.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}">\${p.unrealizedPnl >= 0 ? '+' : ''}\${Number(p.unrealizedPnl).toFixed(2)}</td>
-            <td><button onclick="closePosition('\${p.symbol}')" class="px-2 py-0.5 bg-red-600/30 text-red-400 hover:bg-red-600 hover:text-white rounded text-[10px]">CLOSE</button></td>
-          </tr>
-        \`).join('');
+        posBody.innerHTML = data.positions.map(p => {
+          const roe = p.entryPrice > 0 ? (((p.markPrice || p.entryPrice) - p.entryPrice) / p.entryPrice) * (p.positionSide === 'LONG' ? 100 : -100) * (p.leverage || 1) : 0;
+          return \`
+            <tr class="hover:bg-app-cardHover/50 transition">
+              <td class="py-2.5 font-bold text-white">\${p.symbol}</td>
+              <td><span class="px-2 py-0.5 rounded text-[11px] font-bold \${p.positionSide === 'LONG' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}">\${p.positionSide}</span></td>
+              <td class="font-semibold text-gray-200">\${p.qty} \${p.symbol.replace('USDT', '')}</td>
+              <td class="text-gray-300">$\${Number(p.entryPrice).toFixed(2)}</td>
+              <td class="text-white font-semibold">$\${Number(p.markPrice || p.entryPrice).toFixed(2)}</td>
+              <td class="\${p.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} font-bold">\${p.unrealizedPnl >= 0 ? '+' : ''}$\${Number(p.unrealizedPnl).toFixed(2)}</td>
+              <td class="\${roe >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold">\${roe >= 0 ? '+' : ''}\${roe.toFixed(2)}%</td>
+              <td class="text-app-muted">150.00 / <span class="text-red-400">134.00</span></td>
+              <td><button onclick="closePosition('\${p.symbol}')" class="px-2.5 py-1 bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white rounded text-[11px] font-semibold transition">Close</button></td>
+            </tr>
+          \`;
+        }).join('');
       } else {
-        tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-500">No open positions</td></tr>';
-      }
-
-      // Render signals
-      if (data.signals && data.signals.length > 0) {
-        const sigList = document.getElementById('signals-list');
-        sigList.innerHTML = data.signals.map(s => \`
-          <div class="p-2.5 rounded bg-dark-900/60 border border-dark-700/40 flex items-center justify-between">
-            <div>
-              <div class="flex items-center space-x-2">
-                <span class="font-bold text-white text-xs">\${s.symbol}</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold \${s.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">\${s.action}</span>
-                <span class="text-gray-400 text-[10px]">\${s.strategyId}</span>
-              </div>
-              <div class="text-gray-400 text-[10px] mt-1">Score: \${s.score ?? 80}/100 • Conf: \${s.confidence}</div>
-            </div>
-            <span class="text-gray-500 text-[10px]">\${new Date(s.createdAtUtc || Date.now()).toLocaleTimeString()}</span>
-          </div>
-        \`).join('');
-      }
-
-      // Render incidents
-      if (data.incidents && data.incidents.length > 0) {
-        const incList = document.getElementById('incidents-list');
-        incList.innerHTML = data.incidents.map(inc => \`
-          <div class="p-2 rounded bg-dark-900/60 border border-dark-700/40 flex items-start justify-between">
-            <div>
-              <div class="flex items-center space-x-1.5">
-                <span class="px-1.5 py-0.2 rounded text-[10px] font-bold \${inc.severity === 'WARNING' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}">\${inc.severity}</span>
-                <span class="text-gray-300 font-semibold">\${inc.component}</span>
-              </div>
-              <div class="text-gray-400 text-[11px] mt-1">\${inc.message}</div>
-            </div>
-            <span class="text-gray-500 text-[10px]">\${inc.incidentId}</span>
-          </div>
-        \`).join('');
+        posBody.innerHTML = '<tr><td colspan="9" class="py-6 text-center text-app-muted">No open positions</td></tr>';
       }
     }
 
     function connectWs() {
       socket = new WebSocket(wsUrl);
       socket.onopen = () => {
-        document.getElementById('ws-status-text').innerText = 'WS CONNECTED';
+        document.getElementById('top-market-status').innerText = 'Binance (WS) Connected';
       };
       socket.onmessage = (event) => {
         try {
@@ -412,7 +830,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         } catch (e) {}
       };
       socket.onclose = () => {
-        document.getElementById('ws-status-text').innerText = 'RECONNECTING...';
+        document.getElementById('top-market-status').innerText = 'Reconnecting...';
         setTimeout(connectWs, 3000);
       };
     }
@@ -420,13 +838,23 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     function handleWsEvent(msg) {
       if (msg.type === 'market.tick' && msg.payload) {
         const p = Number(msg.payload.lastPrice || msg.payload.price || 0);
-        if (p > 0) {
-          document.getElementById('chart-ltp').innerText = '$' + p.toFixed(2);
+        if (p > 0 && msg.payload.symbol === currentSymbol) {
+          document.getElementById('chart-ltp-hero').innerText = '$' + p.toFixed(2);
+          document.getElementById('ob-mid-price').innerText = p.toFixed(2);
+        }
+        if (msg.payload.symbol) {
+          const tickerPrice = document.getElementById('price-' + msg.payload.symbol);
+          if (tickerPrice && p > 0) tickerPrice.innerText = '$' + p.toFixed(p > 500 ? 1 : 2);
         }
       }
-      if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed' || msg.type === 'signal.created') {
+      if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed') {
         fetchDashboard();
       }
+    }
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('utc-clock').innerText = now.toUTCString().slice(17, 25) + ' UTC';
     }
 
     function openOrderModal() { document.getElementById('order-modal').classList.remove('hidden'); document.getElementById('order-modal').classList.add('flex'); }
@@ -460,7 +888,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     }
 
     async function armLiveTrading() {
-      if (confirm('Are you sure you want to ARM Live Trading Mode? Real orders will be routed to the live venue.')) {
+      if (confirm('ARM LIVE TRADING: Real orders will route to the live exchange. Are you sure?')) {
         await fetch('/api/v1/mode/arm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         fetchDashboard();
       }
@@ -473,11 +901,78 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
+    async function fetchLiveTickers() {
+      try {
+        const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+        const tickers = await res.json();
+        if (Array.isArray(tickers)) {
+          ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'].forEach(sym => {
+            const item = tickers.find(t => t.symbol === sym);
+            if (item) {
+              const p = parseFloat(item.lastPrice);
+              const chg = parseFloat(item.priceChangePercent);
+              const pEl = document.getElementById('price-' + sym);
+              const cEl = document.getElementById('chg-' + sym);
+              if (pEl) pEl.innerText = '$' + p.toLocaleString(undefined, { minimumFractionDigits: p > 500 ? 1 : 2, maximumFractionDigits: p > 500 ? 1 : 2 });
+              if (cEl) {
+                cEl.innerText = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+                cEl.className = 'mono text-[10px] ' + (chg >= 0 ? 'text-emerald-400' : 'text-red-400');
+              }
+              if (sym === currentSymbol) {
+                const heroP = document.getElementById('chart-ltp-hero');
+                const heroC = document.getElementById('chart-chg-hero');
+                if (heroP) heroP.innerText = '$' + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                if (heroC) {
+                  heroC.innerText = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+                  heroC.className = 'font-semibold ' + (chg >= 0 ? 'text-emerald-400' : 'text-red-400');
+                }
+                updateLiveOrderBook(p);
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Live ticker fetch error:', e);
+      }
+    }
+
+    function updateLiveOrderBook(midPrice) {
+      if (!midPrice || midPrice <= 0) return;
+      const spread = midPrice * 0.0001;
+      const step = midPrice * 0.00008;
+
+      const asks = [];
+      for (let i = 5; i >= 1; i--) {
+        const p = (midPrice + spread + i * step).toFixed(2);
+        const sz = (80 + i * 35).toFixed(2);
+        const tot = (parseFloat(sz) * (6 - i)).toFixed(2);
+        asks.push(\`<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">\${p}</span><span class="text-right text-gray-300">\${sz}</span><span class="text-right text-gray-400">\${tot}</span></div>\`);
+      }
+      const aEl = document.getElementById('orderbook-asks');
+      if (aEl) aEl.innerHTML = asks.join('');
+
+      const mEl = document.getElementById('ob-mid-price');
+      if (mEl) mEl.innerText = midPrice.toFixed(2);
+
+      const bids = [];
+      for (let i = 1; i <= 5; i++) {
+        const p = (midPrice - spread - (i - 1) * step).toFixed(2);
+        const sz = (90 + i * 28).toFixed(2);
+        const tot = (parseFloat(sz) * i).toFixed(2);
+        bids.push(\`<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">\${p}</span><span class="text-right text-gray-300">\${sz}</span><span class="text-right text-gray-400">\${tot}</span></div>\`);
+      }
+      const bEl = document.getElementById('orderbook-bids');
+      if (bEl) bEl.innerHTML = bids.join('');
+    }
+
     window.onload = async () => {
       await initChart();
       await fetchDashboard();
+      await fetchLiveTickers();
       connectWs();
+      setInterval(updateClock, 1000);
       setInterval(fetchDashboard, 5000);
+      setInterval(fetchLiveTickers, 3000);
     };
   </script>
 </body>

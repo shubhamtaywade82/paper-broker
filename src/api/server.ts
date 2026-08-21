@@ -178,7 +178,11 @@ export class ApiServer {
       const symbol = query.symbol || 'SOLUSDT';
       const interval = query.interval || '15m';
       const limit = query.limit ? parseInt(query.limit, 10) : 100;
-      return this.klines?.getCandles(symbol, interval, limit) ?? [];
+      let cached = this.klines?.getCandles(symbol, interval, limit) ?? [];
+      if (cached.length === 0 && this.klines) {
+        cached = await this.klines.fetchHistoricalKlines(symbol, interval, limit);
+      }
+      return cached;
     });
   }
 

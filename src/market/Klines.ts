@@ -30,6 +30,34 @@ export class KlineStore {
     this.maxPerSeries = maxPerSeries;
   }
 
+  async fetchHistoricalKlines(symbol: string, interval: string, limit = 100): Promise<Candle[]> {
+    try {
+      const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const res = await fetch(url);
+      if (!res.ok) return this.getCandles(symbol, interval, limit);
+      const data = (await res.json()) as Array<[number, string, string, string, string, string]>;
+      if (!Array.isArray(data)) return this.getCandles(symbol, interval, limit);
+
+      const candles: Candle[] = data.map((item) => ({
+        symbol,
+        interval,
+        openTime: item[0],
+        open: parseFloat(item[1]),
+        high: parseFloat(item[2]),
+        low: parseFloat(item[3]),
+        close: parseFloat(item[4]),
+        volume: parseFloat(item[5]),
+      }));
+
+      for (const candle of candles) {
+        this.upsertCandle(candle);
+      }
+      return candles;
+    } catch {
+      return this.getCandles(symbol, interval, limit);
+    }
+  }
+
   getCandles(symbol: string, interval: string, limit: number): Candle[] {
     const key = `${symbol}:${interval}`;
     const series = this.candles.get(key);
