@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -e
-
 echo "========================================"
 echo "Running Full Verification Suite"
 echo "========================================"
@@ -18,12 +16,12 @@ FAIL_COUNT=0
 
 pass() {
     echo -e "${GREEN}✓${NC} $1"
-    ((PASS_COUNT++))
+    PASS_COUNT=$((PASS_COUNT + 1))
 }
 
 fail() {
     echo -e "${RED}✗${NC} $1"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 }
 
 warn() {
