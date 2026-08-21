@@ -27,10 +27,8 @@
 - `mean-reversion`: per-symbol cooldown + Bollinger band calculation.
 **Verified:** Build clean, lint 0 errors, 50/50 tests pass.
 
-### TODO-9: Initial git commit
-**Status:** Repo is `git init` + `.gitignore` ready, but **uncommitted** (per policy — needs explicit user approval).
-- [ ] Ask user for commit approval.
-- [ ] Commit with message: "paper-broker: production paper trading engine with Binance testnet, event-sourced SQLite, 7 strategies, REST API, Docker".
+### TODO-9: Initial git commit ✅ DONE
+**Committed:** `cbb5733` — "paper-broker: production paper trading engine with Binance testnet, event-sourced SQLite, 7 strategies, REST API, Docker" + formatting fix.
 
 ---
 

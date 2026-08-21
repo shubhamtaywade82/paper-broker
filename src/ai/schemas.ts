@@ -40,3 +40,37 @@ export const extractJsonFromResponse = (response: string): unknown => {
 
   throw new Error('No JSON object found in response');
 };
+export const AgentDecisionActionSchema = z.enum([
+  'ENTER_LONG',
+  'ENTER_SHORT',
+  'WAIT',
+  'NO_TRADE',
+  'EXIT_LONG',
+  'EXIT_SHORT',
+  'REDUCE',
+  'ADD',
+  'REVERSE',
+]);
+
+export const AgentDecisionSchema = z
+  .object({
+    action: AgentDecisionActionSchema,
+    symbol: z.string().regex(/^[A-Z0-9]+$/, 'must be a valid Binance symbol'),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1),
+    requiredEvidence: z.array(z.string()).default([]),
+    contradictions: z.array(z.string()).default([]),
+    proposal: z
+      .object({
+        setupId: z.string().optional(),
+        direction: z.enum(['LONG', 'SHORT']).optional(),
+        entryZone: z.object({ low: z.number(), high: z.number() }).optional(),
+        invalidation: z.number().optional(),
+        targets: z.array(z.number()).default([]),
+      })
+      .optional(),
+  })
+  .strict();
+
+export type AgentDecisionAction = z.infer<typeof AgentDecisionActionSchema>;
+export type AgentDecision = z.infer<typeof AgentDecisionSchema>;
