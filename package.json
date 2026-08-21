@@ -18,7 +18,8 @@
     "paper:backtest": "tsx src/cli.ts backtest",
     "docker:build": "docker build -t paper-broker .",
     "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down"
+    "docker:down": "docker-compose down",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@nemesis-oss/binance-sdk": "^1.0.0",
