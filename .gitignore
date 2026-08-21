@@ -3,4 +3,5 @@ dist/
 data/
 .env
 *.log
-.DS_Storepaper.sqlite3*
+.DS_Store
+paper.sqlite3*
