@@ -48,6 +48,13 @@ describe('Binance Market Data Normalizers & Quality Checks', () => {
     expect(res?.quantity).toBe(14.5);
     expect(res?.isBuyerMaker).toBe(true);
 
+    // Trade with T timestamp instead of E
+    const tradeWithT = { s: 'SOLUSDT', p: '97.55', q: '2.5', T: 1700000000200, m: false };
+    const resT = normalizeAggTrade(tradeWithT);
+    expect(resT?.price).toBe(97.55);
+    expect(resT?.eventTime).toBe(1700000000200);
+    expect(resT?.isBuyerMaker).toBe(false);
+
     // Negative quantity rejected
     expect(normalizeAggTrade({ s: 'SOLUSDT', p: '97.52', q: '-1', E: 1 })).toBeNull();
   });

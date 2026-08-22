@@ -7,7 +7,6 @@ import { SetupEngine } from '../../market/setup/SetupEngine.js';
 import { ExecutionPlanEngine } from '../../market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
 import { SmcPaperBroker } from '../../broker/paper/SmcPaperBroker.js';
-import type { Candle } from '../../strategy/indicators.js';
 import type { HistoricalDataset } from '../replay/types.js';
 import { HistoricalDataLoader } from '../replay/HistoricalDataLoader.js';
 import type { DiagnosticCandidateTrace, DiagnosticReport, FunnelStageStats } from './types.js';
@@ -86,18 +85,22 @@ export class DiagnosticFunnelEngine {
         longAcc.total5mBars++;
         shortAcc.total5mBars++;
 
-        this.evaluateBar(dataset.symbol, asOf, mtfEngine, structureEngine, smcEngine, setupEngine, planEngine, tradeEngine, broker, inst, 'LONG', longAcc, traces, scoreDist);
-        this.evaluateBar(dataset.symbol, asOf, mtfEngine, structureEngine, smcEngine, setupEngine, planEngine, tradeEngine, broker, inst, 'SHORT', shortAcc, traces, scoreDist);
+        const mtf = mtfEngine.computeState(dataset.symbol, asOf);
+        const struct = structureEngine.computeMultiTimeframeStructure(dataset.symbol, asOf);
+        const smc = smcEngine.computeMultiTimeframeSmcContext(dataset.symbol, asOf);
+
+        this.evaluateDirectionalBar(dataset.symbol, asOf, mtf, struct, smc, setupEngine, planEngine, tradeEngine, broker, inst, 'LONG', longAcc, traces, scoreDist);
+        this.evaluateDirectionalBar(dataset.symbol, asOf, mtf, struct, smc, setupEngine, planEngine, tradeEngine, broker, inst, 'SHORT', shortAcc, traces, scoreDist);
       }
     }
   }
 
-  private static evaluateBar(
+  private static evaluateDirectionalBar(
     symbol: string,
     asOf: number,
-    mtfEngine: MtfStateEngine,
-    structureEngine: MarketStructureEngine,
-    smcEngine: SmcLocationEngine,
+    mtf: ReturnType<MtfStateEngine['computeState']>,
+    struct: ReturnType<MarketStructureEngine['computeMultiTimeframeStructure']>,
+    smc: ReturnType<SmcLocationEngine['computeMultiTimeframeSmcContext']>,
     setupEngine: SetupEngine,
     planEngine: ExecutionPlanEngine,
     tradeEngine: TradeIntentEngine,
@@ -108,9 +111,6 @@ export class DiagnosticFunnelEngine {
     traces: DiagnosticCandidateTrace[],
     scoreDist: Record<string, number>
   ): void {
-    const mtf = mtfEngine.computeState(symbol, asOf);
-    const struct = structureEngine.computeMultiTimeframeStructure(symbol, asOf);
-    const smc = smcEngine.computeMultiTimeframeSmcContext(symbol, asOf);
 
     const isBull = dir === 'LONG';
     const targetTrend = isBull ? 'BULLISH' : 'BEARISH';
@@ -186,21 +186,21 @@ export class DiagnosticFunnelEngine {
     acc.readySetupPassed++;
 
     const plan = planEngine.generateExecutionPlan(cand, struct, smc, inst, asOf, true);
-    if (plan.status !== 'EXECUTABLE') { this.recordRejection(acc, 'EXECUTION_PLAN', plan.avoidReason ?? 'RR_BELOW_MINIMUM'); return; }
+    if (plan.status !== 'EXECUTABLE') { this.recordRejection(acc, 'EXECUTION_PLAN', plan.validationFailures[0] ?? 'RR_BELOW_MINIMUM'); return; }
     acc.executablePlanPassed++;
 
     const accState = broker.getAccount();
     const sig = tradeEngine.processExecutionPlan(plan, { equity: accState.equity, availableBalance: accState.availableBalance, dailyLoss: 0, realizedPnl: accState.realizedPnl }, [], inst, asOf);
-    if (sig.status !== 'PAPER_READY') { this.recordRejection(acc, 'RISK_GATE', sig.rejectionReason ?? 'RISK_REJECTED'); return; }
+    if (sig.status !== 'PAPER_READY') { this.recordRejection(acc, 'RISK_GATE', sig.riskRejectionReasons[0] ?? 'RISK_REJECTED'); return; }
     acc.paperReadyPassed++;
 
     const order = broker.submitTradeSignal(sig, asOf);
-    if (order.status === 'FILLED') {
+    if (order.accepted) {
       acc.filledOrders++;
     }
 
     if (traces.length < 50) {
-      traces.push({ timestamp: asOf, symbol, direction: dir, failedStage: 'NONE', passedGates: ['ALL'], rejectionReasons: [], confluenceScore: score, riskRewardRatio: plan.riskReward?.tp1Ratio ?? null });
+      traces.push({ timestamp: asOf, symbol, direction: dir, failedStage: 'NONE', passedGates: ['ALL'], rejectionReasons: [], confluenceScore: score, riskRewardRatio: plan.riskReward?.tp1 ?? null });
     }
   }
 

@@ -15,7 +15,8 @@ export interface StreamHandlerOptions {
   onKlineTick?: (kline: NormalizedKline) => void;
   onKlineClose?: (kline: NormalizedKline) => void;
   onBookTicker?: (symbol: string, bid: number, ask: number, bidQty: number, askQty: number) => void;
-  onAggTrade?: (symbol: string, price: number, qty: number) => void;
+  onAggTrade?: (symbol: string, price: number, qty: number, isBuyerMaker?: boolean, eventTime?: number) => void;
+  onTrade?: (symbol: string, price: number, qty: number, isBuyerMaker?: boolean, eventTime?: number) => void;
   onSystemEvent?: (type: string, payload: Record<string, unknown>) => void;
 }
 
@@ -39,6 +40,7 @@ export class BinanceStreamHandler {
     for (const symbol of this.options.symbols) {
       streams.push(
         this.client.futures.ws.bookTicker(symbol),
+        this.client.futures.ws.trade(symbol),
         this.client.futures.ws.aggTrade(symbol),
         this.client.futures.ws.markPrice(symbol, '1s')
       );
@@ -91,7 +93,7 @@ export class BinanceStreamHandler {
           );
           this.options.onBookTicker?.(normalized.symbol, normalized.bid, normalized.ask, normalized.bidQty, normalized.askQty);
         }
-      } else if (streamName.includes('@aggTrade')) {
+      } else if (streamName.includes('@trade') || streamName.includes('@aggTrade')) {
         const normalized = normalizeAggTrade(payload);
         if (normalized) {
           this.options.marketState.onAggTrade(
@@ -100,7 +102,8 @@ export class BinanceStreamHandler {
             normalized.quantity,
             String(normalized.eventTime)
           );
-          this.options.onAggTrade?.(normalized.symbol, normalized.price, normalized.quantity);
+          this.options.onAggTrade?.(normalized.symbol, normalized.price, normalized.quantity, normalized.isBuyerMaker, normalized.eventTime);
+          this.options.onTrade?.(normalized.symbol, normalized.price, normalized.quantity, normalized.isBuyerMaker, normalized.eventTime);
         }
       } else if (streamName.includes('@markPrice')) {
         const normalized = normalizeMarkPrice(payload);

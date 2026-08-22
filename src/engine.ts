@@ -6,7 +6,7 @@ import { bootstrapFromBinance } from './binance/bootstrap.js';
 import { BinanceStreamHandler } from './binance/streams.js';
 import { PaperBroker } from './broker/PaperBroker.js';
 import { MarketStateManager } from './market/MarketState.js';
-import { KlineStore } from './market/Klines.js';
+import { KlineStore, type KlineInterval } from './market/Klines.js';
 import { DatabaseManager } from './persistence/db.js';
 import { SQLiteBrokerPersister } from './persistence/BrokerPersister.js';
 import { EventLog } from './persistence/EventLog.js';
@@ -258,8 +258,28 @@ export async function startEngine(): Promise<EngineHandle> {
     onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
       api.wsGateway.broadcast('book.update', { symbol, bid, ask, bidQty, askQty });
     },
-    onAggTrade: (symbol, price, qty) => {
-      api.wsGateway.broadcast('trade.stream', { symbol, price, qty, ts: Date.now() });
+    onAggTrade: (symbol, price, qty, isBuyerMaker, eventTime) => {
+      const ts = eventTime || Date.now();
+      for (const interval of timeframes) {
+        const candle = klines.applyTick(
+          { symbol, price, qty, ts },
+          interval as KlineInterval
+        );
+        if (candle) {
+          api.wsGateway.broadcast('market.tick', {
+            symbol,
+            price,
+            candle,
+          });
+        }
+      }
+      api.wsGateway.broadcast('trade.stream', {
+        symbol,
+        price,
+        qty,
+        isBuyerMaker: Boolean(isBuyerMaker),
+        ts,
+      });
     },
     onSystemEvent: (type, payload) => {
       events.appendSystemEvent({ eventType: type as never, payload, createdAtUtc: new Date().toISOString() });

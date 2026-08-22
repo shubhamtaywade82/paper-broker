@@ -146,4 +146,50 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     expect(broadcastSpy).toHaveBeenCalledWith('order.updated', expect.objectContaining({ id: 'ord-123' }));
     await server.stop();
   });
+
+  it('GET /api/v1/trades returns array of trades safely', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/trades?symbol=SOLUSDT&limit=5',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(Array.isArray(data)).toBe(true);
+    await server.stop();
+  });
+
+  it('GET /api/v1/tickers returns ticker data safely', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/tickers',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(Array.isArray(data)).toBe(true);
+    await server.stop();
+  });
 });

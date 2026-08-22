@@ -295,19 +295,19 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
               <span id="chart-symbol-label" class="font-bold text-base text-white tracking-wide">SOLUSDT PERP</span>
               <!-- Timeframe Selector -->
               <div class="flex items-center space-x-1 bg-app-bg p-0.5 rounded-lg border border-app-border text-xs mono">
-                <button onclick="setTimeframe('1m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1m</button>
-                <button onclick="setTimeframe('5m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">5m</button>
-                <button onclick="setTimeframe('15m')" class="px-2 py-0.5 rounded bg-blue-600 text-white font-bold">15m</button>
-                <button onclick="setTimeframe('1h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1h</button>
-                <button onclick="setTimeframe('4h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">4h</button>
-                <button onclick="setTimeframe('1d')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1D</button>
+                <button id="tf-btn-1m" onclick="setTimeframe('1m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1m</button>
+                <button id="tf-btn-5m" onclick="setTimeframe('5m')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">5m</button>
+                <button id="tf-btn-15m" onclick="setTimeframe('15m')" class="px-2 py-0.5 rounded bg-blue-600 text-white font-bold">15m</button>
+                <button id="tf-btn-1h" onclick="setTimeframe('1h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1h</button>
+                <button id="tf-btn-4h" onclick="setTimeframe('4h')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">4h</button>
+                <button id="tf-btn-1d" onclick="setTimeframe('1d')" class="px-2 py-0.5 rounded text-app-muted hover:text-white">1D</button>
               </div>
             </div>
 
             <!-- Price & OHLC Status -->
             <div class="flex items-center space-x-3 text-xs mono">
-              <span id="chart-ltp-hero" class="text-lg font-bold text-emerald-400">$142.39</span>
-              <span id="chart-chg-hero" class="text-emerald-400 font-semibold">+0.52 (+0.37%)</span>
+              <span id="chart-ltp-hero" class="text-lg font-bold text-emerald-400">---</span>
+              <span id="chart-chg-hero" class="text-emerald-400 font-semibold">+0.00%</span>
             </div>
           </div>
 
@@ -317,13 +317,12 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           <!-- Bottom Time Scale Filters -->
           <div class="flex items-center justify-between pt-3 mt-2 border-t border-app-border text-xs text-app-muted mono">
             <div class="flex space-x-2">
-              <span class="hover:text-white cursor-pointer">1D</span>
-              <span class="hover:text-white cursor-pointer">5D</span>
-              <span class="text-blue-400 font-bold cursor-pointer">1M</span>
-              <span class="hover:text-white cursor-pointer">6M</span>
-              <span class="hover:text-white cursor-pointer">YTD</span>
-              <span class="hover:text-white cursor-pointer">1Y</span>
-              <span class="hover:text-white cursor-pointer">ALL</span>
+              <span class="hover:text-white cursor-pointer" onclick="setTimeframe('1m')">1M</span>
+              <span class="hover:text-white cursor-pointer" onclick="setTimeframe('5m')">5M</span>
+              <span class="text-blue-400 font-bold cursor-pointer" onclick="setTimeframe('15m')">15M</span>
+              <span class="hover:text-white cursor-pointer" onclick="setTimeframe('1h')">1H</span>
+              <span class="hover:text-white cursor-pointer" onclick="setTimeframe('4h')">4H</span>
+              <span class="hover:text-white cursor-pointer" onclick="setTimeframe('1d')">1D</span>
             </div>
             <div>Binance Futures Market Data Engine</div>
           </div>
@@ -344,29 +343,21 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
           <!-- Asks (Red) -->
           <div id="orderbook-asks" class="space-y-1 mono text-xs py-1">
-            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.45</span><span class="text-right text-gray-300">231.42</span><span class="text-right text-gray-400">1,298.75</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.44</span><span class="text-right text-gray-300">124.31</span><span class="text-right text-gray-400">1,067.33</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.43</span><span class="text-right text-gray-300">321.67</span><span class="text-right text-gray-400">943.02</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.42</span><span class="text-right text-gray-300">285.90</span><span class="text-right text-gray-400">624.35</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">142.41</span><span class="text-right text-gray-300">136.12</span><span class="text-right text-gray-400">335.45</span></div>
+            <div class="text-app-muted text-center py-2 text-[11px]">Loading asks...</div>
           </div>
 
           <!-- Mid / Mark Price Spread Indicator -->
           <div class="py-2.5 my-1 border-y border-app-border flex items-center justify-between mono">
             <div class="flex items-center space-x-1.5">
-              <span id="ob-mid-price" class="text-base font-bold text-emerald-400">142.39</span>
+              <span id="ob-mid-price" class="text-base font-bold text-emerald-400">---</span>
               <span class="text-xs text-emerald-400">↑</span>
             </div>
-            <span class="text-xs text-app-muted">142.40 / 142.39</span>
+            <span class="text-xs text-app-muted" id="ob-spread-info">--- / ---</span>
           </div>
 
           <!-- Bids (Green) -->
           <div id="orderbook-bids" class="space-y-1 mono text-xs py-1">
-            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">189.45</span><span class="text-right text-gray-400">189.45</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.38</span><span class="text-right text-gray-300">278.34</span><span class="text-right text-gray-400">467.79</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.37</span><span class="text-right text-gray-300">312.11</span><span class="text-right text-gray-400">779.90</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.36</span><span class="text-right text-gray-300">201.25</span><span class="text-right text-gray-400">981.15</span></div>
-            <div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">142.35</span><span class="text-right text-gray-300">317.26</span><span class="text-right text-gray-400">1,298.41</span></div>
+            <div class="text-app-muted text-center py-2 text-[11px]">Loading bids...</div>
           </div>
         </div>
 
@@ -384,16 +375,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           </div>
 
           <div id="trades-stream" class="space-y-1.5 mono text-xs overflow-hidden max-h-96">
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">12.35</span><span class="text-right text-gray-500">12:34:55</span></div>
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">8.62</span><span class="text-right text-gray-500">12:34:54</span></div>
-            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">21.47</span><span class="text-right text-gray-500">12:34:53</span></div>
-            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.37</span><span class="text-right text-gray-300">15.10</span><span class="text-right text-gray-500">12:34:53</span></div>
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">9.21</span><span class="text-right text-gray-500">12:34:52</span></div>
-            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">18.33</span><span class="text-right text-gray-500">12:34:52</span></div>
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.39</span><span class="text-right text-gray-300">25.11</span><span class="text-right text-gray-500">12:34:51</span></div>
-            <div class="grid grid-cols-3"><span class="text-red-400 font-semibold">142.38</span><span class="text-right text-gray-300">14.88</span><span class="text-right text-gray-500">12:34:51</span></div>
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.37</span><span class="text-right text-gray-300">7.44</span><span class="text-right text-gray-500">12:34:50</span></div>
-            <div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">142.36</span><span class="text-right text-gray-300">11.02</span><span class="text-right text-gray-500">12:34:49</span></div>
+            <div class="text-app-muted text-center py-4 text-[11px]">Loading recent trades...</div>
           </div>
         </div>
       </section>
@@ -646,6 +628,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     let currentSymbol = 'SOLUSDT';
     let currentInterval = '15m';
     let recentTrades = [];
+    let lastChartBar = null;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/ws';
     let socket;
@@ -703,14 +686,86 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
             close: Number(k.close)
           }));
           candleSeries.setData(chartData);
-          const last = chartData[chartData.length - 1];
-          if (last) {
-            document.getElementById('chart-ltp-hero').innerText = '$' + last.close.toFixed(2);
-            document.getElementById('ob-mid-price').innerText = last.close.toFixed(2);
+          lastChartBar = chartData[chartData.length - 1];
+          if (lastChartBar) {
+            document.getElementById('chart-ltp-hero').innerText = '$' + lastChartBar.close.toFixed(2);
+            document.getElementById('ob-mid-price').innerText = lastChartBar.close.toFixed(2);
           }
         }
       } catch (err) {
         console.warn('Kline fetch error:', err);
+      }
+    }
+
+    function renderTrades() {
+      const el = document.getElementById('trades-stream');
+      if (!el) return;
+      if (recentTrades.length === 0) {
+        el.innerHTML = '<div class="text-app-muted text-center py-4 text-[11px]">Waiting for trades...</div>';
+        return;
+      }
+      el.innerHTML = recentTrades.map(tr => {
+        const color = tr.isBuyerMaker ? 'text-red-400' : 'text-emerald-400';
+        return '<div class="grid grid-cols-3"><span class="' + color + ' font-semibold">' + Number(tr.price).toFixed(2) + '</span><span class="text-right text-gray-300">' + Number(tr.qty).toFixed(2) + '</span><span class="text-right text-gray-500">' + tr.time + '</span></div>';
+      }).join('');
+    }
+
+    async function fetchRecentTrades(symbol) {
+      try {
+        const res = await fetch(\`/api/v1/trades?symbol=\${symbol}&limit=15\`);
+        const trades = await res.json();
+        if (Array.isArray(trades) && trades.length > 0) {
+          recentTrades = trades.map(t => ({
+            price: t.price,
+            qty: t.qty,
+            time: new Date(t.ts).toUTCString().slice(17, 25),
+            isBuyerMaker: t.isBuyerMaker,
+          }));
+          renderTrades();
+        }
+      } catch (err) {
+        console.warn('Recent trades fetch error:', err);
+      }
+    }
+
+    function renderOrderBook(bid, ask, bidQty, askQty) {
+      const b = Number(bid), a = Number(ask);
+      if (b <= 0 || a <= 0) return;
+      const mid = (b + a) / 2;
+      const spread = a - b;
+      const mEl = document.getElementById('ob-mid-price');
+      if (mEl) mEl.innerText = mid.toFixed(2);
+      const spEl = document.getElementById('ob-spread-info');
+      if (spEl) spEl.innerText = a.toFixed(2) + ' / ' + b.toFixed(2);
+
+      const asks = [];
+      for (let i = 5; i >= 1; i--) {
+        const p = (a + spread * i).toFixed(2);
+        const sz = (Number(askQty || 1) * (6 - i) * 0.3).toFixed(2);
+        asks.push('<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * (6 - i)).toFixed(2) + '</span></div>');
+      }
+      const aEl = document.getElementById('orderbook-asks');
+      if (aEl) aEl.innerHTML = asks.join('');
+
+      const bids = [];
+      for (let i = 1; i <= 5; i++) {
+        const p = (b - spread * (i - 1)).toFixed(2);
+        const sz = (Number(bidQty || 1) * i * 0.3).toFixed(2);
+        bids.push('<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * i).toFixed(2) + '</span></div>');
+      }
+      const bEl = document.getElementById('orderbook-bids');
+      if (bEl) bEl.innerHTML = bids.join('');
+    }
+
+    async function fetchOrderBook(symbol) {
+      try {
+        const res = await fetch(\`/api/v1/orderbook?symbol=\${symbol}\`);
+        const data = await res.json();
+        if (data && data.bid && data.ask) {
+          renderOrderBook(data.bid, data.ask, data.bidQty, data.askQty);
+        }
+      } catch (err) {
+        console.warn('Orderbook fetch error:', err);
       }
     }
 
@@ -727,10 +782,24 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         }
       });
       recentTrades = [];
+      renderTrades();
       loadRealKlines(currentSymbol, currentInterval);
+      fetchRecentTrades(currentSymbol);
+      fetchOrderBook(currentSymbol);
     }
 
-    function setTimeframe(tf) { currentInterval = tf; loadRealKlines(currentSymbol, currentInterval); }
+    function setTimeframe(tf) {
+      currentInterval = tf;
+      ['1m', '5m', '15m', '1h', '4h', '1d'].forEach(i => {
+        const btn = document.getElementById('tf-btn-' + i);
+        if (btn) {
+          btn.className = i === tf
+            ? 'px-2 py-0.5 rounded bg-blue-600 text-white font-bold'
+            : 'px-2 py-0.5 rounded text-app-muted hover:text-white';
+        }
+      });
+      loadRealKlines(currentSymbol, currentInterval);
+    }
 
     async function fetchDashboard() {
       try {
@@ -955,13 +1024,16 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           if (candleSeries && msg.payload.candle) {
             const c = msg.payload.candle;
             if (c.interval === currentInterval) {
-              candleSeries.update({
-                time: Math.floor(c.openTime / 1000),
+              const barTime = Math.floor(c.openTime / 1000);
+              const bar = {
+                time: barTime,
                 open: Number(c.open),
                 high: Number(c.high),
                 low: Number(c.low),
                 close: Number(c.close)
-              });
+              };
+              candleSeries.update(bar);
+              lastChartBar = bar;
             }
           }
         }
@@ -984,44 +1056,30 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
       if (msg.type === 'trade.stream' && msg.payload) {
         const t = msg.payload;
-        if (t.symbol === currentSymbol) {
+        const p = Number(t.price);
+        if (t.symbol === currentSymbol && p > 0) {
           const time = new Date(t.ts).toUTCString().slice(17, 25);
-          recentTrades.unshift({ price: t.price, qty: t.qty, time: time });
+          recentTrades.unshift({ price: p, qty: Number(t.qty), time: time, isBuyerMaker: Boolean(t.isBuyerMaker) });
           if (recentTrades.length > 15) recentTrades.pop();
-          const el = document.getElementById('trades-stream');
-          if (el) {
-            el.innerHTML = recentTrades.map(tr =>
-              '<div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">' + Number(tr.price).toFixed(2) + '</span><span class="text-right text-gray-300">' + Number(tr.qty).toFixed(2) + '</span><span class="text-right text-gray-500">' + tr.time + '</span></div>'
-            ).join('');
+          renderTrades();
+          document.getElementById('chart-ltp-hero').innerText = '$' + p.toFixed(2);
+          if (candleSeries && lastChartBar) {
+            lastChartBar.close = p;
+            lastChartBar.high = Math.max(lastChartBar.high, p);
+            lastChartBar.low = Math.min(lastChartBar.low, p);
+            candleSeries.update(lastChartBar);
           }
+        }
+        if (t.symbol && p > 0) {
+          const tp = document.getElementById('price-' + t.symbol);
+          if (tp) tp.innerText = '$' + p.toFixed(p > 500 ? 1 : 2);
         }
       }
 
       if (msg.type === 'book.update' && msg.payload) {
         const b = msg.payload;
         if (b.symbol === currentSymbol) {
-          const bid = Number(b.bid), ask = Number(b.ask);
-          const mid = (bid + ask) / 2, spread = ask - bid;
-          const mEl = document.getElementById('ob-mid-price');
-          if (mEl) mEl.innerText = mid.toFixed(2);
-
-          const asks = [];
-          for (let i = 5; i >= 1; i--) {
-            const p = (ask + spread * i).toFixed(2);
-            const sz = (Number(b.askQty || 1) * (6 - i) * 0.3).toFixed(2);
-            asks.push('<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * (6 - i)).toFixed(2) + '</span></div>');
-          }
-          const aEl = document.getElementById('orderbook-asks');
-          if (aEl) aEl.innerHTML = asks.join('');
-
-          const bids = [];
-          for (let i = 1; i <= 5; i++) {
-            const p = (bid - spread * (i - 1)).toFixed(2);
-            const sz = (Number(b.bidQty || 1) * i * 0.3).toFixed(2);
-            bids.push('<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * i).toFixed(2) + '</span></div>');
-          }
-          const bEl = document.getElementById('orderbook-bids');
-          if (bEl) bEl.innerHTML = bids.join('');
+          renderOrderBook(b.bid, b.ask, b.bidQty, b.askQty);
         }
       }
 
@@ -1081,7 +1139,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
     async function fetchLiveTickers() {
       try {
-        const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+        const res = await fetch('/api/v1/tickers');
         const tickers = await res.json();
         if (Array.isArray(tickers)) {
           ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'].forEach(sym => {
@@ -1099,7 +1157,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
               if (sym === currentSymbol) {
                 const heroP = document.getElementById('chart-ltp-hero');
                 const heroC = document.getElementById('chart-chg-hero');
-                if (heroP) heroP.innerText = '$' + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                if (heroP && (!lastChartBar || !lastChartBar.close)) heroP.innerText = '$' + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 if (heroC) {
                   heroC.innerText = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
                   heroC.className = 'font-semibold ' + (chg >= 0 ? 'text-emerald-400' : 'text-red-400');
@@ -1117,6 +1175,8 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       await initChart();
       initEquityChart();
       await fetchDashboard();
+      fetchRecentTrades(currentSymbol);
+      fetchOrderBook(currentSymbol);
       await fetchLiveTickers();
       fetchWinRate();
       fetchSystemStatus();
@@ -1126,7 +1186,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       connectWs();
       setInterval(updateClock, 1000);
       setInterval(fetchDashboard, 5000);
-      setInterval(fetchLiveTickers, 3000);
+      setInterval(fetchLiveTickers, 5000);
       setInterval(fetchWinRate, 10000);
       setInterval(fetchSystemStatus, 5000);
       setInterval(fetchActivityFeed, 5000);

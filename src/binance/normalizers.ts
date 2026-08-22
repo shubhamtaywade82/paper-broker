@@ -47,7 +47,7 @@ export interface NormalizedLongShortRatio { symbol: string; longShortRatio: numb
 export interface NormalizedTakerVolume { symbol: string; buyVolume: number; sellVolume: number; takerDelta: number; takerRatio: number; eventTime: number; }
 
 interface RawTickerPayload { s?: string; b?: string | number; a?: string | number; B?: string | number; A?: string | number; E?: number; }
-interface RawAggTradePayload { s?: string; p?: string | number; q?: string | number; E?: number; m?: boolean; }
+interface RawAggTradePayload { s?: string; p?: string | number; q?: string | number; E?: number; T?: number; m?: boolean; }
 interface RawMarkPricePayload { s?: string; p?: string | number; i?: string | number; r?: string | number; T?: number; E?: number; }
 interface RawKlinePayload {
   k?: {
@@ -82,7 +82,7 @@ export function normalizeBookTicker(payload: unknown, now = Date.now()): Normali
 export function normalizeAggTrade(payload: unknown, now = Date.now()): NormalizedAggTrade | null {
   if (!payload || typeof payload !== 'object') return null;
   const p = payload as RawAggTradePayload;
-  const price = Number(p.p), quantity = Number(p.q), eventTime = Number(p.E);
+  const price = Number(p.p), quantity = Number(p.q), eventTime = Number(p.E ?? p.T);
   if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0 || quantity <= 0) return null;
   const validEventTime = Number.isFinite(eventTime) ? eventTime : now;
   if (!isTimestampValid(validEventTime, now)) return null;

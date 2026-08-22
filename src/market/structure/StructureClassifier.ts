@@ -37,10 +37,16 @@ export class StructureClassifier {
     let currentTrend: MarketTrend = 'UNKNOWN';
     const brokenHighs = new Set<string>();
     const brokenLows = new Set<string>();
+    let sIdx = 0;
+    const availableSwings: ConfirmedSwing[] = [];
 
     for (let cIdx = 0; cIdx < candles.length; cIdx++) {
       const c = candles[cIdx]!;
-      const availableSwings = swings.filter((s) => s.confirmationTime <= (c.closeTime ?? c.openTime));
+      const cTime = c.closeTime ?? c.openTime;
+      while (sIdx < swings.length && swings[sIdx]!.confirmationTime <= cTime) {
+        availableSwings.push(swings[sIdx]!);
+        sIdx++;
+      }
       const trendResult = this.evaluateTrendAndStructure(availableSwings);
       currentTrend = trendResult.trend;
 

@@ -260,6 +260,36 @@ export class ApiServer {
         mark: state.mark,
       };
     });
+
+    this.app.get('/api/v1/trades', async (request) => {
+      const query = request.query as { symbol?: string; limit?: string };
+      const symbol = query.symbol || 'SOLUSDT';
+      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      try {
+        const res = await fetch(`https://fapi.binance.com/fapi/v1/trades?symbol=${symbol}&limit=${limit}`);
+        if (!res.ok) return [];
+        const data = (await res.json()) as Array<{ price: string; qty: string; time: number; isBuyerMaker: boolean }>;
+        if (!Array.isArray(data)) return [];
+        return data.map((t) => ({
+          price: parseFloat(t.price),
+          qty: parseFloat(t.qty),
+          ts: t.time,
+          isBuyerMaker: t.isBuyerMaker,
+        }));
+      } catch {
+        return [];
+      }
+    });
+
+    this.app.get('/api/v1/tickers', async () => {
+      try {
+        const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+        if (!res.ok) return [];
+        return await res.json();
+      } catch {
+        return [];
+      }
+    });
   }
 
   private registerCommandRoutes(): void {
