@@ -47,7 +47,7 @@ export class MarketStructureEngine {
     const allEvents = StructureClassifier.detectBreaks(closedCandles, confirmedSwings, scope);
     const confirmedEvents = allEvents.filter((e) => e.confirmationTime <= asOfTimestamp);
 
-    const { trend, structure } = StructureClassifier.evaluateTrendAndStructure(confirmedSwings);
+    const { trend, structure } = StructureClassifier.evaluateTrendAndStructure(confirmedSwings, confirmedEvents);
 
     const highs = confirmedSwings.filter((s) => s.type === 'HIGH');
     const lows = confirmedSwings.filter((s) => s.type === 'LOW');

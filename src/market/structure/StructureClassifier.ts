@@ -8,7 +8,23 @@ import type {
 } from './types.js';
 
 export class StructureClassifier {
-  static evaluateTrendAndStructure(swings: ConfirmedSwing[]): { trend: MarketTrend; structure: StructureForm } {
+  static evaluateTrendAndStructure(
+    swings: ConfirmedSwing[],
+    events?: StructureEvent[]
+  ): { trend: MarketTrend; structure: StructureForm } {
+    // Primary: last structural event defines trend (ICT/SMC standard)
+    // BOS confirms existing trend, CHoCH reverses it
+    if (events && events.length > 0) {
+      const lastEvent = events[events.length - 1]!;
+      if (lastEvent.eventType === 'BOS_BULLISH' || lastEvent.eventType === 'CHOCH_BULLISH') {
+        return { trend: 'BULLISH', structure: 'HH_HL' };
+      }
+      if (lastEvent.eventType === 'BOS_BEARISH' || lastEvent.eventType === 'CHOCH_BEARISH') {
+        return { trend: 'BEARISH', structure: 'LH_LL' };
+      }
+    }
+
+    // Fallback: swing-based classification with weighted scoring
     if (swings.length < 2) return { trend: 'UNKNOWN', structure: 'UNKNOWN' };
 
     const recentHighs = swings.filter((s) => s.type === 'HIGH').slice(-2);
@@ -19,11 +35,13 @@ export class StructureClassifier {
     const hasLH = recentHighs.length === 2 && recentHighs[1]!.price < recentHighs[0]!.price;
     const hasLL = recentLows.length === 2 && recentLows[1]!.price < recentLows[0]!.price;
 
-    if (hasHH && hasHL) return { trend: 'BULLISH', structure: 'HH_HL' };
-    if (hasLH && hasLL) return { trend: 'BEARISH', structure: 'LH_LL' };
-    if ((hasHH && hasLL) || (hasLH && hasHL)) return { trend: 'RANGE', structure: 'MIXED' };
-    if (hasHH || hasHL) return { trend: 'BULLISH', structure: 'HH_HL' };
-    if (hasLH || hasLL) return { trend: 'BEARISH', structure: 'LH_LL' };
+    // Weight bullish vs bearish swing signals instead of requiring perfect alignment
+    const bullish = (hasHH ? 1 : 0) + (hasHL ? 1 : 0);
+    const bearish = (hasLH ? 1 : 0) + (hasLL ? 1 : 0);
+
+    if (bullish > bearish) return { trend: 'BULLISH', structure: 'HH_HL' };
+    if (bearish > bullish) return { trend: 'BEARISH', structure: 'LH_LL' };
+    if (bullish > 0 && bearish > 0) return { trend: 'RANGE', structure: 'MIXED' };
 
     return { trend: 'RANGE', structure: 'RANGE' };
   }

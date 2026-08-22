@@ -312,13 +312,20 @@ export class BacktestRunner {
       await this.loadKlines(symbol);
     }
 
-    const allTimes = new Set<number>();
+    // Build O(1) lookup maps for each symbol's 1m series
+    const candleMaps = new Map<string, Map<number, Candle>>();
     for (const symbol of this.config.symbols) {
       const key1m = `${symbol}:1m`;
       const series1m = this.candleCache.get(key1m) ?? [];
-      for (const c of series1m) {
-        allTimes.add(c.openTime);
-      }
+      const map = new Map<number, Candle>();
+      for (const c of series1m) map.set(c.openTime, c);
+      candleMaps.set(symbol, map);
+    }
+
+    const allTimes = new Set<number>();
+    for (const symbol of this.config.symbols) {
+      const map = candleMaps.get(symbol)!;
+      for (const ts of map.keys()) allTimes.add(ts);
     }
 
     const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
@@ -327,28 +334,29 @@ export class BacktestRunner {
     let last5mBucket = -1;
     let last15mBucket = -1;
     let lastSnapshotTime = this.config.startTime;
+    let lastFundingTime = this.config.startTime;
     let processedBars = 0;
+    const FUNDING_INTERVAL_MS = 28_800_000; // 8 hours
+    const HALF_SPREAD_BPS = 1; // 1 bps half-spread each side
 
     for (const ts of sortedTimes) {
       if (ts < this.config.startTime || ts > this.config.endTime) continue;
 
       for (const symbol of this.config.symbols) {
-        const key1m = `${symbol}:1m`;
-        const series1m = this.candleCache.get(key1m) ?? [];
-        const candle = series1m.find((c) => c.openTime === ts);
+        const candle = candleMaps.get(symbol)?.get(ts);
         if (!candle) continue;
 
-        const bid = candle.close;
-        const ask = candle.close;
-        const mark = candle.close;
-        const last = candle.close;
+        // Simulate bid-ask spread from candle close
+        const halfSpread = candle.close * (HALF_SPREAD_BPS / 10_000);
+        const bid = candle.close - halfSpread;
+        const ask = candle.close + halfSpread;
 
         this.broker.onMarket({
           symbol,
           bid,
           ask,
-          last,
-          mark,
+          last: candle.close,
+          mark: candle.close,
           localTsUtc: ts,
           stale: false,
         });
@@ -356,35 +364,30 @@ export class BacktestRunner {
         const bucket5m = Math.floor(ts / 300_000) * 300_000;
         const bucket15m = Math.floor(ts / 900_000) * 900_000;
 
+        // Fire strategy on 5m candle CLOSE (when entering next bucket)
         if (bucket5m !== last5mBucket) {
+          const prevBucket = last5mBucket;
           last5mBucket = bucket5m;
-          for (const sym of this.config.symbols) {
-            await this.strategyEngine.onCandleClose({
-              symbol: sym,
-              interval: '5m',
-              openTime: bucket5m,
-              open: 0,
-              high: 0,
-              low: 0,
-              close: this.broker.getMarket(sym)?.mark ?? 0,
-              volume: 0,
-            });
+          if (prevBucket >= 0) {
+            for (const sym of this.config.symbols) {
+              const cached = this.candleCache.get(`${sym}:5m`)?.find(c => c.openTime === prevBucket);
+              if (cached) {
+                await this.strategyEngine.onCandleClose(cached);
+              }
+            }
           }
         }
 
         if (bucket15m !== last15mBucket) {
+          const prevBucket = last15mBucket;
           last15mBucket = bucket15m;
-          for (const sym of this.config.symbols) {
-            await this.strategyEngine.onCandleClose({
-              symbol: sym,
-              interval: '15m',
-              openTime: bucket15m,
-              open: 0,
-              high: 0,
-              low: 0,
-              close: this.broker.getMarket(sym)?.mark ?? 0,
-              volume: 0,
-            });
+          if (prevBucket >= 0) {
+            for (const sym of this.config.symbols) {
+              const cached = this.candleCache.get(`${sym}:15m`)?.find(c => c.openTime === prevBucket);
+              if (cached) {
+                await this.strategyEngine.onCandleClose(cached);
+              }
+            }
           }
         }
 
@@ -393,7 +396,11 @@ export class BacktestRunner {
           this.recordEquitySnapshot(ts);
         }
 
-        this.broker.applyFunding();
+        // Apply funding at 8-hour intervals only (matches Binance schedule)
+        if (ts - lastFundingTime >= FUNDING_INTERVAL_MS) {
+          lastFundingTime = ts;
+          this.broker.applyFunding();
+        }
       }
 
       processedBars++;
@@ -407,8 +414,34 @@ export class BacktestRunner {
     }
 
     this.recordEquitySnapshot(this.config.endTime);
+    this.captureTrades();
 
     return this.computeResults();
+  }
+
+  private captureTrades(): void {
+    for (const fill of this.broker.getFills()) {
+      const trade: BacktestTrade = {
+        ts: new Date(fill.fillTsUtc).getTime(),
+        symbol: fill.symbol,
+        side: fill.side,
+        type: fill.liquidity === 'MAKER' ? 'LIMIT' : 'MARKET',
+        quantity: fill.quantity,
+        price: fill.price,
+        fee: fill.fee,
+        realizedPnl: fill.realizedPnl,
+        strategyId: fill.strategyId,
+      };
+      this.trades.push(trade);
+
+      const stratId = fill.strategyId ?? 'unknown';
+      if (!this.strategyStats[stratId]) {
+        this.strategyStats[stratId] = { trades: 0, wins: 0, pnl: 0 };
+      }
+      this.strategyStats[stratId]!.trades++;
+      this.strategyStats[stratId]!.pnl += fill.realizedPnl;
+      if (fill.realizedPnl > 0) this.strategyStats[stratId]!.wins++;
+    }
   }
 
   private recordEquitySnapshot(ts: number): void {
