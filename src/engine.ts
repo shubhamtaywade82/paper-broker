@@ -12,17 +12,16 @@ import { SQLiteBrokerPersister } from './persistence/BrokerPersister.js';
 import { EventLog } from './persistence/EventLog.js';
 import { SnapshotStore } from './persistence/SnapshotStore.js';
 import { StrategyEngine } from './strategy/StrategyEngine.js';
-import { SizingEngine } from './strategy/SizingEngine.js';
 import { OrderFactory } from './strategy/OrderFactory.js';
 import { SignalExecutor } from './strategy/SignalExecutor.js';
-import { createEmaTrendStrategy } from './strategy/strategies/ema-trend-5m.js';
-import { createBreakoutStrategy } from './strategy/strategies/breakout-15m.js';
-import { createRsiMeanReversionStrategy } from './strategy/strategies/rsi-mean-reversion-5m.js';
-import { createMomentumStrategy } from './strategy/strategies/momentum-5m.js';
-import { createGridStrategy } from './strategy/strategies/grid-15m.js';
-import { createMeanReversionStrategy } from './strategy/strategies/mean-reversion-5m.js';
-import { createOllamaTrendStrategy } from './strategy/strategies/ollama-trend-5m.js';
-import { OllamaSignalGenerator } from './ai/ollama.js';
+import { MtfStateEngine } from './market/MtfStateEngine.js';
+import { MarketStructureEngine } from './market/structure/MarketStructureEngine.js';
+import { SmcLocationEngine } from './market/smc/SmcLocationEngine.js';
+import { SetupEngine } from './market/setup/SetupEngine.js';
+import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
+import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
+import { TradingAgentsPipeline } from './ai/tradingAgents.js';
+import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { ApiServer } from './api/server.js';
 import { Scheduler } from './scheduler/jobs.js';
 import { TelegramNotifier } from './notifications/TelegramNotifier.js';
@@ -98,15 +97,9 @@ export async function startEngine(): Promise<EngineHandle> {
     }
   }
 
-  const sizing = new SizingEngine({
-    riskPerTrade: 0.005,
-    maxNotional: 5000,
-    fallbackRiskPerTrade: 0.1,
-  });
   const orderFactory = new OrderFactory({ defaultLeverage: 5 });
   const signalExecutor = new SignalExecutor({
     broker,
-    sizing,
     orderFactory,
     signals: db.signals,
     getMarketState: (symbol) => marketState.getState(symbol),
@@ -145,49 +138,29 @@ export async function startEngine(): Promise<EngineHandle> {
     }
   );
 
-  strategyEngine.register(
-    createEmaTrendStrategy({
-      fastPeriod: env.EMA_FAST_PERIOD,
-      slowPeriod: env.EMA_SLOW_PERIOD,
-      rsiUpper: env.EMA_RSI_UPPER,
-      rsiLower: env.EMA_RSI_LOWER,
-      symbols,
-    })
-  );
-  strategyEngine.register(
-    createBreakoutStrategy({
-      lookback: env.BREAKOUT_LOOKBACK,
-      atrStopMultiplier: env.BREAKOUT_ATR_STOP_MULT,
-      atrTakeProfitMultiplier: env.BREAKOUT_ATR_TP_MULT,
-      symbols,
-    })
-  );
-  strategyEngine.register(
-    createRsiMeanReversionStrategy({
-      oversold: env.RSI_OVERSOLD,
-      overbought: env.RSI_OVERBOUGHT,
-      neutralHigh: env.RSI_NEUTRAL_HIGH,
-      neutralLow: env.RSI_NEUTRAL_LOW,
-      symbols,
-    })
-  );
-  strategyEngine.register(createMomentumStrategy({ symbols }));
-  strategyEngine.register(createGridStrategy({ symbols }));
-  strategyEngine.register(createMeanReversionStrategy({ symbols }));
-
-  const ollamaGenerator = new OllamaSignalGenerator({
-    baseUrl: env.OLLAMA_BASE_URL,
+  const structureEngine = new MarketStructureEngine(klines);
+  const smcEngine = new SmcLocationEngine(klines, structureEngine);
+  const mtfEngine = new MtfStateEngine(klines, marketState);
+  const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
+  const planEngine = new ExecutionPlanEngine();
+  const tradeIntentEngine = new TradeIntentEngine();
+  const tradingAgentsPipeline = new TradingAgentsPipeline({
     model: env.OLLAMA_MODEL,
+    baseUrl: env.OLLAMA_BASE_URL,
   });
-  const ollamaAvailable = await ollamaGenerator.ping();
-  if (ollamaAvailable) {
-    strategyEngine.register(
-      createOllamaTrendStrategy({ generator: ollamaGenerator, symbols })
-    );
-    logger.info({ model: env.OLLAMA_MODEL }, 'Registered Ollama trend strategy');
-  } else {
-    logger.warn('Ollama not reachable, skipping Ollama trend strategy');
-  }
+
+  strategyEngine.register(
+    createSmcAgentStrategy({
+      setupEngine,
+      structureEngine,
+      smcEngine,
+      planEngine,
+      tradeIntentEngine,
+      tradingAgentsPipeline,
+      getInstrument: (symbol) => broker.getInstrument(symbol),
+      symbols,
+    })
+  );
 
   await strategyEngine.start();
 
