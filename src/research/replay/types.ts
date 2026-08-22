@@ -80,6 +80,20 @@ export interface MonteCarloSimulationResult {
   maxConsecutiveLossesP99: number;
 }
 
+export type SampleConfidenceLevel = 'INSUFFICIENT_SAMPLE' | 'LOW_CONFIDENCE' | 'MODERATE' | 'STRONGER_SAMPLE';
+
+export interface StatisticalValidationResult {
+  sampleSize: number;
+  confidenceGrade: SampleConfidenceLevel;
+  meanNetR: number;
+  meanNetRConfidenceInterval: [number, number];
+  winRateConfidenceInterval: [number, number];
+  profitFactorConfidenceInterval: [number, number];
+  tStatistic: number;
+  pValueMeanRGreaterThanZero: number;
+  isStatisticallySignificant: boolean;
+}
+
 export interface BacktestReport {
   id: string;
   symbol: string;
@@ -96,6 +110,7 @@ export interface BacktestReport {
   scoreBucketValidation: ScoreBucketMetrics[];
   regimePerformance: RegimeMetrics[];
   monteCarlo: MonteCarloSimulationResult;
+  statisticalValidation?: StatisticalValidationResult;
   trades: PaperTradeRecord[];
   generatedAt: number;
 }

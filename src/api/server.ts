@@ -91,12 +91,11 @@ export class ApiServer {
     this.port = options.port ?? 8080;
 
     this.app = Fastify({ logger: false });
-    this.registerPlugins();
-    this.registerRoutes();
   }
 
-  private registerPlugins(): void {
-    this.app.register(fastifyWebsocket);
+  private async init(): Promise<void> {
+    await this.app.register(fastifyWebsocket);
+    this.registerRoutes();
   }
 
   private registerRoutes(): void {
@@ -342,6 +341,7 @@ export class ApiServer {
   }
 
   async start(): Promise<void> {
+    await this.init();
     await this.app.listen({ host: this.host, port: this.port });
     logger.info(`API server listening on http://${this.host}:${this.port}`);
   }

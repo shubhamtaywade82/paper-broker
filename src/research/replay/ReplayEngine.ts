@@ -13,6 +13,7 @@ import { ArchetypeBreakdown } from '../analytics/ArchetypeBreakdown.js';
 import { ConfluenceScoreValidator } from '../analytics/ConfluenceScoreValidator.js';
 import { RegimeAnalyzer } from '../analytics/RegimeAnalyzer.js';
 import { MonteCarloSimulator } from '../analytics/MonteCarloSimulator.js';
+import { StatisticalValidationEngine } from '../analytics/StatisticalValidationEngine.js';
 import { HistoricalDataLoader } from './HistoricalDataLoader.js';
 import type { BacktestReport, HistoricalDataset, ReplayConfig } from './types.js';
 
@@ -96,6 +97,7 @@ export class ReplayEngine {
     const scoreBucketValidation = ConfluenceScoreValidator.validateScoreBuckets(trades, signalsMap);
     const regimePerformance = RegimeAnalyzer.evaluateRegimes(trades);
     const monteCarlo = MonteCarloSimulator.runSimulation(trades, config.initialEquity, 1000);
+    const statisticalValidation = StatisticalValidationEngine.validateTrades(trades);
 
     const acc = broker.getAccount();
     const totalNetPnl = coreMetrics.netPnL;
@@ -119,8 +121,9 @@ export class ReplayEngine {
       scoreBucketValidation,
       regimePerformance,
       monteCarlo,
+      statisticalValidation,
       trades,
-      generatedAt: Date.now(),
+      generatedAt: config.endTime,
     };
   }
 

@@ -71,8 +71,10 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
       profile,
       supervisor,
       errorNormalizer,
+      port: 0,
     });
 
+    await server.start();
     const app = server.getApp();
     const res = await app.inject({
       method: 'GET',
@@ -86,6 +88,7 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     expect(body.health.activeProvider).toBe('BINANCE');
     expect(body.incidents.length).toBe(1);
     expect(body.incidents[0].component).toBe('BinanceWs');
+    await server.stop();
   });
 
   it('POST /api/v1/mode/arm arms live trading and broadcasts event', async () => {
@@ -96,8 +99,10 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
       signals: mockSignals,
       events: mockEvents,
       profile,
+      port: 0,
     });
 
+    await server.start();
     const app = server.getApp();
     const res = await app.inject({
       method: 'POST',
@@ -109,6 +114,7 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     const body = JSON.parse(res.body);
     expect(body.armed).toBe(true);
     expect(profile.liveArmed).toBe(true);
+    await server.stop();
   });
 
   it('POST /orders broadcasts order.updated over WebSocket', async () => {
@@ -117,8 +123,10 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
       engine: mockEngine,
       signals: mockSignals,
       events: mockEvents,
+      port: 0,
     });
 
+    await server.start();
     const broadcastSpy = vi.spyOn(server.wsGateway, 'broadcast');
     const app = server.getApp();
 
@@ -136,5 +144,6 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
 
     expect(res.statusCode).toBe(201);
     expect(broadcastSpy).toHaveBeenCalledWith('order.updated', expect.objectContaining({ id: 'ord-123' }));
+    await server.stop();
   });
 });
