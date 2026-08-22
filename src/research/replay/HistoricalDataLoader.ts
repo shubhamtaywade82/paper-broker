@@ -3,8 +3,9 @@ import type { HistoricalDataset, HistoricalFundingRate } from './types.js';
 
 export class HistoricalDataLoader {
   static sanitizeDataset(dataset: HistoricalDataset): HistoricalDataset {
+    const symbol = dataset.symbol ?? (dataset as unknown as { manifest?: { symbol?: string } }).manifest?.symbol ?? 'SOLUSDT';
     return {
-      symbol: dataset.symbol,
+      symbol,
       candles4h: this.sortAndDedupe(dataset.candles4h),
       candles1h: this.sortAndDedupe(dataset.candles1h),
       candles15m: this.sortAndDedupe(dataset.candles15m),

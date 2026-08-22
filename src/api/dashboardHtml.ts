@@ -926,10 +926,14 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       } catch (e) {}
     }
 
+    let wsWasConnected = false;
+
     function connectWs() {
       socket = new WebSocket(wsUrl);
       socket.onopen = () => {
         document.getElementById('top-market-status').innerText = 'Binance (WS) Connected';
+        if (wsWasConnected) location.reload();
+        wsWasConnected = true;
       };
       socket.onmessage = (event) => {
         try {

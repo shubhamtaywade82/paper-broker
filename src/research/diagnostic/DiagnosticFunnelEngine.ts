@@ -9,6 +9,7 @@ import { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
 import { SmcPaperBroker } from '../../broker/paper/SmcPaperBroker.js';
 import type { Candle } from '../../strategy/indicators.js';
 import type { HistoricalDataset } from '../replay/types.js';
+import { HistoricalDataLoader } from '../replay/HistoricalDataLoader.js';
 import type { DiagnosticCandidateTrace, DiagnosticReport, FunnelStageStats } from './types.js';
 
 interface FunnelAccumulator {
@@ -36,8 +37,9 @@ interface FunnelAccumulator {
 
 export class DiagnosticFunnelEngine {
   static runDiagnostic(rawDataset: HistoricalDataset): DiagnosticReport {
+    const dataset = HistoricalDataLoader.sanitizeDataset(rawDataset);
     const store = new KlineStore();
-    const inst = this.makeDefaultInstrument(rawDataset.symbol);
+    const inst = this.makeDefaultInstrument(dataset.symbol);
     const stateManager = new MarketStateManager([inst]);
     const mtfEngine = new MtfStateEngine(store, stateManager);
     const structureEngine = new MarketStructureEngine(store);
@@ -52,9 +54,9 @@ export class DiagnosticFunnelEngine {
     const traces: DiagnosticCandidateTrace[] = [];
     const scoreDistribution: Record<string, number> = { '0-49': 0, '50-59': 0, '60-64': 0, '65-69': 0, '70-74': 0, '75-79': 0, '80-84': 0, '85-89': 0, '90+': 0 };
 
-    this.processDatasetChronologically(rawDataset, store, mtfEngine, structureEngine, smcEngine, setupEngine, planEngine, tradeEngine, broker, inst, longAcc, shortAcc, traces, scoreDistribution);
+    this.processDatasetChronologically(dataset, store, mtfEngine, structureEngine, smcEngine, setupEngine, planEngine, tradeEngine, broker, inst, longAcc, shortAcc, traces, scoreDistribution);
 
-    return this.buildReport(rawDataset, longAcc, shortAcc, traces, scoreDistribution);
+    return this.buildReport(dataset, longAcc, shortAcc, traces, scoreDistribution);
   }
 
   private static processDatasetChronologically(
