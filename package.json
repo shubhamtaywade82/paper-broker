@@ -16,6 +16,8 @@
     "paper:trade": "tsx src/cli.ts trade",
     "paper:monitor": "tsx src/cli.ts monitor",
     "paper:backtest": "tsx src/cli.ts backtest",
+    "backtest:full": "tsx src/scripts/backtest-full.ts",
+    "download:klines": "tsx src/scripts/download-klines.ts",
     "docker:build": "docker build -t paper-broker .",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",

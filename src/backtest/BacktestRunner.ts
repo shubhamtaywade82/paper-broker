@@ -96,6 +96,21 @@ export class BacktestRunner {
   constructor(config: BacktestConfig) {
     this.config = config;
     this.db = new DatabaseManager(config.dataDir);
+    
+    // Create klines table if it doesn't exist (needed for backtesting)
+    this.db.raw.exec(`
+      CREATE TABLE IF NOT EXISTS klines_1m (
+        symbol TEXT NOT NULL,
+        open_time_utc TEXT NOT NULL,
+        open TEXT NOT NULL,
+        high TEXT NOT NULL,
+        low TEXT NOT NULL,
+        close TEXT NOT NULL,
+        volume TEXT NOT NULL,
+        PRIMARY KEY (symbol, open_time_utc)
+      )
+    `);
+    
     this.signalRepo = new SignalRepository(this.db.raw);
     this.eventLog = new EventLog(config.dataDir);
     this.snapshotStore = new SnapshotStore(config.dataDir);
