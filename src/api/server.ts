@@ -244,10 +244,32 @@ export class ApiServer {
     });
 
     this.app.get('/api/v1/orderbook', async (request) => {
-      const query = request.query as { symbol?: string };
+      const query = request.query as { symbol?: string; limit?: string };
       const symbol = query.symbol || 'SOLUSDT';
-      if (!this.marketState) return null;
-      const state = this.marketState.getState(symbol);
+      const limit = query.limit ? parseInt(query.limit, 10) : 12;
+      const state = this.marketState?.getState(symbol);
+      try {
+        const res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${limit}`);
+        if (res.ok) {
+          const depth = (await res.json()) as { bids?: Array<[string, string]>; asks?: Array<[string, string]> };
+          if (Array.isArray(depth.bids) && Array.isArray(depth.asks)) {
+            return {
+              symbol,
+              bid: state?.bid ?? (depth.bids[0] ? parseFloat(depth.bids[0][0]) : 0),
+              ask: state?.ask ?? (depth.asks[0] ? parseFloat(depth.asks[0][0]) : 0),
+              bidQty: state?.bidQty ?? (depth.bids[0] ? parseFloat(depth.bids[0][1]) : 0),
+              askQty: state?.askQty ?? (depth.asks[0] ? parseFloat(depth.asks[0][1]) : 0),
+              spread: state?.spread ?? 0,
+              last: state?.last ?? 0,
+              mark: state?.mark ?? 0,
+              bids: depth.bids.map(([p, q]) => [parseFloat(p), parseFloat(q)]),
+              asks: depth.asks.map(([p, q]) => [parseFloat(p), parseFloat(q)]),
+            };
+          }
+        }
+      } catch {
+        // Fall back to market state if network fails
+      }
       if (!state) return null;
       return {
         symbol,
