@@ -86,6 +86,18 @@ export async function startEngine(): Promise<EngineHandle> {
   });
   const klines = new KlineStore(500);
 
+  // Preload historical klines to allow strategies to evaluate immediately
+  for (const symbol of symbols) {
+    for (const interval of timeframes) {
+      try {
+        await klines.fetchHistoricalKlines(symbol, interval, 200);
+        logger.info({ symbol, interval }, 'Preloaded historical klines');
+      } catch (err) {
+        logger.error({ err, symbol, interval }, 'Failed to preload historical klines');
+      }
+    }
+  }
+
   const sizing = new SizingEngine({
     riskPerTrade: 0.005,
     maxNotional: 5000,

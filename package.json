@@ -27,7 +27,7 @@
     "@nemesis-oss/binance-sdk": "^1.0.0",
     "@nemesis-oss/coindcx-sdk": "^1.0.0",
     "@nemesis-oss/ollama-sdk": "^1.0.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "dayjs": "^1.11.0",
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.5",
