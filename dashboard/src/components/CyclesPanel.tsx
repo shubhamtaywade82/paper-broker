@@ -88,7 +88,7 @@ export function CyclesPanel({ onSelectCycle }: { onSelectCycle: (id: string) => 
                 <div className="text-right">
                   <p className="text-xs text-gray-400 flex items-center gap-1 justify-end">
                     <Clock className="w-3 h-3" />
-                    {format(cycle.startedAt, 'MMM d, HH:mm:ss')}
+                    {format(new Date(cycle.startedAt), 'MMM d, HH:mm:ss')}
                   </p>
                   <p className="text-xs text-gray-400 mt-1">
                     Confidence: {(cycle.confidence * 100).toFixed(0)}%

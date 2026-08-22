@@ -36,8 +36,18 @@ export function useCycles(symbol?: string) {
       const url = symbol
         ? `/api/v1/agents/cycles?symbol=${symbol}&limit=50`
         : '/api/v1/agents/cycles?limit=50';
-      const data = await fetchJson<{ cycles: AgentCycle[] }>(url);
-      const cycles = data.cycles || [];
+      const data = await fetchJson<{ cycles: Array<Record<string, unknown>> }>(url);
+      const cycles: AgentCycle[] = (data.cycles || []).map((c) => ({
+        cycleId: String(c.cycle_id ?? c.cycleId ?? ''),
+        symbol: String(c.symbol ?? ''),
+        startedAt: Number(c.started_at ?? c.startedAt ?? 0),
+        completedAt: c.completed_at != null ? Number(c.completed_at) : undefined,
+        executed: Boolean(c.executed),
+        action: String((c.verdict as Record<string, unknown>)?.prevailingSide ?? c.action ?? 'UNKNOWN'),
+        confidence: Number(c.confidence ?? 0),
+        verdict: typeof c.verdict === 'object' ? String((c.verdict as Record<string, unknown>)?.prevailingSide ?? '') : String(c.verdict ?? ''),
+        rationale: String((c.verdict as Record<string, unknown>)?.rationale ?? c.rationale ?? ''),
+      }));
       setCycles(cycles);
       return cycles;
     },
@@ -52,7 +62,56 @@ export function useCycleDetail(cycleId: string | null) {
     queryKey: ['cycle-detail', cycleId],
     queryFn: async () => {
       if (!cycleId) return null;
-      const data = await fetchJson<CycleDetail>(`/api/v1/agents/cycles/${cycleId}`);
+      const raw = await fetchJson<Record<string, unknown>>(`/api/v1/agents/cycles/${cycleId}`);
+      const data: CycleDetail = {
+        cycleId: String(raw.cycle_id ?? ''),
+        symbol: String(raw.symbol ?? ''),
+        startedAt: Number(raw.started_at ?? 0),
+        completedAt: raw.completed_at != null ? Number(raw.completed_at) : undefined,
+        executed: Boolean(raw.executed),
+        action: String((raw.verdict as Record<string, unknown>)?.prevailingSide ?? ''),
+        confidence: Number(raw.confidence ?? 0),
+        verdict: String((raw.verdict as Record<string, unknown>)?.prevailingSide ?? ''),
+        rationale: String(raw.rationale ?? ''),
+        analystReports: Array.isArray(raw.analyst_reports)
+          ? (raw.analyst_reports as Array<Record<string, unknown>>).map((r) => ({
+              agent: String(r.agent ?? ''),
+              summary: String(r.summary ?? ''),
+              bullishSignals: Array.isArray(r.bullishSignals) ? (r.bullishSignals as string[]) : [],
+              bearishSignals: Array.isArray(r.bearishSignals) ? (r.bearishSignals as string[]) : [],
+              confidence: Number(r.confidence ?? 0),
+            }))
+          : [],
+        debate: Array.isArray(raw.debate_history)
+          ? (raw.debate_history as Array<Record<string, unknown>>).map((d) => ({
+              role: d.role as 'BULL' | 'BEAR',
+              round: Number(d.round ?? 0),
+              argument: String(d.argument ?? ''),
+            }))
+          : [],
+        riskOpinions: Array.isArray(raw.risk_opinions)
+          ? (raw.risk_opinions as Array<Record<string, unknown>>).map((r) => ({
+              persona: String(r.persona ?? ''),
+              verdict: String(r.verdict ?? ''),
+              rationale: String(r.rationale ?? ''),
+            }))
+          : [],
+        fundManagerApproval: (() => {
+          const fma = raw.fund_manager_approval as Record<string, unknown> | undefined;
+          const fd = fma?.finalDecision as Record<string, unknown> | undefined;
+          return {
+            approved: Boolean(fma?.approved),
+            rationale: String(fma?.rationale ?? ''),
+            finalDecision: {
+              action: String(fd?.action ?? ''),
+              leverage: Number(fd?.leverage ?? 0),
+              sizePct: Number(fd?.sizePct ?? 0),
+              stopLoss: fd?.stopLoss != null ? Number(fd.stopLoss) : undefined,
+              takeProfit: fd?.takeProfit != null ? Number(fd.takeProfit) : undefined,
+            },
+          };
+        })(),
+      };
       setSelectedCycle(data);
       return data;
     },
