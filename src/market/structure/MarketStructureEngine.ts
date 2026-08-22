@@ -9,10 +9,16 @@ import type {
   TimeframeStructureState,
 } from './types.js';
 
+interface StructureCacheEntry {
+  lastCandleTime?: number;
+  candleCount: number;
+  state: TimeframeStructureState;
+}
+
 export class MarketStructureEngine {
   private klineStore: KlineStore;
   private config: SwingConfig;
-  private structureCache = new Map<string, TimeframeStructureState>();
+  private structureCache = new Map<string, StructureCacheEntry>();
 
   constructor(klineStore: KlineStore, config: SwingConfig = DEFAULT_SWING_CONFIG) {
     this.klineStore = klineStore;
@@ -27,11 +33,13 @@ export class MarketStructureEngine {
     config = this.config
   ): TimeframeStructureState {
     const rawCandles = this.klineStore.getCandlesAsOf(symbol, timeframe, asOfTimestamp, 500);
-    const closedCandles = rawCandles.filter((c) => c.isClosed || (c.closeTime ?? c.openTime) <= asOfTimestamp);
+    const closedCandles = rawCandles.filter((c) => (c.closeTime ?? c.openTime) <= asOfTimestamp);
     const last = closedCandles[closedCandles.length - 1];
-    const cacheKey = `${symbol}:${timeframe}:${scope}:${asOfTimestamp}:${last?.openTime ?? 0}:${closedCandles.length}`;
+    const cacheKey = `${symbol}:${timeframe}:${scope}`;
     const cached = this.structureCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached && cached.lastCandleTime === last?.openTime && cached.candleCount === closedCandles.length) {
+      return cached.state;
+    }
 
     const allSwings = SwingDetector.detectSwings(closedCandles, symbol, timeframe, config, scope);
     const confirmedSwings = allSwings.filter((s) => s.confirmationTime <= asOfTimestamp);
@@ -59,7 +67,7 @@ export class MarketStructureEngine {
       lastStructureEvent: lastEvent,
       lastStructureEventTime: lastEvent?.confirmationTime,
     };
-    this.structureCache.set(cacheKey, result);
+    this.structureCache.set(cacheKey, { lastCandleTime: last?.openTime, candleCount: closedCandles.length, state: result });
     return result;
   }
 
