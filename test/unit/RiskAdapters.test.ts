@@ -72,7 +72,7 @@ describe('toPortfolioPositions', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       symbol: 'BTCUSDT', side: 'LONG', quantity: 0.5, entryPrice: 60000,
-      stopLossPrice: 58500, unrealizedPnl: 100,
+      stopLossPrice: 58500, unrealizedPnl: 100, notional: 30000,
     });
   });
 

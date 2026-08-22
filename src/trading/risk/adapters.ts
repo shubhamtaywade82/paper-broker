@@ -1,11 +1,17 @@
+import { Decimal } from 'decimal.js';
 import type { AccountState as BrokerAccountState, Order, Position as BrokerPosition } from '../../broker/types.js';
 import type { AccountState as RiskAccountState, PortfolioPosition } from './types.js';
 
 export function toRiskAccountState(account: BrokerAccountState): RiskAccountState {
+  const dailyRealizedPnlDecimal = new Decimal(account.dailyRealizedPnl ?? 0);
+  const dailyLoss = dailyRealizedPnlDecimal.isNegative()
+    ? dailyRealizedPnlDecimal.abs().toNumber()
+    : 0;
+
   return {
     equity: account.equity,
     availableBalance: account.availableBalance,
-    dailyLoss: Math.max(0, -(account.dailyRealizedPnl ?? 0)),
+    dailyLoss,
     realizedPnl: account.totalRealizedPnl,
   };
 }
@@ -26,7 +32,7 @@ export function toPortfolioPositions(
         quantity: Math.abs(p.qty),
         entryPrice: p.entryPrice,
         stopLossPrice: stopOrder?.stopPrice ?? p.entryPrice,
-        notional: Math.abs(p.qty) * (p.markPrice ?? p.entryPrice),
+        notional: new Decimal(Math.abs(p.qty)).mul(p.markPrice ?? p.entryPrice).toNumber(),
         unrealizedPnl: p.unrealizedPnl,
       };
     });
