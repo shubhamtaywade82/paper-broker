@@ -6,6 +6,7 @@ import { OverviewPanel } from './components/OverviewPanel';
 import { CyclesPanel } from './components/CyclesPanel';
 import { CycleDetailPanel } from './components/CycleDetailPanel';
 import { PerformancePanel } from './components/PerformancePanel';
+import { BacktestPanel } from './components/BacktestPanel';
 import { LiveFeed } from './components/LiveFeed';
 import { useState } from 'react';
 
@@ -41,6 +42,7 @@ function AppContent() {
             )
           )}
           {activeTab === 'performance' && <PerformancePanel />}
+          {activeTab === 'backtest' && <BacktestPanel />}
           {activeTab === 'feed' && <LiveFeed />}
         </main>
       </div>

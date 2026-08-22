@@ -226,6 +226,28 @@ export class DatabaseManager {
       );
 
       CREATE INDEX IF NOT EXISTS idx_system_events_time ON system_events(ts_utc);
+
+      CREATE TABLE IF NOT EXISTS backtest_runs (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
+        duration_days REAL NOT NULL,
+        initial_equity REAL NOT NULL,
+        final_equity REAL NOT NULL,
+        total_net_pnl REAL NOT NULL,
+        total_return_pct REAL NOT NULL,
+        total_trades INTEGER NOT NULL,
+        win_rate REAL NOT NULL,
+        profit_factor REAL NOT NULL,
+        max_drawdown REAL NOT NULL,
+        avg_r REAL NOT NULL,
+        config_json TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        created_at_utc TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_backtest_runs_time ON backtest_runs(created_at_utc);
     `);
   }
 

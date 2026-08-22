@@ -116,17 +116,18 @@ describe('Phase 5 — SMC Confluence + Setup State Machine', () => {
         },
       };
       cand = SetupStateMachine.advanceState(cand, t0 + 2_100_000);
-      expect(cand.state).toBe('ZONE_IDENTIFIED');
+      expect(cand.state).toBe('READY');
+      expect(cand.status).toBe('READY');
 
-      // Stage 4: Retest occurs
+      // Stage 4: Retest occurs (already READY, stays READY)
       cand = {
         ...cand,
         retestEvidence: { retestCandleTime: t0 + 2_200_000, retestPrice: 93 },
       };
       cand = SetupStateMachine.advanceState(cand, t0 + 2_200_000);
-      expect(cand.state).toBe('RETEST');
+      expect(cand.state).toBe('READY');
 
-      // Stage 5: Trigger confirms -> READY
+      // Stage 5: Trigger confirms -> stays READY
       cand = {
         ...cand,
         triggerEvidence: { triggerCandleTime: t0 + 2_300_000, triggerType: '5M_CONFIRMATION' },

@@ -20,7 +20,7 @@ export class SetupStateMachine {
 
     const nextState = this.determineNextState(candidate);
     const confluence = ConfluenceScorer.evaluateConfluence(candidate, config, isDataHealthy);
-    const isReady = nextState === 'TRIGGERED' && confluence.totalScore >= config.minConfluenceScore;
+    const isReady = (nextState === 'TRIGGERED' || nextState === 'ZONE_IDENTIFIED' || nextState === 'RETEST') && confluence.totalScore >= config.minConfluenceScore;
     const finalState: SetupState = isReady ? 'READY' : nextState;
     const finalStatus = isReady ? ('READY' as const) : ('ACTIVE' as const);
 

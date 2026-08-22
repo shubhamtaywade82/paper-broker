@@ -1,6 +1,6 @@
-import { LayoutDashboard, GitBranch, TrendingUp, Radio } from 'lucide-react';
+import { LayoutDashboard, GitBranch, TrendingUp, Radio, FlaskConical } from 'lucide-react';
 
-export type DashboardTab = 'overview' | 'cycles' | 'performance' | 'feed';
+export type DashboardTab = 'overview' | 'cycles' | 'performance' | 'feed' | 'backtest';
 
 interface SidebarProps {
   activeTab: DashboardTab;
@@ -11,6 +11,7 @@ const navItems: Array<{ id: DashboardTab; label: string; icon: typeof LayoutDash
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'cycles', label: 'Agent Cycles', icon: GitBranch },
   { id: 'performance', label: 'Performance', icon: TrendingUp },
+  { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
   { id: 'feed', label: 'Live Feed', icon: Radio },
 ];
 

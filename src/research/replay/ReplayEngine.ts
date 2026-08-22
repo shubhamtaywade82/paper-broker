@@ -7,6 +7,7 @@ import { SetupEngine } from '../../market/setup/SetupEngine.js';
 import { ExecutionPlanEngine } from '../../market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
 import { SmcPaperBroker } from '../../broker/paper/SmcPaperBroker.js';
+import { DEFAULT_EXECUTION_PLAN_CONFIG } from '../../market/execution/RiskRewardCalculator.js';
 import type { TradeSignal } from '../../trading/signal/types.js';
 import { PerformanceAnalyzer } from '../analytics/PerformanceAnalyzer.js';
 import { ArchetypeBreakdown } from '../analytics/ArchetypeBreakdown.js';
@@ -15,20 +16,24 @@ import { RegimeAnalyzer } from '../analytics/RegimeAnalyzer.js';
 import { MonteCarloSimulator } from '../analytics/MonteCarloSimulator.js';
 import { StatisticalValidationEngine } from '../analytics/StatisticalValidationEngine.js';
 import { HistoricalDataLoader } from './HistoricalDataLoader.js';
+import { DEFAULT_SETUP_CONFIG } from '../../market/setup/ConfluenceScorer.js';
 import type { BacktestReport, HistoricalDataset, ReplayConfig } from './types.js';
 
 export class ReplayEngine {
   static runBacktest(rawDataset: HistoricalDataset, config: ReplayConfig): BacktestReport {
     const dataset = HistoricalDataLoader.sanitizeDataset(rawDataset);
-    const store = new KlineStore();
+    const store = new KlineStore(10000);
     const inst = dataset.instrument ?? this.makeDefaultInstrument(dataset.symbol);
     const stateManager = new MarketStateManager([inst]);
 
     const mtfEngine = new MtfStateEngine(store, stateManager);
     const structureEngine = new MarketStructureEngine(store);
     const smcEngine = new SmcLocationEngine(store, structureEngine);
-    const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
-    const planEngine = new ExecutionPlanEngine();
+    const setupConfig = config.minConfluenceScore != null
+      ? { ...DEFAULT_SETUP_CONFIG, minConfluenceScore: config.minConfluenceScore }
+      : DEFAULT_SETUP_CONFIG;
+    const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine, setupConfig);
+    const planEngine = new ExecutionPlanEngine({ ...DEFAULT_EXECUTION_PLAN_CONFIG, ...config.executionConfig });
     const tradeEngine = new TradeIntentEngine({
       maxOpenPositions: config.maxOpenPositions,
       maxPositionsPerSymbol: 1,

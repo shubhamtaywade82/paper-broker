@@ -362,6 +362,10 @@ export class EventLog {
     };
   }
 
+  get raw(): Database.Database {
+    return this.db;
+  }
+
   close(): void {
     this.db.close();
   }

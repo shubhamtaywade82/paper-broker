@@ -9,28 +9,45 @@ export class BinanceHistoricalFetcher {
     startTime?: number,
     endTime?: number
   ): Promise<Candle[]> {
-    let url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    if (startTime) url += `&startTime=${startTime}`;
-    if (endTime) url += `&endTime=${endTime}`;
+    const allCandles: Candle[] = [];
+    let currentStart = startTime;
+    const batchSize = 1000;
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch klines from Binance: ${res.status} ${res.statusText}`);
+    while (true) {
+      let url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${batchSize}`;
+      if (currentStart) url += `&startTime=${currentStart}`;
+      if (endTime) url += `&endTime=${endTime}`;
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch klines from Binance: ${res.status} ${res.statusText}`);
+      }
+
+      const data = (await res.json()) as Array<[number, string, string, string, string, string, number, string, number, string, string, string]>;
+      if (data.length === 0) break;
+
+      for (const d of data) {
+        allCandles.push({
+          symbol,
+          interval,
+          openTime: d[0],
+          closeTime: d[6],
+          open: Number(d[1]),
+          high: Number(d[2]),
+          low: Number(d[3]),
+          close: Number(d[4]),
+          volume: Number(d[5]),
+          isClosed: true,
+        });
+      }
+
+      if (data.length < batchSize) break;
+      const last = data[data.length - 1];
+      if (!last) break;
+      currentStart = last[0] + 1;
     }
 
-    const data = (await res.json()) as Array<[number, string, string, string, string, string, number, string, number, string, string, string]>;
-    return data.map((d) => ({
-      symbol,
-      interval,
-      openTime: d[0],
-      closeTime: d[6],
-      open: Number(d[1]),
-      high: Number(d[2]),
-      low: Number(d[3]),
-      close: Number(d[4]),
-      volume: Number(d[5]),
-      isClosed: true,
-    }));
+    return allCandles.slice(-limit);
   }
 
   static async fetchFundingRates(symbol = 'SOLUSDT', limit = 100): Promise<HistoricalFundingRate[]> {
@@ -45,7 +62,7 @@ export class BinanceHistoricalFetcher {
     }));
   }
 
-  static async loadSolusdtDataset(targetDays = 3): Promise<HistoricalDataset> {
+  static async loadSolusdtDataset(targetDays = 3, symbol = 'SOLUSDT'): Promise<HistoricalDataset> {
     const now = Date.now();
     const replayDurationMs = targetDays * 24 * 3600 * 1000;
     const replayStartTime = now - replayDurationMs;
@@ -56,15 +73,15 @@ export class BinanceHistoricalFetcher {
     const start5m = replayStartTime - 60 * 300 * 1000;
 
     const [candles4h, candles1h, candles15m, candles5m, fundingRates] = await Promise.all([
-      this.fetchKlines('SOLUSDT', '4h', 1000, start4h, now),
-      this.fetchKlines('SOLUSDT', '1h', 1000, start1h, now),
-      this.fetchKlines('SOLUSDT', '15m', 1000, start15m, now),
-      this.fetchKlines('SOLUSDT', '5m', 1000, start5m, now),
-      this.fetchFundingRates('SOLUSDT', 100),
+      this.fetchKlines(symbol, '4h', targetDays * 6 + 30, start4h, now),
+      this.fetchKlines(symbol, '1h', targetDays * 24 + 40, start1h, now),
+      this.fetchKlines(symbol, '15m', targetDays * 96 + 60, start15m, now),
+      this.fetchKlines(symbol, '5m', targetDays * 288 + 60, start5m, now),
+      this.fetchFundingRates(symbol, 100),
     ]);
 
     return {
-      symbol: 'SOLUSDT',
+      symbol,
       candles4h,
       candles1h,
       candles15m,

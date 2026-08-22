@@ -17,7 +17,11 @@ export class PositionSizer {
     if (stopDistance <= 0) return { failureReason: 'ZERO_STOP_DISTANCE' };
 
     const riskCapital = accountEquity * riskPercent;
-    const rawQuantity = riskCapital / stopDistance;
+    const riskQuantity = riskCapital / stopDistance;
+
+    const maxNotionalFromMargin = accountEquity * leverage;
+    const marginQuantity = maxNotionalFromMargin / entryPrice;
+    const rawQuantity = Math.min(riskQuantity, marginQuantity);
 
     const step = instrument?.stepSize ? Number(instrument.stepSize) : 0.001;
     const precision = instrument?.quantityPrecision ?? 3;

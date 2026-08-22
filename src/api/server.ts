@@ -17,6 +17,9 @@ import { WebSocketGateway } from './websocket/WebSocketGateway.js';
 import { TradingAgentsPipeline } from '../ai/tradingAgents.js';
 import { metrics } from '../telemetry/metrics.js';
 import { logger } from '../telemetry/logger.js';
+import { ReplayEngine } from '../research/replay/ReplayEngine.js';
+import { BinanceHistoricalFetcher } from '../research/replay/BinanceHistoricalFetcher.js';
+import type { ReplayConfig } from '../research/replay/types.js';
 
 const CreateOrderSchema = z.object({
   symbol: z.string().min(1),
@@ -102,6 +105,7 @@ export class ApiServer {
   private registerRoutes(): void {
     this.registerWebSocketRoutes();
     this.registerQueryRoutes();
+    this.registerBacktestRoutes();
     this.registerCommandRoutes();
     this.registerDashboardRoutes();
   }
@@ -361,6 +365,122 @@ export class ApiServer {
         conviction: Number(rawVerdict?.['conviction'] || 0.5),
         riskOpinions: (cycle['risk_opinions'] as unknown[]) || [],
       };
+    });
+  }
+
+  private registerBacktestRoutes(): void {
+    this.app.get('/api/v1/backtest/history', async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const rows = this.events.raw.prepare(
+        'SELECT id, symbol, start_time, end_time, duration_days, initial_equity, final_equity, total_net_pnl, total_return_pct, total_trades, win_rate, profit_factor, max_drawdown, avg_r, created_at_utc FROM backtest_runs ORDER BY created_at_utc DESC LIMIT ?'
+      ).all(limit) as Array<Record<string, unknown>>;
+      return { runs: rows };
+    });
+
+    this.app.get('/api/v1/backtest/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const row = this.events.raw.prepare(
+        'SELECT * FROM backtest_runs WHERE id = ?'
+      ).get(id) as {
+        id: string; symbol: string; start_time: number; end_time: number;
+        duration_days: number; initial_equity: number; final_equity: number;
+        total_net_pnl: number; total_return_pct: number; total_trades: number;
+        win_rate: number; profit_factor: number; max_drawdown: number;
+        avg_r: number; created_at_utc: string; config_json: string; report_json: string;
+      } | undefined;
+      if (!row) {
+        return reply.code(404).send({ error: 'BACKTEST_NOT_FOUND' });
+      }
+      return {
+        id: row.id,
+        symbol: row.symbol,
+        start_time: row.start_time,
+        end_time: row.end_time,
+        duration_days: row.duration_days,
+        initial_equity: row.initial_equity,
+        final_equity: row.final_equity,
+        total_net_pnl: row.total_net_pnl,
+        total_return_pct: row.total_return_pct,
+        total_trades: row.total_trades,
+        win_rate: row.win_rate,
+        profit_factor: row.profit_factor,
+        max_drawdown: row.max_drawdown,
+        avg_r: row.avg_r,
+        created_at_utc: row.created_at_utc,
+        config: JSON.parse(row.config_json),
+        report: JSON.parse(row.report_json),
+      };
+    });
+
+    this.app.post('/api/v1/backtest/run', async (request, reply) => {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const symbol = String(body['symbol'] || 'SOLUSDT').toUpperCase();
+      const days = Math.min(Math.max(Number(body['days'] || 3), 1), 30);
+      const initialEquity = Math.max(Number(body['initialEquity'] || 10000), 100);
+      const riskPerTradePct = Math.min(Math.max(Number(body['riskPerTradePct'] || 0.02), 0.005), 0.1);
+      const maxDailyLossPct = Math.min(Math.max(Number(body['maxDailyLossPct'] || 0.05), 0.01), 0.2);
+      const maxOpenPositions = Math.min(Math.max(Number(body['maxOpenPositions'] || 3), 1), 10);
+      const defaultLeverage = Math.min(Math.max(Number(body['defaultLeverage'] || 5), 1), 20);
+
+      const now = Date.now();
+      const startTime = now - days * 24 * 60 * 60 * 1000;
+
+      try {
+        const dataset = await BinanceHistoricalFetcher.loadSolusdtDataset(days, symbol);
+
+        const config: ReplayConfig = {
+          symbol,
+          startTime,
+          endTime: now,
+          initialEquity,
+          riskPerTradePct,
+          maxDailyLossPct,
+          maxOpenPositions,
+          defaultLeverage,
+          strategyVersion: 'v1',
+          minConfluenceScore: 40,
+          executionConfig: { minTp1RiskReward: 1.0, minTp2RiskReward: 1.5, minTp3RiskReward: 2.0 },
+          paperBrokerConfig: {
+            makerFeeRate: 0.0002,
+            takerFeeRate: 0.0005,
+            slippageModel: 'FIXED_TICKS',
+            slippageFixedTicks: 1,
+            ambiguousIntrabarPolicy: 'CONSERVATIVE',
+            breakevenEnabled: true,
+            breakevenTriggerR: 1.0,
+            breakevenOffsetTicks: 2,
+            trailingEnabled: false,
+            trailingTriggerR: 2.0,
+            trailingDistanceTicks: 5,
+            maintenanceMarginRate: 0.005,
+            fundingMode: 'DISABLED',
+          },
+        };
+
+        const report = ReplayEngine.runBacktest(dataset, config);
+        const runId = `BT:${symbol}:${now}`;
+
+        this.events.raw.prepare(
+          `INSERT INTO backtest_runs (id, symbol, start_time, end_time, duration_days, initial_equity, final_equity, total_net_pnl, total_return_pct, total_trades, win_rate, profit_factor, max_drawdown, avg_r, config_json, report_json, created_at_utc)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          runId, symbol, startTime, now, report.durationDays,
+          initialEquity, report.finalEquity, report.totalNetPnl, report.totalReturnPct,
+          report.coreMetrics.totalTrades, report.coreMetrics.winRate,
+          report.coreMetrics.profitFactor, report.coreMetrics.maxDrawdown,
+          report.coreMetrics.averageR,
+          JSON.stringify(config),
+          JSON.stringify(report),
+          new Date(now).toISOString()
+        );
+
+        metrics.inc('backtest_runs_total');
+        return reply.send({ runId, report });
+      } catch (err) {
+        logger.error({ error: (err as Error).message }, 'Backtest failed');
+        return reply.code(500).send({ error: 'BACKTEST_FAILED', message: (err as Error).message });
+      }
     });
   }
 

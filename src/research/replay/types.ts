@@ -2,6 +2,7 @@ import type { Instrument } from '../../broker/types.js';
 import type { PaperBrokerConfig, PaperTradeRecord } from '../../broker/paper/types.js';
 import type { PerformanceMetrics } from '../../broker/paper/PaperMetrics.js';
 import type { Candle } from '../../strategy/indicators.js';
+import type { ExecutionPlanConfig } from '../../market/execution/types.js';
 
 export interface HistoricalFundingRate {
   timestamp: number;
@@ -30,6 +31,8 @@ export interface ReplayConfig {
   defaultLeverage: number;
   paperBrokerConfig: PaperBrokerConfig;
   strategyVersion: string;
+  minConfluenceScore?: number;
+  executionConfig?: Partial<ExecutionPlanConfig>;
 }
 
 export interface ArchetypeMetrics {
