@@ -7,7 +7,9 @@ export type WebSocketEventType =
   | 'health.updated'
   | 'incident.reported'
   | 'mode.changed'
-  | 'kill_switch.activated';
+  | 'kill_switch.activated'
+  | 'trade.stream'
+  | 'book.update';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

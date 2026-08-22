@@ -215,6 +215,36 @@ export class SnapshotStore {
     );
   }
 
+  queryAccountSnapshots(accountId: string, limit = 100): Array<{
+    ts: string;
+    equity: number;
+    walletBalance: number;
+    totalRealizedPnl: number;
+    drawdown: number | null;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT ts_utc, equity, wallet_balance, total_realized_pnl, drawdown
+      FROM account_snapshots
+      WHERE account_id = ?
+      ORDER BY ts_utc DESC
+      LIMIT ?
+    `).all(accountId, limit) as Array<{
+      ts_utc: string;
+      equity: string;
+      wallet_balance: string;
+      total_realized_pnl: string;
+      drawdown: string | null;
+    }>;
+
+    return rows.reverse().map(r => ({
+      ts: r.ts_utc,
+      equity: Number(r.equity),
+      walletBalance: Number(r.wallet_balance),
+      totalRealizedPnl: Number(r.total_realized_pnl),
+      drawdown: r.drawdown ? Number(r.drawdown) : null,
+    }));
+  }
+
   close(): void {
     this.db.close();
   }

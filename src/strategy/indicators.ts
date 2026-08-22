@@ -8,6 +8,11 @@ export interface Candle {
   close: number;
   volume: number;
   quoteVolume?: number;
+  trades?: number;
+  closeTime?: number;
+  isClosed?: boolean;
+  eventTime?: number;
+  receivedAt?: number;
 }
 
 export function ema(values: number[], period: number): number[] {

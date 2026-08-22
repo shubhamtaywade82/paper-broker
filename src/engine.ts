@@ -197,7 +197,9 @@ export async function startEngine(): Promise<EngineHandle> {
     signals: db.signals,
     events,
     klines,
+    snapshots,
     profile: runtimeProfile,
+    marketState,
     host: '0.0.0.0',
     port: env.PORT,
   });
@@ -252,6 +254,12 @@ export async function startEngine(): Promise<EngineHandle> {
       strategyEngine.onCandleClose(candle).catch((error) => {
         logger.error({ error }, 'Strategy engine candle handler failed');
       });
+    },
+    onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
+      api.wsGateway.broadcast('book.update', { symbol, bid, ask, bidQty, askQty });
+    },
+    onAggTrade: (symbol, price, qty) => {
+      api.wsGateway.broadcast('trade.stream', { symbol, price, qty, ts: Date.now() });
     },
     onSystemEvent: (type, payload) => {
       events.appendSystemEvent({ eventType: type as never, payload, createdAtUtc: new Date().toISOString() });

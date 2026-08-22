@@ -14,6 +14,8 @@ export interface StreamHandlerOptions {
   marketState: MarketStateManager;
   onKlineTick?: (kline: NormalizedKline) => void;
   onKlineClose?: (kline: NormalizedKline) => void;
+  onBookTicker?: (symbol: string, bid: number, ask: number, bidQty: number, askQty: number) => void;
+  onAggTrade?: (symbol: string, price: number, qty: number) => void;
   onSystemEvent?: (type: string, payload: Record<string, unknown>) => void;
 }
 
@@ -42,7 +44,7 @@ export class BinanceStreamHandler {
       );
 
       for (const interval of this.options.timeframes) {
-        streams.push(this.client.futures.ws.kline(symbol, interval as any));
+        streams.push(this.client.futures.ws.kline(symbol, interval as Parameters<typeof this.client.futures.ws.kline>[1]));
       }
     }
 
@@ -87,6 +89,7 @@ export class BinanceStreamHandler {
             normalized.askQty,
             String(normalized.eventTime)
           );
+          this.options.onBookTicker?.(normalized.symbol, normalized.bid, normalized.ask, normalized.bidQty, normalized.askQty);
         }
       } else if (streamName.includes('@aggTrade')) {
         const normalized = normalizeAggTrade(payload);
@@ -97,6 +100,7 @@ export class BinanceStreamHandler {
             normalized.quantity,
             String(normalized.eventTime)
           );
+          this.options.onAggTrade?.(normalized.symbol, normalized.price, normalized.quantity);
         }
       } else if (streamName.includes('@markPrice')) {
         const normalized = normalizeMarkPrice(payload);
@@ -151,7 +155,8 @@ export class BinanceStreamHandler {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
-    (this.client.futures.ws as any).disconnect?.();
+    const ws = this.client.futures.ws as unknown as { disconnect?: () => void };
+    ws.disconnect?.();
     this.isConnected = false;
   }
 

@@ -61,6 +61,8 @@ export interface Instrument {
   updatedAtUtc: string;
 }
 
+export type DataQualityStatus = 'VALID' | 'STALE' | 'INVALID' | 'MISSING' | 'DUPLICATE' | 'OUT_OF_ORDER';
+
 export interface MarketState {
   symbol: string;
 
@@ -68,18 +70,38 @@ export interface MarketState {
   ask?: number;
   bidQty?: number;
   askQty?: number;
+  spread?: number;
 
   last?: number;
   lastQty?: number;
   mark?: number;
   index?: number;
+  volume24h?: number;
 
   fundingRate?: number;
   nextFundingTimeUtc?: string;
 
+  openInterest?: number;
+  openInterestDelta?: number;
+  openInterestTimestampUtc?: string;
+
+  longShortRatio?: number;
+  longShortTimestampUtc?: string;
+  topTraderLongShortRatio?: number;
+  topTraderTimestampUtc?: string;
+
+  takerBuyVolume?: number;
+  takerSellVolume?: number;
+  takerDelta?: number;
+  takerVolumeTimestampUtc?: string;
+
   exchangeTsUtc?: string;
   localTsUtc: number;
+  latencyMs?: number;
   stale: boolean;
+
+  lastQualityStatus?: DataQualityStatus;
+  lastQualityReason?: string;
 }
 
 export interface OrderCommand {

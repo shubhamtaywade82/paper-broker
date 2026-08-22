@@ -240,7 +240,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
           <div class="flex items-center justify-between text-xs text-app-muted font-medium">
             <span>REALIZED PNL (24H)</span>
-            <span class="text-emerald-400 font-semibold text-[11px]">+0.84%</span>
+            <span id="kpi-realized-pct" class="text-emerald-400 font-semibold text-[11px]">+0.00%</span>
           </div>
           <div id="kpi-realized" class="text-2xl font-bold mono mt-1 text-emerald-400">+$0.00</div>
           <svg class="w-full h-7 mt-2 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 100 25"><path d="M0,22 Q30,12 60,14 T100,4" /></svg>
@@ -250,16 +250,16 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between hover:border-app-border/80 transition">
           <div class="flex items-center justify-between text-xs text-app-muted font-medium">
             <span>WIN RATE</span>
-            <span class="text-gray-400 text-[11px]">25W / 15L</span>
+            <span id="kpi-winrate-record" class="text-gray-400 text-[11px]">0W / 0L</span>
           </div>
           <div class="flex items-center justify-between mt-1">
-            <div class="text-2xl font-bold mono text-white">62.50%</div>
-            <div class="w-9 h-9 rounded-full border-2 border-emerald-400 border-t-amber-400 flex items-center justify-center text-[9px] font-bold text-emerald-400">
-              62%
+            <div id="kpi-winrate-pct" class="text-2xl font-bold mono text-white">0.00%</div>
+            <div id="kpi-winrate-circle" class="w-9 h-9 rounded-full border-2 border-emerald-400 border-t-amber-400 flex items-center justify-center text-[9px] font-bold text-emerald-400">
+              0%
             </div>
           </div>
           <div class="w-full bg-dark-700 h-1.5 rounded-full mt-2 overflow-hidden">
-            <div class="bg-emerald-400 h-full w-[62.5%]"></div>
+            <div id="kpi-winrate-bar" class="bg-emerald-400 h-full w-[0%]"></div>
           </div>
         </div>
 
@@ -333,7 +333,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="lg:col-span-3 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
           <div class="flex items-center justify-between pb-3 border-b border-app-border">
             <span class="font-bold text-xs uppercase tracking-wider text-gray-200">ORDER BOOK</span>
-            <span class="text-xs text-blue-400 mono font-semibold">SOLUSDT</span>
+            <span id="ob-symbol" class="text-xs text-blue-400 mono font-semibold">SOLUSDT</span>
           </div>
 
           <div class="grid grid-cols-3 text-[11px] text-app-muted mono pt-2 pb-1">
@@ -478,22 +478,20 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
             <div class="relative w-28 h-28 flex items-center justify-center">
               <svg viewBox="0 0 36 36" class="w-full h-full transform -rotate-90">
                 <path class="text-dark-700" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path class="text-emerald-400" stroke-dasharray="86.2, 100" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path class="text-purple-400" stroke-dasharray="6.1, 100" stroke-dashoffset="-86.2" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path class="text-amber-400" stroke-dasharray="4.5, 100" stroke-dashoffset="-92.3" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path id="donut-usdt" class="text-emerald-400" stroke-dasharray="100, 100" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path id="donut-sol" class="text-purple-400" stroke-dasharray="0, 100" stroke-dashoffset="0" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path id="donut-btc" class="text-amber-400" stroke-dasharray="0, 100" stroke-dashoffset="0" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path id="donut-eth" class="text-blue-400" stroke-dasharray="0, 100" stroke-dashoffset="0" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
               </svg>
               <div class="absolute text-center">
                 <div class="text-[10px] text-app-muted">USDT</div>
-                <div class="text-xs font-bold text-white">86.2%</div>
+                <div id="donut-usdt-pct" class="text-xs font-bold text-white">100%</div>
               </div>
             </div>
           </div>
 
-          <div class="space-y-1 text-[11px] mono">
-            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-gray-300">USDT (Available)</span></span><span class="text-white font-semibold">86.2%</span></div>
-            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span><span class="text-gray-300">SOL</span></span><span class="text-white font-semibold">6.1%</span></div>
-            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-gray-300">BTC</span></span><span class="text-white font-semibold">4.5%</span></div>
-            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-blue-400"></span><span class="text-gray-300">ETH</span></span><span class="text-white font-semibold">2.7%</span></div>
+          <div class="space-y-1 text-[11px] mono" id="donut-legend">
+            <div class="flex justify-between items-center"><span class="flex items-center space-x-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-gray-300">USDT (Available)</span></span><span id="donut-usdt-val" class="text-white font-semibold">100%</span></div>
           </div>
         </div>
 
@@ -501,18 +499,15 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
           <div class="flex items-center justify-between pb-2 border-b border-app-border">
             <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">EQUITY CURVE</span>
-            <span class="text-emerald-400 text-xs font-bold mono">+2.33%</span>
+            <span id="eq-change-pct" class="text-emerald-400 text-xs font-bold mono">+0.00%</span>
           </div>
 
           <div class="mt-2 text-xs mono">
             <div class="text-app-muted">Total: <span id="eq-total" class="text-white font-bold">$10,000.00</span></div>
-            <div class="text-emerald-400">24H Change: +$233.00</div>
+            <div id="eq-change-abs" class="text-emerald-400">24H Change: +$0.00</div>
           </div>
 
-          <svg viewBox="0 0 100 45" class="w-full h-24 mt-2 text-emerald-400 fill-emerald-500/10 stroke-emerald-400 stroke-2">
-            <path d="M0,40 Q15,35 30,38 T60,20 T80,15 T100,8 L100,45 L0,45 Z" />
-            <path fill="none" d="M0,40 Q15,35 30,38 T60,20 T80,15 T100,8" />
-          </svg>
+          <div id="eq-chart-container" class="w-full h-24 mt-2"></div>
 
           <div class="flex justify-between text-[10px] text-app-muted mono pt-2 border-t border-app-border">
             <span class="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded font-bold">1D</span>
@@ -527,28 +522,14 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
           <div class="flex items-center justify-between pb-2 border-b border-app-border">
             <span class="font-bold text-xs text-gray-200 uppercase tracking-wider">PNL PERFORMANCE</span>
-            <span class="text-emerald-400 text-xs font-bold mono">+$843.25</span>
+            <span id="pnl-total" class="text-emerald-400 text-xs font-bold mono">+$0.00</span>
           </div>
 
           <!-- Bar histogram representation -->
-          <div class="h-28 flex items-end justify-between px-2 pt-3">
-            <div class="w-2.5 bg-emerald-400 rounded-t h-16"></div>
-            <div class="w-2.5 bg-emerald-400 rounded-t h-20"></div>
-            <div class="w-2.5 bg-red-400 rounded-t h-12"></div>
-            <div class="w-2.5 bg-emerald-400 rounded-t h-24"></div>
-            <div class="w-2.5 bg-red-400 rounded-t h-8"></div>
-            <div class="w-2.5 bg-emerald-400 rounded-t h-22"></div>
-            <div class="w-2.5 bg-emerald-400 rounded-t h-26"></div>
+          <div id="pnl-histogram" class="h-28 flex items-end justify-between px-2 pt-3">
           </div>
 
-          <div class="flex justify-between text-[10px] text-app-muted mono pt-2 border-t border-app-border">
-            <span>22</span>
-            <span>23</span>
-            <span>24</span>
-            <span>25</span>
-            <span>26</span>
-            <span>27</span>
-            <span>28</span>
+          <div id="pnl-labels" class="flex justify-between text-[10px] text-app-muted mono pt-2 border-t border-app-border">
           </div>
         </div>
 
@@ -559,30 +540,30 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
           </div>
 
-          <div class="space-y-2 text-xs mono py-1">
+          <div class="space-y-2 text-xs mono py-1" id="system-status-list">
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Binance WS</span></span>
-              <span class="text-emerald-400 font-semibold">Connected (45ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">Binance WS</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Binance REST</span></span>
-              <span class="text-emerald-400 font-semibold">Healthy (78ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">Binance REST</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Strategy Engine</span></span>
-              <span class="text-emerald-400 font-semibold">Running (12ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">Strategy Engine</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Risk Engine</span></span>
-              <span class="text-emerald-400 font-semibold">Running (8ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">Risk Engine</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">Paper Broker</span></span>
-              <span class="text-emerald-400 font-semibold">Active (5ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">Paper Broker</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-300">SQLite Database</span></span>
-              <span class="text-emerald-400 font-semibold">Healthy (3ms)</span>
+              <span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span><span class="text-gray-300">SQLite Database</span></span>
+              <span class="text-gray-400 font-semibold">Waiting...</span>
             </div>
           </div>
         </div>
@@ -595,26 +576,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           </div>
 
           <div id="activity-feed-list" class="space-y-2 text-xs mono overflow-y-auto max-h-36">
-            <div class="flex items-start space-x-2">
-              <span class="text-app-muted text-[10px]">12:33:45</span>
-              <div><span class="font-bold text-white">SOLUSDT</span> <span class="text-emerald-400">Long 50 SOL</span> Position opened @ 138.756</div>
-            </div>
-            <div class="flex items-start space-x-2">
-              <span class="text-app-muted text-[10px]">12:32:11</span>
-              <div><span class="font-bold text-white">SOLUSDT</span> <span class="text-blue-400">Limit Buy</span> Order placed @ 140.000</div>
-            </div>
-            <div class="flex items-start space-x-2">
-              <span class="text-app-muted text-[10px]">12:31:02</span>
-              <div><span class="font-bold text-white">ETHUSDT</span> <span class="text-red-400">Short 0.5 ETH</span> Position opened @ 2,550.12</div>
-            </div>
-            <div class="flex items-start space-x-2">
-              <span class="text-app-muted text-[10px]">12:30:44</span>
-              <div><span class="font-bold text-white">BTCUSDT</span> <span class="text-emerald-400">Take Profit</span> Order filled: 0.005 BTC @ 61,200</div>
-            </div>
-            <div class="flex items-start space-x-2">
-              <span class="text-app-muted text-[10px]">12:28:31</span>
-              <div><span class="text-gray-400">System:</span> Strategy 'EMA Trend' initialized</div>
-            </div>
+            <div class="text-app-muted text-[11px]">Loading...</div>
           </div>
         </div>
 

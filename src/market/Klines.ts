@@ -65,11 +65,20 @@ export class KlineStore {
     return series.slice(-limit);
   }
 
+  getCandlesAsOf(symbol: string, interval: string, asOfTimestamp: number, limit: number): Candle[] {
+    const key = `${symbol}:${interval}`;
+    const series = this.candles.get(key);
+    if (!series) return [];
+    // Strict point-in-time filter: no future candles beyond asOfTimestamp
+    return series.filter((c) => c.openTime <= asOfTimestamp).slice(-limit);
+  }
+
   getRecent(symbol: string, interval: string, limit: number): Candle[] {
     return this.getCandles(symbol, interval, limit);
   }
 
   upsertCandle(candle: Candle): void {
+    if (candle.high < candle.low || candle.volume < 0 || candle.openTime <= 0) return;
     const key = `${candle.symbol}:${candle.interval}`;
     let series = this.candles.get(key);
 
@@ -107,22 +116,45 @@ export class KlineStore {
         low: Math.min(existing.low, tick.price),
         close: tick.price,
         volume: existing.volume + tick.qty,
+        isClosed: false,
+        receivedAt: Date.now(),
       };
     } else {
       candle = {
         symbol: tick.symbol,
         interval,
         openTime,
+        closeTime: openTime + (INTERVAL_MS[interval] ?? 0) - 1,
         open: tick.price,
         high: tick.price,
         low: tick.price,
         close: tick.price,
         volume: tick.qty,
+        isClosed: false,
+        receivedAt: Date.now(),
       };
     }
 
     this.upsertCandle(candle);
     return candle;
+  }
+
+  detectGaps(symbol: string, interval: KlineInterval): Array<{ expectedTime: number; actualTime: number; missingCount: number }> {
+    const key = `${symbol}:${interval}`;
+    const series = this.candles.get(key) ?? [];
+    const intervalMs = INTERVAL_MS[interval];
+    const gaps: Array<{ expectedTime: number; actualTime: number; missingCount: number }> = [];
+
+    for (let i = 1; i < series.length; i++) {
+      const prev = series[i - 1]!;
+      const curr = series[i]!;
+      const diff = curr.openTime - prev.openTime;
+      if (diff > intervalMs) {
+        const missingCount = Math.round(diff / intervalMs) - 1;
+        gaps.push({ expectedTime: prev.openTime + intervalMs, actualTime: curr.openTime, missingCount });
+      }
+    }
+    return gaps;
   }
 
   clear(): void {

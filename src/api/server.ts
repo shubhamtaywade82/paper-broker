@@ -9,6 +9,8 @@ import type { RuntimeProfile } from '../config/modes/types.js';
 import type { MarketDataSupervisor } from '../market/supervisor/MarketDataSupervisor.js';
 import type { ErrorNormalizer } from '../notifications/error-pipeline/ErrorNormalizer.js';
 import type { KlineStore } from '../market/Klines.js';
+import type { SnapshotStore } from '../persistence/SnapshotStore.js';
+import type { MarketStateManager } from '../market/MarketState.js';
 import type { WebSocket } from 'ws';
 import { DASHBOARD_HTML } from './dashboardHtml.js';
 import { WebSocketGateway } from './websocket/WebSocketGateway.js';
@@ -46,9 +48,11 @@ export interface ApiServerOptions {
   signals: SignalRepository;
   events: EventLog;
   klines?: KlineStore;
+  snapshots?: SnapshotStore;
   profile?: RuntimeProfile;
   supervisor?: MarketDataSupervisor;
   errorNormalizer?: ErrorNormalizer;
+  marketState?: MarketStateManager;
   wsGateway?: WebSocketGateway;
   host?: string;
   port?: number;
@@ -61,9 +65,11 @@ export class ApiServer {
   private signals: SignalRepository;
   private events: EventLog;
   private klines?: KlineStore;
+  private snapshots?: SnapshotStore;
   private profile?: RuntimeProfile;
   private supervisor?: MarketDataSupervisor;
   private errorNormalizer?: ErrorNormalizer;
+  private marketState?: MarketStateManager;
   public readonly wsGateway: WebSocketGateway;
   private host: string;
   private port: number;
@@ -75,9 +81,11 @@ export class ApiServer {
     this.signals = options.signals;
     this.events = options.events;
     this.klines = options.klines;
+    this.snapshots = options.snapshots;
     this.profile = options.profile;
     this.supervisor = options.supervisor;
     this.errorNormalizer = options.errorNormalizer;
+    this.marketState = options.marketState;
     this.wsGateway = options.wsGateway ?? new WebSocketGateway();
     this.host = options.host ?? '0.0.0.0';
     this.port = options.port ?? 8080;
@@ -183,6 +191,75 @@ export class ApiServer {
         cached = await this.klines.fetchHistoricalKlines(symbol, interval, limit);
       }
       return cached;
+    });
+
+    this.app.get('/api/v1/activity', async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const events = this.events.getEvents({ limit });
+      return events.map(e => ({
+        id: e.id,
+        type: e.type,
+        ts: e.ts,
+        payload: e.payload,
+      }));
+    });
+
+    this.app.get('/api/v1/equity-curve', async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      if (!this.snapshots) return [];
+      return this.snapshots.queryAccountSnapshots('paper-main', limit);
+    });
+
+    this.app.get('/api/v1/win-rate', async () => {
+      const fills = this.events.getEvents({ type: 'FILL_CREATED', limit: 500 });
+      let wins = 0;
+      let losses = 0;
+      const tradePnl = new Map<string, number>();
+
+      for (const fill of fills) {
+        const p = fill.payload as Record<string, unknown>;
+        const orderId = String(p['orderId'] || '');
+        const side = String(p['side'] || '');
+        const qty = Number(p['quantity'] || p['qty'] || 0);
+        const price = Number(p['price'] || 0);
+        if (!orderId || !price) continue;
+
+        const current = tradePnl.get(orderId) ?? 0;
+        tradePnl.set(orderId, current + (side === 'BUY' ? -price * qty : price * qty));
+      }
+
+      for (const [, pnl] of tradePnl) {
+        if (pnl > 0) wins++;
+        else if (pnl < 0) losses++;
+      }
+
+      const total = wins + losses;
+      return {
+        wins,
+        losses,
+        total,
+        winRate: total > 0 ? (wins / total) * 100 : 0,
+      };
+    });
+
+    this.app.get('/api/v1/orderbook', async (request) => {
+      const query = request.query as { symbol?: string };
+      const symbol = query.symbol || 'SOLUSDT';
+      if (!this.marketState) return null;
+      const state = this.marketState.getState(symbol);
+      if (!state) return null;
+      return {
+        symbol,
+        bid: state.bid,
+        ask: state.ask,
+        bidQty: state.bidQty,
+        askQty: state.askQty,
+        spread: state.spread,
+        last: state.last,
+        mark: state.mark,
+      };
     });
   }
 
