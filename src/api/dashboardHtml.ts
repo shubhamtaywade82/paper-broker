@@ -948,10 +948,33 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         if (p > 0 && msg.payload.symbol === currentSymbol) {
           document.getElementById('chart-ltp-hero').innerText = '$' + p.toFixed(2);
           document.getElementById('ob-mid-price').innerText = p.toFixed(2);
+          if (candleSeries && msg.payload.candle) {
+            const c = msg.payload.candle;
+            if (c.interval === currentInterval) {
+              candleSeries.update({
+                time: Math.floor(c.openTime / 1000),
+                open: Number(c.open),
+                high: Number(c.high),
+                low: Number(c.low),
+                close: Number(c.close)
+              });
+            }
+          }
         }
         if (msg.payload.symbol) {
           const tp = document.getElementById('price-' + msg.payload.symbol);
           if (tp && p > 0) tp.innerText = '$' + p.toFixed(p > 500 ? 1 : 2);
+          if (msg.payload.symbol === currentSymbol) {
+            const chg = document.getElementById('chart-chg-hero');
+            if (chg && msg.payload.candle) {
+              const open = Number(msg.payload.candle.open);
+              if (open > 0) {
+                const pct = ((p - open) / open * 100);
+                chg.innerText = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+                chg.className = 'font-semibold ' + (pct >= 0 ? 'text-emerald-400' : 'text-red-400');
+              }
+            }
+          }
         }
       }
 
