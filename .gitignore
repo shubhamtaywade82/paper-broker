@@ -12,3 +12,6 @@ data/
 *.log
 .DS_Store
 paper.sqlite3*
+
+# Subagent-driven-development scratch workspace
+.superpowers/
