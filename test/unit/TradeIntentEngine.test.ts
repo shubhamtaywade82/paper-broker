@@ -61,7 +61,7 @@ describe('Phase 7 — Trade Intent Engine', () => {
   it('transitions EXECUTABLE ExecutionPlan to PAPER_READY with full risk sizing', () => {
     const engine = new TradeIntentEngine();
     const plan = makeMockExecutionPlan('EXECUTABLE');
-    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+    const account: AccountState = { equity: 10000, availableBalance: 8000, dailyLoss: 0, realizedPnl: 0 };
     const inst = makeMockInstrument();
 
     const signal = engine.processExecutionPlan(plan, account, [], inst, 1700000000000);
@@ -74,7 +74,7 @@ describe('Phase 7 — Trade Intent Engine', () => {
   it('prevents duplicate signals from generating multiple entries', () => {
     const engine = new TradeIntentEngine();
     const plan = makeMockExecutionPlan('EXECUTABLE');
-    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+    const account: AccountState = { equity: 10000, availableBalance: 8000, dailyLoss: 0, realizedPnl: 0 };
     const inst = makeMockInstrument();
 
     const sig1 = engine.processExecutionPlan(plan, account, [], inst, 1700000000000);
