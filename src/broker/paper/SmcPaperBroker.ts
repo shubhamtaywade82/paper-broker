@@ -3,6 +3,7 @@ import type { TradeSignal } from '../../trading/signal/types.js';
 import { PaperAccount } from './PaperAccount.js';
 import { PaperEventJournal } from './PaperEventJournal.js';
 import { PaperFillEngine } from './PaperFillEngine.js';
+import { PaperFundingModel } from './PaperFundingModel.js';
 import { PaperLedger } from './PaperLedger.js';
 import { PaperMetrics, type PerformanceMetrics } from './PaperMetrics.js';
 import { PaperPositionManager } from './PaperPositionManager.js';
@@ -99,6 +100,21 @@ export class SmcPaperBroker {
       this.processOpenPosition(pos, candle);
     }
     this.processPendingOrders(candle);
+  }
+
+  processFunding(symbol: string, fundingRate: number, timestamp = Date.now()): void {
+    const pos = this.positions.get(symbol);
+    if (!pos || pos.state !== 'OPEN') return;
+    const { payment } = PaperFundingModel.applyFundingToPosition(pos, fundingRate, timestamp);
+    this.account.creditRealizedPnl(payment);
+    this.journal.recordEvent({
+      timestamp,
+      symbol,
+      positionId: pos.id,
+      eventType: 'FUNDING_APPLIED',
+      price: fundingRate,
+      quantity: payment,
+    });
   }
 
   private processPendingOrders(candle: Candle): void {

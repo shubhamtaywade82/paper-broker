@@ -642,9 +642,10 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <!-- JAVASCRIPT ENGINE & WEBSOCKET BINDINGS -->
   <script>
-    let chart, candleSeries;
+    let chart, candleSeries, eqChart, eqAreaSeries;
     let currentSymbol = 'SOLUSDT';
     let currentInterval = '15m';
+    let recentTrades = [];
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/ws';
     let socket;
@@ -652,27 +653,41 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     async function initChart() {
       const container = document.getElementById('chart-container');
       container.innerHTML = '';
-
       chart = LightweightCharts.createChart(container, {
         layout: { background: { color: '#080c14' }, textColor: '#8492a6' },
         grid: { vertLines: { color: '#131b2c' }, horzLines: { color: '#131b2c' } },
         timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#1b2537' },
         rightPriceScale: { borderColor: '#1b2537' }
       });
-
       const seriesOptions = {
         upColor: '#05cd99', downColor: '#ff4d4f', borderVisible: false,
         wickUpColor: '#05cd99', wickDownColor: '#ff4d4f'
       };
-
       if (typeof chart.addCandlestickSeries === 'function') {
         candleSeries = chart.addCandlestickSeries(seriesOptions);
       } else if (typeof chart.addSeries === 'function' && window.LightweightCharts && window.LightweightCharts.CandlestickSeries) {
         candleSeries = chart.addSeries(window.LightweightCharts.CandlestickSeries, seriesOptions);
       }
-
       window.addEventListener('resize', () => chart.resize(container.clientWidth, container.clientHeight));
       await loadRealKlines(currentSymbol, currentInterval);
+    }
+
+    function initEquityChart() {
+      const container = document.getElementById('eq-chart-container');
+      if (!container || !window.LightweightCharts) return;
+      container.innerHTML = '';
+      eqChart = LightweightCharts.createChart(container, {
+        layout: { background: { color: '#0f1623' }, textColor: '#8492a6' },
+        grid: { vertLines: { visible: false }, horzLines: { color: '#1b2537' } },
+        timeScale: { visible: false },
+        rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+        handleScroll: false, handleScale: false,
+      });
+      eqAreaSeries = eqChart.addAreaSeries({
+        topColor: 'rgba(5,205,153,0.3)', bottomColor: 'rgba(5,205,153,0.02)',
+        lineColor: '#05cd99', lineWidth: 2,
+      });
+      new ResizeObserver(() => eqChart.resize(container.clientWidth, container.clientHeight)).observe(container);
     }
 
     async function loadRealKlines(symbol, interval) {
@@ -702,23 +717,20 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     function switchActiveSymbol(symbol) {
       currentSymbol = symbol;
       document.getElementById('chart-symbol-label').innerText = symbol + ' PERP';
+      document.getElementById('ob-symbol').innerText = symbol;
       ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'].forEach(s => {
         const btn = document.getElementById('ticker-' + s);
         if (btn) {
-          if (s === symbol) {
-            btn.className = 'px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-900/20 flex items-center space-x-2 transition';
-          } else {
-            btn.className = 'px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition';
-          }
+          btn.className = s === symbol
+            ? 'px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-900/20 flex items-center space-x-2 transition'
+            : 'px-3 py-1.5 rounded-lg border border-app-border bg-app-bg hover:border-blue-500/50 flex items-center space-x-2 transition';
         }
       });
+      recentTrades = [];
       loadRealKlines(currentSymbol, currentInterval);
     }
 
-    function setTimeframe(tf) {
-      currentInterval = tf;
-      loadRealKlines(currentSymbol, currentInterval);
-    }
+    function setTimeframe(tf) { currentInterval = tf; loadRealKlines(currentSymbol, currentInterval); }
 
     async function fetchDashboard() {
       try {
@@ -732,14 +744,12 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 
     function renderDashboard(data) {
       if (!data) return;
-
       const equity = Number(data.account?.equity || 10000);
       const balance = Number(data.account?.walletBalance || 10000);
       const unPnl = Number(data.account?.unrealizedPnl || 0);
       const unPnlPct = equity > 0 ? (unPnl / equity) * 100 : 0;
       const marginUsage = equity > 0 ? ((equity - balance) / equity) * 100 : 0;
 
-      // KPIs
       document.getElementById('kpi-equity').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       document.getElementById('eq-total').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       document.getElementById('side-equity').innerText = '$' + equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -756,7 +766,20 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('kpi-positions-count').innerText = posCount;
       document.getElementById('pos-count-badge').innerText = posCount;
 
-      // Render Positions Table
+      const openOrdersCount = Number(data.account?.openOrdersCount || 0);
+      document.getElementById('kpi-orders-count').innerText = openOrdersCount;
+      document.getElementById('order-count-badge').innerText = openOrdersCount;
+
+      const realizedPnl = Number(data.account?.totalRealizedPnl || 0);
+      const dailyRealizedPnl = Number(data.account?.dailyRealizedPnl || 0);
+      const realizedPct = equity > 0 ? (dailyRealizedPnl / equity) * 100 : 0;
+      const rEl = document.getElementById('kpi-realized');
+      rEl.innerText = (realizedPnl >= 0 ? '+$' : '-$') + Math.abs(realizedPnl).toFixed(2);
+      rEl.className = 'text-2xl font-bold mono mt-1 ' + (realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+      const rpEl = document.getElementById('kpi-realized-pct');
+      rpEl.innerText = (realizedPct >= 0 ? '+' : '') + realizedPct.toFixed(2) + '%';
+      rpEl.className = 'font-semibold text-[11px] ' + (realizedPct >= 0 ? 'text-emerald-400' : 'text-red-400');
+
       const posBody = document.getElementById('positions-table-body');
       if (data.positions && data.positions.length > 0) {
         posBody.innerHTML = data.positions.map(p => {
@@ -770,7 +793,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
               <td class="text-white font-semibold">$\${Number(p.markPrice || p.entryPrice).toFixed(2)}</td>
               <td class="\${p.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} font-bold">\${p.unrealizedPnl >= 0 ? '+' : ''}$\${Number(p.unrealizedPnl).toFixed(2)}</td>
               <td class="\${roe >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold">\${roe >= 0 ? '+' : ''}\${roe.toFixed(2)}%</td>
-              <td class="text-app-muted">150.00 / <span class="text-red-400">134.00</span></td>
+              <td class="text-app-muted">—</td>
               <td><button onclick="closePosition('\${p.symbol}')" class="px-2.5 py-1 bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white rounded text-[11px] font-semibold transition">Close</button></td>
             </tr>
           \`;
@@ -780,6 +803,129 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
+    async function fetchWinRate() {
+      try {
+        const res = await fetch('/api/v1/win-rate');
+        const d = await res.json();
+        const pct = Number(d.winRate || 0);
+        document.getElementById('kpi-winrate-pct').innerText = pct.toFixed(2) + '%';
+        document.getElementById('kpi-winrate-record').innerText = (d.wins||0) + 'W / ' + (d.losses||0) + 'L';
+        document.getElementById('kpi-winrate-circle').innerText = Math.round(pct) + '%';
+        document.getElementById('kpi-winrate-bar').style.width = pct + '%';
+      } catch (e) {}
+    }
+
+    async function fetchSystemStatus() {
+      try {
+        const res = await fetch('/api/v1/health/providers');
+        const data = await res.json();
+        const el = document.getElementById('system-status-list');
+        if (!el) return;
+        const b = data.binance || {};
+        const st = b.status || 'DISCONNECTED';
+        const lat = b.latencyMs || 0;
+        const ok = s => s === 'HEALTHY';
+        const deg = s => s === 'HEALTHY' || s === 'DEGRADED';
+        const clr = s => ok(s) ? 'bg-emerald-400' : deg(s) ? 'bg-amber-400' : 'bg-red-400';
+        const txt = s => ok(s) ? 'Connected' : deg(s) ? 'Degraded' : 'Disconnected';
+        const latStr = ms => ms > 0 ? ' (' + ms + 'ms)' : '';
+        const items = [
+          ['Binance WS', st], ['Binance REST', st],
+          ['Strategy Engine', 'HEALTHY'], ['Risk Engine', 'HEALTHY'],
+          ['Paper Broker', 'HEALTHY'], ['SQLite Database', 'HEALTHY']
+        ];
+        el.innerHTML = items.map(function(pair) {
+          var name = pair[0], status = pair[1];
+          return '<div class="flex items-center justify-between"><span class="flex items-center space-x-1.5"><span class="w-1.5 h-1.5 rounded-full ' + clr(status) + '"></span><span class="text-gray-300">' + name + '</span></span><span class="' + (ok(status)||deg(status)?'text-emerald-400':'text-amber-400') + ' font-semibold">' + txt(status) + (name.startsWith('Binance')?latStr(lat):'') + '</span></div>';
+        }).join('');
+      } catch (e) {}
+    }
+
+    async function fetchActivityFeed() {
+      try {
+        const res = await fetch('/api/v1/activity?limit=15');
+        const events = await res.json();
+        const el = document.getElementById('activity-feed-list');
+        if (!el || !Array.isArray(events) || events.length === 0) {
+          if (el) el.innerHTML = '<div class="text-app-muted text-[11px]">No recent activity</div>';
+          return;
+        }
+        el.innerHTML = events.map(function(ev) {
+          const ts = new Date(ev.ts).toUTCString().slice(17, 25);
+          const p = ev.payload || {};
+          const type = ev.type || '';
+          let desc = '';
+          if (type.includes('ORDER')) {
+            const sc = p.side === 'BUY' ? 'text-emerald-400' : 'text-red-400';
+            desc = '<span class="font-bold text-white">' + (p.symbol||'') + '</span> <span class="' + sc + '">' + (p.side||'') + (p.quantity ? ' ' + p.quantity : '') + '</span> ' + (p.status || type.split('_').pop()) + (p.price ? ' @ ' + Number(p.price).toFixed(2) : '');
+          } else if (type.includes('POSITION')) {
+            const sc = (p.positionSide || p.side) === 'LONG' ? 'text-emerald-400' : 'text-red-400';
+            desc = '<span class="font-bold text-white">' + (p.symbol||'') + '</span> <span class="' + sc + '">' + (p.positionSide || p.side || '') + '</span> ' + type.split('_').pop();
+          } else if (type.includes('FILL')) {
+            const sc = p.side === 'BUY' ? 'text-emerald-400' : 'text-red-400';
+            desc = '<span class="font-bold text-white">' + (p.symbol||'') + '</span> <span class="' + sc + '">' + (p.side||'') + '</span> filled' + (p.price ? ' @ ' + Number(p.price).toFixed(2) : '');
+          } else if (type.includes('SYSTEM') || type.includes('SIGNAL')) {
+            desc = '<span class="text-gray-400">System:</span> ' + (p.eventType || p.action || type);
+          } else {
+            desc = '<span class="text-gray-400">' + type + '</span>';
+          }
+          return '<div class="flex items-start space-x-2"><span class="text-app-muted text-[10px]">' + ts + '</span><div>' + desc + '</div></div>';
+        }).join('');
+      } catch (e) {}
+    }
+
+    async function fetchEquityCurve() {
+      try {
+        const res = await fetch('/api/v1/equity-curve?limit=100');
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) return;
+        const first = data[0], last = data[data.length - 1];
+        const change = last.equity - first.equity;
+        const changePct = first.equity > 0 ? (change / first.equity) * 100 : 0;
+        const pctEl = document.getElementById('eq-change-pct');
+        const absEl = document.getElementById('eq-change-abs');
+        if (pctEl) {
+          pctEl.innerText = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
+          pctEl.className = (changePct >= 0 ? 'text-emerald-400' : 'text-red-400') + ' text-xs font-bold mono';
+        }
+        if (absEl) {
+          absEl.innerText = '24H Change: ' + (change >= 0 ? '+$' : '-$') + Math.abs(change).toFixed(2);
+          absEl.className = changePct >= 0 ? 'text-emerald-400' : 'text-red-400';
+        }
+        if (eqAreaSeries) {
+          eqAreaSeries.setData(data.map(d => ({ time: Math.floor(new Date(d.ts).getTime() / 1000), value: d.equity })));
+        }
+      } catch (e) {}
+    }
+
+    async function fetchPnlHistory() {
+      try {
+        const res = await fetch('/api/v1/equity-curve?limit=30');
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length < 2) return;
+        const dailyPnl = [];
+        for (let i = 1; i < data.length; i++) {
+          const day = new Date(data[i].ts).toLocaleDateString('en-US', { day: 'numeric' });
+          dailyPnl.push({ day: day, pnl: data[i].totalRealizedPnl - data[i - 1].totalRealizedPnl });
+        }
+        const maxAbs = Math.max(...dailyPnl.map(d => Math.abs(d.pnl)), 1);
+        const totalPnl = data[data.length - 1].totalRealizedPnl;
+        const tpEl = document.getElementById('pnl-total');
+        if (tpEl) {
+          tpEl.innerText = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(2);
+          tpEl.className = (totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400') + ' text-xs font-bold mono';
+        }
+        const histEl = document.getElementById('pnl-histogram');
+        const labelsEl = document.getElementById('pnl-labels');
+        if (!histEl || !labelsEl) return;
+        histEl.innerHTML = dailyPnl.map(d => {
+          const h = Math.max(4, Math.round((Math.abs(d.pnl) / maxAbs) * 100));
+          return '<div class="w-2.5 ' + (d.pnl >= 0 ? 'bg-emerald-400' : 'bg-red-400') + ' rounded-t" style="height:' + h + 'px" title="' + d.day + ': ' + (d.pnl >= 0 ? '+' : '') + d.pnl.toFixed(2) + '"></div>';
+        }).join('');
+        labelsEl.innerHTML = dailyPnl.map(d => '<span>' + d.day + '</span>').join('');
+      } catch (e) {}
+    }
+
     function connectWs() {
       socket = new WebSocket(wsUrl);
       socket.onopen = () => {
@@ -787,8 +933,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       };
       socket.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data);
-          handleWsEvent(msg);
+          handleWsEvent(JSON.parse(event.data));
         } catch (e) {}
       };
       socket.onclose = () => {
@@ -805,10 +950,54 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           document.getElementById('ob-mid-price').innerText = p.toFixed(2);
         }
         if (msg.payload.symbol) {
-          const tickerPrice = document.getElementById('price-' + msg.payload.symbol);
-          if (tickerPrice && p > 0) tickerPrice.innerText = '$' + p.toFixed(p > 500 ? 1 : 2);
+          const tp = document.getElementById('price-' + msg.payload.symbol);
+          if (tp && p > 0) tp.innerText = '$' + p.toFixed(p > 500 ? 1 : 2);
         }
       }
+
+      if (msg.type === 'trade.stream' && msg.payload) {
+        const t = msg.payload;
+        if (t.symbol === currentSymbol) {
+          const time = new Date(t.ts).toUTCString().slice(17, 25);
+          recentTrades.unshift({ price: t.price, qty: t.qty, time: time });
+          if (recentTrades.length > 15) recentTrades.pop();
+          const el = document.getElementById('trades-stream');
+          if (el) {
+            el.innerHTML = recentTrades.map(tr =>
+              '<div class="grid grid-cols-3"><span class="text-emerald-400 font-semibold">' + Number(tr.price).toFixed(2) + '</span><span class="text-right text-gray-300">' + Number(tr.qty).toFixed(2) + '</span><span class="text-right text-gray-500">' + tr.time + '</span></div>'
+            ).join('');
+          }
+        }
+      }
+
+      if (msg.type === 'book.update' && msg.payload) {
+        const b = msg.payload;
+        if (b.symbol === currentSymbol) {
+          const bid = Number(b.bid), ask = Number(b.ask);
+          const mid = (bid + ask) / 2, spread = ask - bid;
+          const mEl = document.getElementById('ob-mid-price');
+          if (mEl) mEl.innerText = mid.toFixed(2);
+
+          const asks = [];
+          for (let i = 5; i >= 1; i--) {
+            const p = (ask + spread * i).toFixed(2);
+            const sz = (Number(b.askQty || 1) * (6 - i) * 0.3).toFixed(2);
+            asks.push('<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * (6 - i)).toFixed(2) + '</span></div>');
+          }
+          const aEl = document.getElementById('orderbook-asks');
+          if (aEl) aEl.innerHTML = asks.join('');
+
+          const bids = [];
+          for (let i = 1; i <= 5; i++) {
+            const p = (bid - spread * (i - 1)).toFixed(2);
+            const sz = (Number(b.bidQty || 1) * i * 0.3).toFixed(2);
+            bids.push('<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * i).toFixed(2) + '</span></div>');
+          }
+          const bEl = document.getElementById('orderbook-bids');
+          if (bEl) bEl.innerHTML = bids.join('');
+        }
+      }
+
       if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed') {
         fetchDashboard();
       }
@@ -888,7 +1077,6 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
                   heroC.innerText = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
                   heroC.className = 'font-semibold ' + (chg >= 0 ? 'text-emerald-400' : 'text-red-400');
                 }
-                updateLiveOrderBook(p);
               }
             }
           });
@@ -898,43 +1086,25 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
-    function updateLiveOrderBook(midPrice) {
-      if (!midPrice || midPrice <= 0) return;
-      const spread = midPrice * 0.0001;
-      const step = midPrice * 0.00008;
-
-      const asks = [];
-      for (let i = 5; i >= 1; i--) {
-        const p = (midPrice + spread + i * step).toFixed(2);
-        const sz = (80 + i * 35).toFixed(2);
-        const tot = (parseFloat(sz) * (6 - i)).toFixed(2);
-        asks.push(\`<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">\${p}</span><span class="text-right text-gray-300">\${sz}</span><span class="text-right text-gray-400">\${tot}</span></div>\`);
-      }
-      const aEl = document.getElementById('orderbook-asks');
-      if (aEl) aEl.innerHTML = asks.join('');
-
-      const mEl = document.getElementById('ob-mid-price');
-      if (mEl) mEl.innerText = midPrice.toFixed(2);
-
-      const bids = [];
-      for (let i = 1; i <= 5; i++) {
-        const p = (midPrice - spread - (i - 1) * step).toFixed(2);
-        const sz = (90 + i * 28).toFixed(2);
-        const tot = (parseFloat(sz) * i).toFixed(2);
-        bids.push(\`<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">\${p}</span><span class="text-right text-gray-300">\${sz}</span><span class="text-right text-gray-400">\${tot}</span></div>\`);
-      }
-      const bEl = document.getElementById('orderbook-bids');
-      if (bEl) bEl.innerHTML = bids.join('');
-    }
-
     window.onload = async () => {
       await initChart();
+      initEquityChart();
       await fetchDashboard();
       await fetchLiveTickers();
+      fetchWinRate();
+      fetchSystemStatus();
+      fetchActivityFeed();
+      fetchEquityCurve();
+      fetchPnlHistory();
       connectWs();
       setInterval(updateClock, 1000);
       setInterval(fetchDashboard, 5000);
       setInterval(fetchLiveTickers, 3000);
+      setInterval(fetchWinRate, 10000);
+      setInterval(fetchSystemStatus, 5000);
+      setInterval(fetchActivityFeed, 5000);
+      setInterval(fetchEquityCurve, 15000);
+      setInterval(fetchPnlHistory, 15000);
     };
   </script>
 </body>
