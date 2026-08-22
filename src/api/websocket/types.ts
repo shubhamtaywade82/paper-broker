@@ -9,7 +9,8 @@ export type WebSocketEventType =
   | 'mode.changed'
   | 'kill_switch.activated'
   | 'trade.stream'
-  | 'book.update';
+  | 'book.update'
+  | 'agent.cycle';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

@@ -14,6 +14,7 @@ export class SmcLocationEngine {
   private klineStore: KlineStore;
   private structureEngine: MarketStructureEngine;
   private config: SmcConfig;
+  private smcCache = new Map<string, SmcTimeframeContext>();
 
   constructor(
     klineStore: KlineStore,
@@ -33,6 +34,10 @@ export class SmcLocationEngine {
   ): SmcTimeframeContext {
     const rawCandles = this.klineStore.getCandlesAsOf(symbol, timeframe, asOfTimestamp, 500);
     const closedCandles = rawCandles.filter((c) => c.isClosed || (c.closeTime ?? c.openTime) <= asOfTimestamp);
+    const last = closedCandles[closedCandles.length - 1];
+    const cacheKey = `${symbol}:${timeframe}:${asOfTimestamp}:${last?.openTime ?? 0}:${closedCandles.length}`;
+    const cached = this.smcCache.get(cacheKey);
+    if (cached) return cached;
 
     const structure = this.structureEngine.getStructureAsOf(symbol, timeframe, asOfTimestamp);
     const rawLevels = LiquidityDetector.extractLiquidityLevels(structure.swings, config);
@@ -47,7 +52,7 @@ export class SmcLocationEngine {
     const allObs = OrderBlockDetector.detectOrderBlocks(closedCandles, structure.events, config);
     const confirmedObs = allObs.filter((o) => o.confirmedAt <= asOfTimestamp);
 
-    return {
+    const result: SmcTimeframeContext = {
       timeframe,
       liquidityLevels: updatedLevels,
       sweeps: confirmedSweeps,
@@ -57,6 +62,8 @@ export class SmcLocationEngine {
       activeFvgs: confirmedFvgs.filter((f) => f.status === 'ACTIVE' || f.status === 'PARTIALLY_FILLED'),
       activeOrderBlocks: confirmedObs.filter((o) => o.status === 'ACTIVE'),
     };
+    this.smcCache.set(cacheKey, result);
+    return result;
   }
 
   computeMultiTimeframeSmcContext(

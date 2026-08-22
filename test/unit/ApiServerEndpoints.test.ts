@@ -7,6 +7,7 @@ import type { SignalRepository } from '../../src/persistence/repositories/Signal
 import type { EventLog } from '../../src/persistence/EventLog.js';
 import { MarketDataSupervisor } from '../../src/market/supervisor/MarketDataSupervisor.js';
 import { ErrorNormalizer } from '../../src/notifications/error-pipeline/ErrorNormalizer.js';
+import { TradingAgentsPipeline } from '../../src/ai/tradingAgents.js';
 
 describe('ApiServer Dashboard and WebSocket Endpoints', () => {
   const sampleOrder: Order = {
@@ -51,6 +52,18 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
 
   const mockEvents = {
     appendOrderEvent: vi.fn(),
+    logAgentCycle: vi.fn(),
+    getAgentCycles: vi.fn().mockReturnValue([{ cycleId: 'cycle-123', symbol: 'SOLUSDT', timestamp: Date.now() }]),
+    getAgentCycleById: vi.fn().mockReturnValue({
+      cycle_id: 'cycle-123',
+      symbol: 'SOLUSDT',
+      started_at: Date.now(),
+      executed: 1,
+      trader_decision: { action: 'LONG' },
+      fund_manager_approval: { rationale: 'Approved long trade' },
+      verdict: { rationale: 'Bullish consensus', conviction: 0.8 },
+      risk_opinions: [],
+    }),
   } as unknown as EventLog;
 
   it('GET /api/v1/dashboard returns consolidated system state', async () => {
@@ -190,6 +203,112 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     expect(res.statusCode).toBe(200);
     const data = JSON.parse(res.body);
     expect(Array.isArray(data)).toBe(true);
+    await server.stop();
+  });
+
+  it('GET /api/v1/orderbook returns orderbook depth safely', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/orderbook?symbol=SOLUSDT&limit=12',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    if (data) {
+      expect(data.symbol).toBe('SOLUSDT');
+    }
+    await server.stop();
+  });
+
+  it('GET /api/v1/agents/health returns agent engine status', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/agents/health',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(data.status).toBe('healthy');
+    expect(data.engine).toContain('TradingAgents');
+    await server.stop();
+  });
+
+  it('POST /api/v1/agents/cycle and GET /api/v1/agents/cycles work end-to-end', async () => {
+    vi.spyOn(TradingAgentsPipeline.prototype, 'runCycle').mockResolvedValueOnce({
+      cycleId: 'cycle-123',
+      symbol: 'SOLUSDT',
+      timestamp: Date.now(),
+      status: 'COMPLETED',
+      analystReports: [],
+      bullishCase: { prevailingSide: 'BULL', rationale: 'Strong support', conviction: 0.8 },
+      bearishCase: { prevailingSide: 'BEAR', rationale: 'Resistance ahead', conviction: 0.5 },
+      debateVerdict: { prevailingSide: 'BULL', rationale: 'Long setup', conviction: 0.8 },
+      traderDecision: { symbol: 'SOLUSDT', action: 'LONG', leverage: 3, sizePct: 0.1, stopLoss: 139, takeProfit: 148, rationale: 'Long', confidence: 0.8 },
+      riskOpinions: [],
+      fundManagerApproval: { approved: true, finalDecision: { symbol: 'SOLUSDT', action: 'LONG', leverage: 3, sizePct: 0.1, stopLoss: 139, takeProfit: 148, rationale: 'Long', confidence: 0.8 }, rationale: 'Approved' },
+    });
+
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/agents/cycle',
+      payload: { symbol: 'SOLUSDT' },
+    });
+
+    expect(postRes.statusCode).toBe(200);
+    const cycle = JSON.parse(postRes.body);
+    expect(cycle.symbol).toBe('SOLUSDT');
+    expect(cycle.cycleId).toBeDefined();
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/agents/cycles?symbol=SOLUSDT',
+    });
+    expect(listRes.statusCode).toBe(200);
+    const list = JSON.parse(listRes.body);
+    expect(list.cycles.length).toBeGreaterThan(0);
+
+    const explainRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/agents/cycles/${cycle.cycleId}/explain`,
+    });
+    expect(explainRes.statusCode).toBe(200);
+    const explanation = JSON.parse(explainRes.body);
+    expect(explanation.cycleId).toBe(cycle.cycleId);
+    expect(explanation.summary).toBeDefined();
+
     await server.stop();
   });
 });

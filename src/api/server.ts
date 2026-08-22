@@ -14,6 +14,7 @@ import type { MarketStateManager } from '../market/MarketState.js';
 import type { WebSocket } from 'ws';
 import { DASHBOARD_HTML } from './dashboardHtml.js';
 import { WebSocketGateway } from './websocket/WebSocketGateway.js';
+import { TradingAgentsPipeline } from '../ai/tradingAgents.js';
 import { metrics } from '../telemetry/metrics.js';
 import { logger } from '../telemetry/logger.js';
 
@@ -312,6 +313,55 @@ export class ApiServer {
         return [];
       }
     });
+
+    this.app.get('/api/v1/agents/health', async () => {
+      return {
+        status: 'healthy',
+        engine: 'TradingAgents Multi-Agent Runtime',
+        timestamp: Date.now(),
+      };
+    });
+
+    this.app.get('/api/v1/agents/cycles', async (request) => {
+      const query = request.query as { symbol?: string; limit?: string; offset?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const offset = query.offset ? parseInt(query.offset, 10) : 0;
+      const cycles = this.events.getAgentCycles({ symbol: query.symbol, limit, offset });
+      return { cycles, total: cycles.length };
+    });
+
+    this.app.get('/api/v1/agents/cycles/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const cycle = this.events.getAgentCycleById(id);
+      if (!cycle) {
+        return reply.code(404).send({ error: 'CYCLE_NOT_FOUND', message: `Cycle ${id} not found` });
+      }
+      return cycle;
+    });
+
+    this.app.get('/api/v1/agents/cycles/:id/explain', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const cycle = this.events.getAgentCycleById(id);
+      if (!cycle) {
+        return reply.code(404).send({ error: 'CYCLE_NOT_FOUND', message: `Cycle ${id} not found` });
+      }
+
+      const rawDecision = cycle['trader_decision'] as Record<string, unknown> | undefined;
+      const rawApproval = cycle['fund_manager_approval'] as Record<string, unknown> | undefined;
+      const rawVerdict = cycle['verdict'] as Record<string, unknown> | undefined;
+
+      return {
+        cycleId: String(cycle['cycle_id'] || id),
+        symbol: String(cycle['symbol'] || ''),
+        startedAt: Number(cycle['started_at'] || 0),
+        executed: Boolean(cycle['executed']),
+        action: String(rawDecision?.['action'] || 'NEUTRAL'),
+        summary: String(rawApproval?.['rationale'] || 'No rationale available'),
+        debateVerdict: String(rawVerdict?.['rationale'] || 'Inconclusive debate'),
+        conviction: Number(rawVerdict?.['conviction'] || 0.5),
+        riskOpinions: (cycle['risk_opinions'] as unknown[]) || [],
+      };
+    });
   }
 
   private registerCommandRoutes(): void {
@@ -385,6 +435,37 @@ export class ApiServer {
       this.wsGateway.broadcast('kill_switch.activated', { activatedAtUtc: new Date().toISOString() });
       metrics.inc('kill_switch_activations_total');
       return { killSwitch: true };
+    });
+
+    this.app.post('/api/v1/agents/cycle', async (request, reply) => {
+      const body = (request.body as { symbol?: string; model?: string } | undefined) ?? {};
+      const symbol = (body.symbol || 'SOLUSDT').toUpperCase();
+      const state = this.marketState?.getState(symbol);
+      const mark = state?.mark ?? 140;
+      const lastPrice = state?.last ?? mark;
+      const bid = state?.bid ?? lastPrice - 0.02;
+      const ask = state?.ask ?? lastPrice + 0.02;
+      const spread = state?.spread ?? Math.max(0.01, ask - bid);
+
+      const pipeline = new TradingAgentsPipeline({ model: body.model ?? 'llama3.1:8b' });
+      try {
+        const cycle = await pipeline.runCycle({
+          symbol,
+          lastPrice,
+          bid,
+          ask,
+          spread,
+          mark,
+          fundingRate: 0.0001,
+          openInterest: 50000,
+        });
+
+        this.events.logAgentCycle(cycle);
+        this.wsGateway.broadcast('agent.cycle', cycle);
+        return reply.send(cycle);
+      } catch (err) {
+        return reply.code(500).send({ error: 'AGENT_CYCLE_FAILED', message: (err as Error).message });
+      }
     });
   }
 

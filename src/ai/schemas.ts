@@ -74,3 +74,76 @@ export const AgentDecisionSchema = z
 
 export type AgentDecisionAction = z.infer<typeof AgentDecisionActionSchema>;
 export type AgentDecision = z.infer<typeof AgentDecisionSchema>;
+
+/* ============================================================
+ * TRADINGAGENTS MULTI-AGENT SCHEMAS (Crypto Futures Adaptation)
+ * ============================================================ */
+
+export const AnalystReportSchema = z.object({
+  agent: z.string(),
+  symbol: z.string(),
+  timestamp: z.number(),
+  summary: z.string(),
+  bullishSignals: z.array(z.string()),
+  bearishSignals: z.array(z.string()),
+  keyMetrics: z.record(z.string(), z.union([z.string(), z.number()])),
+  confidence: z.number().min(0).max(1),
+});
+export type AnalystReport = z.infer<typeof AnalystReportSchema>;
+
+export const DebateEntrySchema = z.object({
+  role: z.enum(['BULL', 'BEAR']),
+  round: z.number(),
+  argument: z.string(),
+});
+export type DebateEntry = z.infer<typeof DebateEntrySchema>;
+
+export const DebateVerdictSchema = z.object({
+  prevailingSide: z.enum(['BULL', 'BEAR', 'NEUTRAL']),
+  rationale: z.string(),
+  conviction: z.number().min(0).max(1),
+});
+export type DebateVerdict = z.infer<typeof DebateVerdictSchema>;
+
+export const TraderDecisionSchema = z.object({
+  symbol: z.string(),
+  action: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
+  leverage: z.number().min(1).max(20),
+  sizePct: z.number().min(0).max(0.25),
+  entryPrice: z.number().optional(),
+  takeProfit: z.number().optional(),
+  stopLoss: z.number().optional(),
+  rationale: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+export type TraderDecision = z.infer<typeof TraderDecisionSchema>;
+
+export const RiskOpinionSchema = z.object({
+  persona: z.enum(['RISKY', 'NEUTRAL', 'SAFE']),
+  verdict: z.enum(['APPROVE', 'REDUCE_SIZE', 'REDUCE_LEVERAGE', 'REJECT']),
+  adjustedLeverage: z.number().optional(),
+  adjustedSizePct: z.number().optional(),
+  rationale: z.string(),
+});
+export type RiskOpinion = z.infer<typeof RiskOpinionSchema>;
+
+export const FundManagerApprovalSchema = z.object({
+  approved: z.boolean(),
+  finalDecision: TraderDecisionSchema,
+  rationale: z.string(),
+});
+export type FundManagerApproval = z.infer<typeof FundManagerApprovalSchema>;
+
+export const CycleRecordSchema = z.object({
+  cycleId: z.string(),
+  symbol: z.string(),
+  startedAt: z.number(),
+  analystReports: z.array(AnalystReportSchema),
+  debate: z.array(DebateEntrySchema),
+  verdict: DebateVerdictSchema,
+  traderDecision: TraderDecisionSchema,
+  riskOpinions: z.array(RiskOpinionSchema),
+  fundManagerApproval: FundManagerApprovalSchema,
+  executed: z.boolean(),
+});
+export type CycleRecord = z.infer<typeof CycleRecordSchema>;

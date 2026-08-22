@@ -287,8 +287,8 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       <!-- 2. MIDDLE ROW: MAIN CHART + ORDER BOOK + RECENT TRADES -->
       <section class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-        <!-- Main TradingView Chart Container (7 Cols) -->
-        <div class="lg:col-span-7 bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+        <!-- Main TradingView Chart Container (6 Cols) -->
+        <div class="lg:col-span-6 bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
           <!-- Chart Header Toolbar -->
           <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-app-border">
             <div class="flex items-center space-x-3">
@@ -328,36 +328,64 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- Order Book (3 Cols) -->
-        <div class="lg:col-span-3 bg-app-card border border-app-border rounded-xl p-4 flex flex-col">
-          <div class="flex items-center justify-between pb-3 border-b border-app-border">
-            <span class="font-bold text-xs uppercase tracking-wider text-gray-200">ORDER BOOK</span>
-            <span id="ob-symbol" class="text-xs text-blue-400 mono font-semibold">SOLUSDT</span>
-          </div>
-
-          <div class="grid grid-cols-3 text-[11px] text-app-muted mono pt-2 pb-1">
-            <span>Price (USDT)</span>
-            <span class="text-right">Size (SOL)</span>
-            <span class="text-right">Total (SOL)</span>
-          </div>
-
-          <!-- Asks (Red) -->
-          <div id="orderbook-asks" class="space-y-1 mono text-xs py-1">
-            <div class="text-app-muted text-center py-2 text-[11px]">Loading asks...</div>
-          </div>
-
-          <!-- Mid / Mark Price Spread Indicator -->
-          <div class="py-2.5 my-1 border-y border-app-border flex items-center justify-between mono">
-            <div class="flex items-center space-x-1.5">
-              <span id="ob-mid-price" class="text-base font-bold text-emerald-400">---</span>
-              <span class="text-xs text-emerald-400">↑</span>
+        <!-- Order Book (4 Cols) - Side-by-Side Bids and Asks -->
+        <div class="lg:col-span-4 bg-app-card border border-app-border rounded-xl p-4 flex flex-col justify-between">
+          <div>
+            <!-- Order Book Header -->
+            <div class="flex items-center justify-between pb-2.5 border-b border-app-border">
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-xs uppercase tracking-wider text-gray-200">ORDER BOOK</span>
+                <span id="ob-symbol" class="text-xs text-blue-400 mono font-semibold">SOLUSDT</span>
+              </div>
+              <div class="flex items-center space-x-1.5 text-xs mono">
+                <span class="text-app-muted text-[11px]">Spread:</span>
+                <span id="ob-spread-val" class="font-semibold text-gray-200">---</span>
+                <span id="ob-spread-pct" class="text-[10px] text-app-muted">(---)</span>
+              </div>
             </div>
-            <span class="text-xs text-app-muted" id="ob-spread-info">--- / ---</span>
+
+            <!-- Mid / Spread Hero Banner -->
+            <div class="py-1.5 px-3 my-2.5 bg-app-bg/80 rounded-lg border border-app-border/60 flex items-center justify-between mono">
+              <div class="flex items-center space-x-2">
+                <span class="text-[11px] text-app-muted uppercase tracking-wider">Mid:</span>
+                <span id="ob-mid-price" class="text-sm font-bold text-emerald-400">---</span>
+              </div>
+              <div class="text-[11px] text-app-muted flex items-center space-x-1">
+                <span>Ask / Bid:</span>
+                <span id="ob-spread-info" class="text-gray-300 font-medium">--- / ---</span>
+              </div>
+            </div>
+
+            <!-- Side-by-Side Bids & Asks Grid -->
+            <div class="grid grid-cols-2 gap-2.5">
+              <!-- Left Column: BIDS (BUY) -->
+              <div class="flex flex-col">
+                <div class="flex items-center justify-between pb-1 border-b border-emerald-500/20 text-[11px] font-bold text-emerald-400">
+                  <span>BID (BUY)</span>
+                  <span class="text-app-muted text-[10px] mono">SIZE</span>
+                </div>
+                <div id="orderbook-bids" class="space-y-0.5 mono text-[11px] py-1 overflow-hidden">
+                  <div class="text-app-muted text-center py-4 text-[11px]">Loading bids...</div>
+                </div>
+              </div>
+
+              <!-- Right Column: ASKS (SELL) -->
+              <div class="flex flex-col">
+                <div class="flex items-center justify-between pb-1 border-b border-red-500/20 text-[11px] font-bold text-red-400">
+                  <span>ASK (SELL)</span>
+                  <span class="text-app-muted text-[10px] mono">SIZE</span>
+                </div>
+                <div id="orderbook-asks" class="space-y-0.5 mono text-[11px] py-1 overflow-hidden">
+                  <div class="text-app-muted text-center py-4 text-[11px]">Loading asks...</div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <!-- Bids (Green) -->
-          <div id="orderbook-bids" class="space-y-1 mono text-xs py-1">
-            <div class="text-app-muted text-center py-2 text-[11px]">Loading bids...</div>
+          <!-- Bottom Footer Info -->
+          <div class="pt-2 mt-2 border-t border-app-border/40 flex items-center justify-between text-[10px] text-app-muted mono">
+            <span>Depth: 12 Levels</span>
+            <span>Real-time Binance L2</span>
           </div>
         </div>
 
@@ -446,7 +474,85 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         </div>
       </section>
 
-      <!-- 4. BOTTOM ROW (5 GRID CARDS): ACCOUNT BALANCE, EQUITY CURVE, PNL, SYSTEM STATUS, ACTIVITY FEED -->
+      <!-- 4. TRADINGAGENTS MULTI-AGENT INTELLIGENCE & DEBATE SECTION -->
+      <section id="agents-section" class="bg-app-card border border-app-border rounded-xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-app-border">
+          <div class="flex items-center space-x-3">
+            <div class="p-2 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-sm font-bold text-white tracking-wide uppercase">TradingAgents Multi-Agent Intelligence</h3>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-bold">ONLINE</span>
+              </div>
+              <p class="text-xs text-app-muted">Derivatives Analysts → Bull/Bear Dialectical Debate → Alpha Trader → Multi-Persona Risk Committee</p>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2 mono text-xs">
+            <button id="run-cycle-btn" onclick="triggerManualAgentCycle()" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold transition flex items-center space-x-1.5 shadow-lg shadow-blue-500/20">
+              <span id="cycle-btn-spinner" class="hidden animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full"></span>
+              <span id="cycle-btn-text">Run Agent Cycle</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 3-Column Intelligence Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs mono">
+          <!-- Col 1: Analyst Team Reports -->
+          <div class="bg-app-bg border border-app-border/80 rounded-lg p-3.5 flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-app-border/50 text-[11px] font-bold text-gray-300">
+              <span>1. ANALYST TEAM</span>
+              <span class="text-blue-400">Derivatives & Flows</span>
+            </div>
+            <div id="agent-analyst-content" class="space-y-2 text-[11px]">
+              <div class="p-2.5 rounded bg-app-card border border-app-border/40">
+                <div class="font-bold text-gray-200">Derivatives Analyst</div>
+                <div class="text-app-muted mt-1" id="analyst-summary">Funding rate and liquidation cluster analysis ready.</div>
+                <div id="analyst-signals" class="mt-2 space-y-1"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Col 2: Bull vs Bear Debate & Facilitator Verdict -->
+          <div class="bg-app-bg border border-app-border/80 rounded-lg p-3.5 flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-app-border/50 text-[11px] font-bold text-gray-300">
+              <span>2. BULL / BEAR DEBATE</span>
+              <span id="agent-verdict-badge" class="text-amber-400 font-bold">READY</span>
+            </div>
+            <div id="agent-debate-stream" class="space-y-2 overflow-y-auto max-h-48 text-[11px]">
+              <div class="text-app-muted text-center py-4">Click "Run Agent Cycle" to start multi-round debate</div>
+            </div>
+            <div id="agent-verdict-box" class="p-2 rounded bg-app-card border border-app-border/40 text-[11px]">
+              <div class="text-app-muted">Facilitator Verdict: <span id="agent-verdict-side" class="text-white font-semibold">Standby</span></div>
+            </div>
+          </div>
+
+          <!-- Col 3: Trader Decision & Multi-Persona Risk Committee -->
+          <div class="bg-app-bg border border-app-border/80 rounded-lg p-3.5 flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-app-border/50 text-[11px] font-bold text-gray-300">
+              <span>3. TRADER & RISK COMMITTEE</span>
+              <span id="agent-approval-badge" class="text-emerald-400 font-bold">STANDBY</span>
+            </div>
+            <div id="agent-risk-content" class="space-y-2 text-[11px]">
+              <div class="p-2.5 rounded bg-app-card border border-app-border/40">
+                <div class="flex justify-between text-gray-200 font-bold">
+                  <span>Alpha Trader Proposal:</span>
+                  <span id="agent-trade-action" class="text-app-muted">NEUTRAL</span>
+                </div>
+                <div class="text-app-muted mt-1" id="agent-trade-specs">Leverage: -- | SL: -- | TP: --</div>
+              </div>
+              <div id="agent-risk-opinions" class="space-y-1"></div>
+              <div id="agent-fund-approval" class="p-2 rounded bg-emerald-950/20 border border-emerald-500/30 text-emerald-300 text-[11px]">
+                Fund Manager: Ready for evaluation
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. BOTTOM ROW (5 GRID CARDS): ACCOUNT BALANCE, EQUITY CURVE, PNL, SYSTEM STATUS, ACTIVITY FEED -->
       <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
 
         <!-- Card 1: Account Balance Donut -->
@@ -728,41 +834,77 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
-    function renderOrderBook(bid, ask, bidQty, askQty) {
+    function renderOrderBook(bid, ask, bidQty, askQty, rawBids, rawAsks) {
       const b = Number(bid), a = Number(ask);
       if (b <= 0 || a <= 0) return;
       const mid = (b + a) / 2;
-      const spread = a - b;
+      const spread = Math.max(0, a - b);
+      const spreadPct = mid > 0 ? (spread / mid) * 100 : 0;
+      const dec = mid > 500 ? 1 : 2;
+
       const mEl = document.getElementById('ob-mid-price');
-      if (mEl) mEl.innerText = mid.toFixed(2);
+      if (mEl) mEl.innerText = '$' + mid.toFixed(dec);
+      const spVal = document.getElementById('ob-spread-val');
+      if (spVal) spVal.innerText = spread.toFixed(dec);
+      const spPct = document.getElementById('ob-spread-pct');
+      if (spPct) spPct.innerText = '(' + spreadPct.toFixed(2) + '%)';
       const spEl = document.getElementById('ob-spread-info');
-      if (spEl) spEl.innerText = a.toFixed(2) + ' / ' + b.toFixed(2);
+      if (spEl) spEl.innerText = a.toFixed(dec) + ' / ' + b.toFixed(dec);
 
-      const asks = [];
-      for (let i = 5; i >= 1; i--) {
-        const p = (a + spread * i).toFixed(2);
-        const sz = (Number(askQty || 1) * (6 - i) * 0.3).toFixed(2);
-        asks.push('<div class="grid grid-cols-3 relative depth-bar-ask py-0.5"><span class="text-red-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * (6 - i)).toFixed(2) + '</span></div>');
-      }
-      const aEl = document.getElementById('orderbook-asks');
-      if (aEl) aEl.innerHTML = asks.join('');
+      const depthLevels = 12;
+      const baseSpread = spread > 0 ? spread : b * 0.0001;
 
+      // 1. Build Bids array (descending from best bid)
       const bids = [];
-      for (let i = 1; i <= 5; i++) {
-        const p = (b - spread * (i - 1)).toFixed(2);
-        const sz = (Number(bidQty || 1) * i * 0.3).toFixed(2);
-        bids.push('<div class="grid grid-cols-3 relative depth-bar-bid py-0.5"><span class="text-emerald-400 font-semibold">' + p + '</span><span class="text-right text-gray-300">' + sz + '</span><span class="text-right text-gray-400">' + (Number(sz) * i).toFixed(2) + '</span></div>');
+      let maxBidQty = 0;
+      for (let i = 0; i < depthLevels; i++) {
+        const price = rawBids && rawBids[i] ? Number(rawBids[i][0]) : (b - baseSpread * i);
+        const qty = rawBids && rawBids[i] ? Number(rawBids[i][1]) : (Number(bidQty || 1) * (1 + i * 0.25));
+        maxBidQty = Math.max(maxBidQty, qty);
+        bids.push({ price, qty });
       }
+
+      // 2. Build Asks array (ascending from best ask)
+      const asks = [];
+      let maxAskQty = 0;
+      for (let i = 0; i < depthLevels; i++) {
+        const price = rawAsks && rawAsks[i] ? Number(rawAsks[i][0]) : (a + baseSpread * i);
+        const qty = rawAsks && rawAsks[i] ? Number(rawAsks[i][1]) : (Number(askQty || 1) * (1 + i * 0.25));
+        maxAskQty = Math.max(maxAskQty, qty);
+        asks.push({ price, qty });
+      }
+
       const bEl = document.getElementById('orderbook-bids');
-      if (bEl) bEl.innerHTML = bids.join('');
+      if (bEl) {
+        bEl.innerHTML = bids.map(item => {
+          const pct = Math.min(100, Math.max(8, Math.round((item.qty / maxBidQty) * 100)));
+          return '<div class="relative py-0.5 px-1.5 flex items-center justify-between text-[11px] overflow-hidden rounded hover:bg-emerald-950/20 transition">' +
+            '<div class="absolute inset-y-0 right-0 bg-emerald-500/15 pointer-events-none rounded" style="width:' + pct + '%"></div>' +
+            '<span class="relative z-10 text-emerald-400 font-semibold">' + item.price.toFixed(dec) + '</span>' +
+            '<span class="relative z-10 text-right text-gray-300 font-medium">' + item.qty.toFixed(2) + '</span>' +
+          '</div>';
+        }).join('');
+      }
+
+      const aEl = document.getElementById('orderbook-asks');
+      if (aEl) {
+        aEl.innerHTML = asks.map(item => {
+          const pct = Math.min(100, Math.max(8, Math.round((item.qty / maxAskQty) * 100)));
+          return '<div class="relative py-0.5 px-1.5 flex items-center justify-between text-[11px] overflow-hidden rounded hover:bg-red-950/20 transition">' +
+            '<div class="absolute inset-y-0 right-0 bg-red-500/15 pointer-events-none rounded" style="width:' + pct + '%"></div>' +
+            '<span class="relative z-10 text-red-400 font-semibold">' + item.price.toFixed(dec) + '</span>' +
+            '<span class="relative z-10 text-right text-gray-300 font-medium">' + item.qty.toFixed(2) + '</span>' +
+          '</div>';
+        }).join('');
+      }
     }
 
     async function fetchOrderBook(symbol) {
       try {
-        const res = await fetch(\`/api/v1/orderbook?symbol=\${symbol}\`);
+        const res = await fetch(\`/api/v1/orderbook?symbol=\${symbol}&limit=12\`);
         const data = await res.json();
         if (data && data.bid && data.ask) {
-          renderOrderBook(data.bid, data.ask, data.bidQty, data.askQty);
+          renderOrderBook(data.bid, data.ask, data.bidQty, data.askQty, data.bids, data.asks);
         }
       } catch (err) {
         console.warn('Orderbook fetch error:', err);
@@ -1083,6 +1225,12 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         }
       }
 
+      if (msg.type === 'agent.cycle' && msg.payload) {
+        if (msg.payload.symbol === currentSymbol) {
+          renderAgentCycle(msg.payload);
+        }
+      }
+
       if (msg.type === 'order.updated' || msg.type === 'position.updated' || msg.type === 'mode.changed') {
         fetchDashboard();
       }
@@ -1171,6 +1319,118 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
+    async function triggerManualAgentCycle() {
+      const btn = document.getElementById('run-cycle-btn');
+      const spinner = document.getElementById('cycle-btn-spinner');
+      const text = document.getElementById('cycle-btn-text');
+      if (spinner) spinner.classList.remove('hidden');
+      if (text) text.innerText = 'Running Multi-Agent Cycle...';
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/v1/agents/cycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol: currentSymbol })
+        });
+        const cycle = await res.json();
+        if (cycle && cycle.cycleId) {
+          renderAgentCycle(cycle);
+        }
+      } catch (err) {
+        console.warn('Agent cycle execution error:', err);
+      } finally {
+        if (spinner) spinner.classList.add('hidden');
+        if (text) text.innerText = 'Run Agent Cycle';
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function fetchAgentCycles() {
+      try {
+        const res = await fetch('/api/v1/agents/cycles?symbol=' + currentSymbol + '&limit=1');
+        const data = await res.json();
+        if (data && Array.isArray(data.cycles) && data.cycles.length > 0) {
+          renderAgentCycle(data.cycles[0]);
+        }
+      } catch (e) {
+        console.warn('Agent cycle fetch error:', e);
+      }
+    }
+
+    function renderAgentCycle(cycle) {
+      if (!cycle) return;
+      const vSide = cycle.verdict?.prevailingSide || cycle.verdict?.prevailing_side || 'NEUTRAL';
+      const vConv = cycle.verdict?.conviction || 0.5;
+
+      const vBadge = document.getElementById('agent-verdict-badge');
+      if (vBadge) {
+        vBadge.innerText = vSide + ' (' + Math.round(vConv * 100) + '%)';
+        vBadge.className = 'font-bold ' + (vSide === 'BULL' ? 'text-emerald-400' : vSide === 'BEAR' ? 'text-red-400' : 'text-amber-400');
+      }
+
+      const vSideEl = document.getElementById('agent-verdict-side');
+      if (vSideEl) {
+        vSideEl.innerText = vSide + ' — ' + (cycle.verdict?.rationale || 'Consensus reached');
+      }
+
+      const debateStream = document.getElementById('agent-debate-stream');
+      const debateList = cycle.debate || cycle.debate_history || [];
+      if (debateStream && Array.isArray(debateList) && debateList.length > 0) {
+        debateStream.innerHTML = debateList.map(d => \`
+          <div class="p-2 rounded \${d.role === 'BULL' ? 'bg-emerald-950/20 border border-emerald-500/20' : 'bg-red-950/20 border border-red-500/20'}">
+            <div class="flex items-center justify-between font-bold mb-1">
+              <span class="\${d.role === 'BULL' ? 'text-emerald-400' : 'text-red-400'}">\${d.role} RESEARCHER (R\${d.round})</span>
+            </div>
+            <div class="text-gray-300 leading-tight">\${d.argument}</div>
+          </div>
+        \`).join('');
+      }
+
+      const reports = cycle.analystReports || cycle.analyst_reports || [];
+      if (reports.length > 0) {
+        const r = reports[0];
+        const sEl = document.getElementById('analyst-summary');
+        if (sEl) sEl.innerText = r.summary || 'Analysis complete';
+        const sigEl = document.getElementById('analyst-signals');
+        if (sigEl) {
+          const bulls = (r.bullishSignals || []).map(s => '<div class="text-emerald-400">🟢 ' + s + '</div>');
+          const bears = (r.bearishSignals || []).map(s => '<div class="text-red-400">🔴 ' + s + '</div>');
+          sigEl.innerHTML = bulls.concat(bears).join('');
+        }
+      }
+
+      const trader = cycle.traderDecision || cycle.trader_decision || {};
+      const actionEl = document.getElementById('agent-trade-action');
+      if (actionEl) {
+        actionEl.innerText = trader.action || 'NEUTRAL';
+        actionEl.className = 'font-bold ' + (trader.action === 'LONG' ? 'text-emerald-400' : trader.action === 'SHORT' ? 'text-red-400' : 'text-app-muted');
+      }
+
+      const specsEl = document.getElementById('agent-trade-specs');
+      if (specsEl) {
+        specsEl.innerText = 'Lev: ' + (trader.leverage || 1) + 'x | SL: ' + (trader.stopLoss || 'None') + ' | TP: ' + (trader.takeProfit || 'None');
+      }
+
+      const riskOpinions = cycle.riskOpinions || cycle.risk_opinions || [];
+      const riskEl = document.getElementById('agent-risk-opinions');
+      if (riskEl && Array.isArray(riskOpinions)) {
+        riskEl.innerHTML = riskOpinions.map(o => \`
+          <div class="flex items-center justify-between text-[10px] p-1.5 rounded bg-app-bg border border-app-border/40">
+            <span class="text-gray-300 font-semibold">\${o.persona} Risk Manager:</span>
+            <span class="\${o.verdict === 'APPROVE' ? 'text-emerald-400' : 'text-amber-400'} font-bold">\${o.verdict}</span>
+          </div>
+        \`).join('');
+      }
+
+      const approval = cycle.fundManagerApproval || cycle.fund_manager_approval || {};
+      const fundEl = document.getElementById('agent-fund-approval');
+      if (fundEl) {
+        fundEl.innerText = 'Fund Manager: ' + (approval.rationale || 'Decision validated');
+        fundEl.className = 'p-2 rounded text-[11px] ' + (approval.approved ? 'bg-emerald-950/20 border border-emerald-500/30 text-emerald-300' : 'bg-red-950/20 border border-red-500/30 text-red-300');
+      }
+    }
+
     window.onload = async () => {
       await initChart();
       initEquityChart();
@@ -1183,6 +1443,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       fetchActivityFeed();
       fetchEquityCurve();
       fetchPnlHistory();
+      fetchAgentCycles();
       connectWs();
       setInterval(updateClock, 1000);
       setInterval(fetchDashboard, 5000);
@@ -1192,6 +1453,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
       setInterval(fetchActivityFeed, 5000);
       setInterval(fetchEquityCurve, 15000);
       setInterval(fetchPnlHistory, 15000);
+      setInterval(fetchAgentCycles, 10000);
     };
   </script>
 </body>

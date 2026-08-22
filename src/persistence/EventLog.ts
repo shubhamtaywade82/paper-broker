@@ -53,10 +53,26 @@ export class EventLog {
         created_at_utc TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS agent_cycles (
+        cycle_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        analyst_reports TEXT NOT NULL,
+        debate_history TEXT NOT NULL,
+        verdict TEXT NOT NULL,
+        trader_decision TEXT NOT NULL,
+        risk_opinions TEXT NOT NULL,
+        fund_manager_approval TEXT NOT NULL,
+        executed INTEGER NOT NULL DEFAULT 0
+      );
+
       CREATE INDEX IF NOT EXISTS idx_events_aggregate ON events(aggregate_type, aggregate_id);
       CREATE INDEX IF NOT EXISTS idx_events_account_time ON events(account_id, created_at_utc);
       CREATE INDEX IF NOT EXISTS idx_events_symbol_time ON events(symbol, created_at_utc);
       CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, created_at_utc);
+      CREATE INDEX IF NOT EXISTS idx_agent_cycles_symbol ON agent_cycles(symbol, started_at);
     `);
   }
 
@@ -236,6 +252,114 @@ export class EventLog {
       type: row.event_type,
       payload: JSON.parse(row.payload),
     }));
+  }
+
+  logAgentCycle(record: {
+    cycleId: string;
+    symbol: string;
+    startedAt: number;
+    analystReports: unknown[];
+    debate: unknown[];
+    verdict: unknown;
+    traderDecision: unknown;
+    riskOpinions: unknown[];
+    fundManagerApproval: unknown;
+    executed: boolean;
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO agent_cycles (
+        cycle_id, symbol, started_at, completed_at, status,
+        analyst_reports, debate_history, verdict,
+        trader_decision, risk_opinions, fund_manager_approval, executed
+      ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.cycleId,
+      record.symbol,
+      record.startedAt,
+      Date.now(),
+      JSON.stringify(record.analystReports),
+      JSON.stringify(record.debate),
+      JSON.stringify(record.verdict),
+      JSON.stringify(record.traderDecision),
+      JSON.stringify(record.riskOpinions),
+      JSON.stringify(record.fundManagerApproval),
+      record.executed ? 1 : 0
+    );
+  }
+
+  getAgentCycles(opts?: { symbol?: string; limit?: number; offset?: number }): Array<Record<string, unknown>> {
+    let sql = 'SELECT * FROM agent_cycles WHERE 1=1';
+    const params: unknown[] = [];
+    if (opts?.symbol) {
+      sql += ' AND symbol = ?';
+      params.push(opts.symbol);
+    }
+    sql += ' ORDER BY started_at DESC LIMIT ? OFFSET ?';
+    params.push(opts?.limit ?? 20, opts?.offset ?? 0);
+
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      cycle_id: string;
+      symbol: string;
+      started_at: number;
+      completed_at: number;
+      status: string;
+      analyst_reports: string;
+      debate_history: string;
+      verdict: string;
+      trader_decision: string;
+      risk_opinions: string;
+      fund_manager_approval: string;
+      executed: number;
+    }>;
+    return rows.map((r) => this.parseCycleRow(r));
+  }
+
+  getAgentCycleById(cycleId: string): Record<string, unknown> | null {
+    const row = this.db.prepare('SELECT * FROM agent_cycles WHERE cycle_id = ?').get(cycleId) as {
+      cycle_id: string;
+      symbol: string;
+      started_at: number;
+      completed_at: number;
+      status: string;
+      analyst_reports: string;
+      debate_history: string;
+      verdict: string;
+      trader_decision: string;
+      risk_opinions: string;
+      fund_manager_approval: string;
+      executed: number;
+    } | undefined;
+    return row ? this.parseCycleRow(row) : null;
+  }
+
+  private parseCycleRow(row: {
+    cycle_id: string;
+    symbol: string;
+    started_at: number;
+    completed_at: number;
+    status: string;
+    analyst_reports: string;
+    debate_history: string;
+    verdict: string;
+    trader_decision: string;
+    risk_opinions: string;
+    fund_manager_approval: string;
+    executed: number;
+  }): Record<string, unknown> {
+    return {
+      cycle_id: row.cycle_id,
+      symbol: row.symbol,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+      status: row.status,
+      executed: row.executed === 1,
+      analyst_reports: JSON.parse(row.analyst_reports || '[]'),
+      debate_history: JSON.parse(row.debate_history || '[]'),
+      verdict: JSON.parse(row.verdict || '{}'),
+      trader_decision: JSON.parse(row.trader_decision || '{}'),
+      risk_opinions: JSON.parse(row.risk_opinions || '[]'),
+      fund_manager_approval: JSON.parse(row.fund_manager_approval || '{}'),
+    };
   }
 
   close(): void {
