@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PaperBroker } from '../../src/broker/PaperBroker.js';
 import { SignalExecutor } from '../../src/strategy/SignalExecutor.js';
-import { SizingEngine } from '../../src/strategy/SizingEngine.js';
 import { OrderFactory } from '../../src/strategy/OrderFactory.js';
-import { toSignal } from '../../src/strategy/signal.js';
+import { toSignal, parseSignalInput } from '../../src/strategy/signal.js';
 import type { Signal } from '../../src/strategy/signal.js';
 import { DatabaseManager } from '../../src/persistence/db.js';
 import type { Instrument, MarketState } from '../../src/broker/types.js';
@@ -80,7 +79,6 @@ describe('SignalExecutor', () => {
 
     executor = new SignalExecutor({
       broker,
-      sizing: new SizingEngine({ riskPerTrade: 0.005, maxNotional: 5000 }),
       orderFactory: new OrderFactory({ defaultLeverage: 5 }),
       signals: db.signals,
       getMarketState: () => market,
@@ -88,7 +86,7 @@ describe('SignalExecutor', () => {
   });
 
   it('opens a long position from OPEN_LONG and marks the signal EXECUTED', async () => {
-    const signal = await run(db, executor, 'OPEN_LONG');
+    const signal = await run(db, executor, 'OPEN_LONG', { features: { quantity: 9.803, leverage: 5 } });
 
     const position = broker.getPosition('BTCUSDT');
     expect(position?.qty).toBeGreaterThan(0);
@@ -145,7 +143,7 @@ describe('SignalExecutor', () => {
       signalId: undefined,
     });
 
-    const signal = await run(db, executor, 'OPEN_LONG');
+    const signal = await run(db, executor, 'OPEN_LONG', { features: { quantity: 9.803, leverage: 5 } });
 
     const row = db.signals.findById(signal.id);
     expect(row?.status).toBe('REJECTED');
@@ -153,12 +151,37 @@ describe('SignalExecutor', () => {
   });
 
   it('places a stop-loss bracket after opening', async () => {
-    await run(db, executor, 'OPEN_LONG');
+    await run(db, executor, 'OPEN_LONG', { features: { quantity: 9.803, leverage: 5 } });
 
     const openOrders = broker.getOpenOrders();
     expect(openOrders.length).toBe(1);
     expect(openOrders[0]?.type).toBe('STOP_MARKET');
     expect(openOrders[0]?.stopPrice).toBe(95);
     expect(openOrders[0]?.reduceOnly).toBe(true);
+  });
+
+  it('uses the quantity and leverage from signal.features, not a sizing engine', async () => {
+    const signal = toSignal(
+      parseSignalInput({
+        strategyId: 'test',
+        symbol: 'BTCUSDT',
+        action: 'OPEN_LONG',
+        confidence: 0.8,
+        stopLossPrice: '95',
+        features: { quantity: 0.25, leverage: 4 },
+      })
+    );
+    db.signals.insert(signal);
+
+    const result = await executor.execute(signal);
+
+    expect(result).toBe(true);
+    const position = broker.getPosition('BTCUSDT');
+    expect(position?.qty).toBe(0.25);
+    expect(position?.leverage).toBe(4);
+
+    const stopOrder = broker.getOpenOrders()[0];
+    expect(stopOrder?.quantity).toBe(0.25);
+    expect(stopOrder?.leverage).toBe(4);
   });
 });

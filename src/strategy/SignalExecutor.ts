@@ -1,13 +1,11 @@
 import type { PaperBroker } from '../broker/PaperBroker.js';
 import type { MarketState } from '../broker/types.js';
 import type { Signal } from './signal.js';
-import type { SizingEngine } from './SizingEngine.js';
 import type { OrderFactory } from './OrderFactory.js';
 import type { SignalRepository } from '../persistence/repositories/SignalRepository.js';
 
 export interface SignalExecutorDeps {
   broker: PaperBroker;
-  sizing: SizingEngine;
   orderFactory: OrderFactory;
   signals: SignalRepository;
   getMarketState: (symbol: string) => MarketState | undefined;
@@ -25,7 +23,7 @@ export class SignalExecutor {
   }
 
   async execute(signal: Signal): Promise<boolean> {
-    const { broker, sizing, orderFactory, signals, getMarketState } = this.deps;
+    const { broker, orderFactory, signals, getMarketState } = this.deps;
     const log = this.deps.logger ?? {
       warn: () => undefined,
       error: () => undefined,
@@ -50,19 +48,12 @@ export class SignalExecutor {
 
     const closeQty =
       signal.action.startsWith('CLOSE') && position ? Math.abs(position.qty) : 0;
+    const openQty = signal.action.startsWith('OPEN')
+      ? Number(signal.features['quantity'] ?? 0)
+      : 0;
+    const leverage = Number(signal.features['leverage'] ?? 5);
 
-    const instrument = broker.getInstrument(signal.symbol);
-    const sized =
-      signal.action.startsWith('OPEN') && instrument
-        ? sizing.sizePosition({
-            account: broker.getAccount(),
-            instrument,
-            entryPrice,
-            stopLossPrice: signal.stopLossPrice ? Number(signal.stopLossPrice) : undefined,
-          })
-        : null;
-
-    const quantity = closeQty > 0 ? closeQty : (sized?.quantity ?? 0);
+    const quantity = closeQty > 0 ? closeQty : openQty;
     if (quantity <= 0) {
       log.warn(`[Signal] Zero quantity for ${signal.symbol} ${signal.action}, skipping`);
       return true;
@@ -73,7 +64,7 @@ export class SignalExecutor {
       side: signal.action === 'OPEN_LONG' || signal.action === 'CLOSE_SHORT' ? 'BUY' : 'SELL',
       type: 'MARKET',
       quantity,
-      leverage: 5,
+      leverage,
       reduceOnly: signal.action.startsWith('CLOSE'),
     } as const;
 
@@ -88,8 +79,8 @@ export class SignalExecutor {
 
       signals.updateStatus(signal.id, 'EXECUTED', order.id);
 
-      if (sized && signal.stopLossPrice) {
-        const stop = orderFactory.buildStopLossOrder(signal, quantity);
+      if (signal.action.startsWith('OPEN') && signal.stopLossPrice) {
+        const stop = orderFactory.buildStopLossOrder(signal, quantity, leverage);
         if (stop) {
           const stopOrder = broker.submitOrder(stop);
           if (stopOrder.status === 'REJECTED') {
