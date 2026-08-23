@@ -923,159 +923,141 @@ it to ReplayEngine. Per docs/decisions/0004-unified-agentic-decision-pipeline.md
 
 ## Task 7: Integration test — structure → agents → risk gate
 
+> **Revised during execution (see ledger, Task 7 entry, 2026-08-23).** Round
+> 1 found this task's original premise false: `TradingAgentsPipeline`'s
+> offline fallback (`src/ai/tradingAgents.ts:188-197`, used whenever no
+> Ollama server is reachable, which is this test environment) hardcodes
+> `{action: 'NEUTRAL', confidence: 0}` regardless of market facts — it is
+> not "deterministic given market facts" as originally assumed, it's a
+> constant. `runFundManager`'s `approved` check is therefore *always*
+> `false` offline, and `evaluateCandle` gates on that before ever calling
+> `TradeIntentEngine`. No end-to-end test through `onCandleClose` can reach
+> the risk gate in this environment — not a fixture problem, a structural
+> one. (This is correct, safety-first behavior for the real system — LLM
+> unreachable should mean NO_TRADE, not a guess — it just makes this
+> specific test premise unworkable as originally written.)
+>
+> Round 1 also found the original fixture (flat candles with one differing
+> candle near the end) never produces a `SetupCandidate` at all —
+> `SwingDetector` needs real strict-inequality pivots with confirming bars
+> on both sides, and `KlineStore.upsertCandle` silently drops any candle
+> with `openTime <= 0`, which was shifting every array index by one.
+>
+> **Ruling:** add a narrow DI seam. Widen
+> `SmcAgentStrategyDeps.tradingAgentsPipeline`'s type from the concrete
+> `TradingAgentsPipeline` class to a minimal structural interface
+> (`runCycle` only) in `src/strategy/strategies/smc-agent.ts` — this is a
+> type-only change; `TradingAgentsPipeline` already satisfies it
+> structurally, so `engine.ts`'s real instance needs no change and no
+> production behavior changes. This lets Task 7's test supply a fake
+> agent-debate result to isolate what it actually needs to prove (risk-gate
+> ordering), without touching `evaluateCandle`'s gate order or
+> `tradingAgents.ts`'s fallback logic — both of which were explicitly
+> rejected as fix targets (see ledger: reordering the gates contradicts the
+> brainstormed design decision that risk is the *final* gate after agents;
+> making the offline fallback approve trades based on a heuristic is a
+> worse safety property than always defaulting to NEUTRAL).
+
 **Files:**
+- Modify: `src/strategy/strategies/smc-agent.ts` — add the structural interface, widen one field's type (small, additive, no behavior change)
 - Create: `test/unit/SmcAgentPipeline.integration.test.ts`
 
-**Interfaces:** Consumes everything wired in Task 3; no new production code.
+**Interfaces:**
+- Produces: `AgentDebatePipeline` (exported from `src/strategy/strategies/smc-agent.ts`): `{ runCycle(ctx: MarketFactContext): Promise<CycleRecord> }`. `SmcAgentStrategyDeps.tradingAgentsPipeline` changes from `TradingAgentsPipeline` to `AgentDebatePipeline`.
 
-This test is the one the spec explicitly requires: prove the risk gate blocks even when the fund manager approves, and that a healthy setup with sufficient equity produces a signal. Because no Ollama server runs in CI, `TradingAgentsPipeline.runCycle()` exercises its deterministic fallback path (same behavior already relied on by `test/unit/TradingAgentsPipeline.test.ts`) — the fallback's `FundManagerApproval.approved` depends on the fallback trader decision's `confidence >= 0.5`, which is deterministic given the market facts below.
+This test proves the risk gate blocks even when the fund manager approves, and that a healthy setup with sufficient equity produces a signal — using a fake `AgentDebatePipeline` that returns a fixed, approved `CycleRecord` (so the test isolates risk-gate ordering from `TradingAgentsPipeline`'s own LLM-dependent correctness, which is already covered by `test/unit/TradingAgentsPipeline.test.ts`) and a real candle fixture verified to produce an `EXECUTABLE` plan.
 
-- [ ] **Step 1: Write the test**
+- [ ] **Step 1: Add the `AgentDebatePipeline` seam to `smc-agent.ts`**
+
+In `src/strategy/strategies/smc-agent.ts`, add this exported interface near the top (after the existing imports) and change one field's type:
 
 ```typescript
-import { describe, it, expect } from 'vitest';
-import { createSmcAgentStrategy } from '../../src/strategy/strategies/smc-agent.js';
-import { SetupEngine } from '../../src/market/setup/SetupEngine.js';
-import { MtfStateEngine } from '../../src/market/MtfStateEngine.js';
-import { MarketStructureEngine } from '../../src/market/structure/MarketStructureEngine.js';
-import { SmcLocationEngine } from '../../src/market/smc/SmcLocationEngine.js';
-import { ExecutionPlanEngine } from '../../src/market/execution/ExecutionPlanEngine.js';
-import { TradeIntentEngine } from '../../src/trading/TradeIntentEngine.js';
-import { TradingAgentsPipeline } from '../../src/ai/tradingAgents.js';
-import { KlineStore } from '../../src/market/Klines.js';
-import { MarketStateManager } from '../../src/market/MarketState.js';
-import type { Candle } from '../../src/strategy/indicators.js';
-import type { StrategyContext } from '../../src/strategy/StrategyContext.js';
-import type { AccountState, Instrument } from '../../src/broker/types.js';
+import type { MarketFactContext, TradingAgentsPipeline } from '../../ai/tradingAgents.js';
+import type { CycleRecord } from '../../ai/schemas.js';
 
-const FAKE_INSTRUMENT: Instrument = {
-  symbol: 'BTCUSDT', baseAsset: 'BTC', quoteAsset: 'USDT', contractType: 'PERPETUAL', status: 'TRADING',
-  tickSize: '0.1', stepSize: '0.001', minQty: '0.001', minNotional: '5',
-  pricePrecision: 1, quantityPrecision: 3, maintenanceMarginRate: '0.005',
-  createdAtUtc: new Date(0).toISOString(),
-};
-
-function buildSweepAndReversalCandles(symbol: string): Candle[] {
-  // 60 flat 15m candles to satisfy MIN_CLOSED_CANDLES, then a sweep below a
-  // prior low followed by a strong bullish reversal close, on both the 15m
-  // and 5m series so MtfStateEngine reports isFullySynchronized.
-  const candles: Candle[] = [];
-  const intervals: Array<{ interval: string; stepMs: number; count: number }> = [
-    { interval: '4h', stepMs: 14_400_000, count: 25 },
-    { interval: '1h', stepMs: 3_600_000, count: 35 },
-    { interval: '15m', stepMs: 900_000, count: 60 },
-    { interval: '5m', stepMs: 300_000, count: 60 },
-  ];
-  for (const { interval, stepMs, count } of intervals) {
-    for (let i = 0; i < count; i++) {
-      const isLast = i === count - 1;
-      const isSecondLast = i === count - 2;
-      const low = isSecondLast ? 59500 : 60000;
-      const close = isLast ? 60800 : 60000;
-      candles.push({
-        symbol, interval, openTime: i * stepMs, closeTime: i * stepMs + stepMs - 1,
-        open: 60000, high: Math.max(close, 60050), low, close, volume: 100, isClosed: true,
-      } as Candle);
-    }
-  }
-  return candles;
+export interface AgentDebatePipeline {
+  runCycle(ctx: MarketFactContext): Promise<CycleRecord>;
 }
-
-function makeContext(equity: number): StrategyContext {
-  const account: AccountState = {
-    walletBalance: equity, unrealizedPnl: 0, equity, initialMargin: 0, maintenanceMargin: 0,
-    availableBalance: equity, totalFees: 0, totalFunding: 0, totalRealizedPnl: 0,
-    openPositionsCount: 0, openOrdersCount: 0, dailyRealizedPnl: 0,
-  };
-  return {
-    strategyId: 'smc-agent-v1',
-    getMarket: () => ({
-      symbol: 'BTCUSDT', bid: 60790, ask: 60810, spread: 20, last: 60800, mark: 60800,
-      fundingRate: 0.0001, openInterest: 500000,
-    }),
-    getCandles: () => [],
-    getAccount: () => account,
-    getPosition: () => undefined,
-    getOpenOrders: () => [],
-    hasOpenPosition: () => false,
-    hasOpenOrder: () => false,
-    submitOrder: () => { throw new Error('not used'); },
-  };
-}
-
-function buildPipeline() {
-  const klines = new KlineStore(500);
-  for (const c of buildSweepAndReversalCandles('BTCUSDT')) klines.upsertCandle(c);
-  const marketState = new MarketStateManager([FAKE_INSTRUMENT]);
-  const structureEngine = new MarketStructureEngine(klines);
-  const smcEngine = new SmcLocationEngine(klines, structureEngine);
-  const mtfEngine = new MtfStateEngine(klines, marketState);
-  const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
-  const planEngine = new ExecutionPlanEngine();
-  const tradingAgentsPipeline = new TradingAgentsPipeline({ model: 'llama3.1:8b' });
-  return { setupEngine, structureEngine, smcEngine, planEngine, tradingAgentsPipeline };
-}
-
-describe('SMC agent strategy — structure to agents to risk gate', () => {
-  it('does not produce a signal when the risk engine rejects due to insufficient equity', async () => {
-    const { setupEngine, structureEngine, smcEngine, planEngine, tradingAgentsPipeline } = buildPipeline();
-    // DEFAULT_RISK_CONFIG (RiskLimits.ts) already sets maxAccountRiskPct:0.05,
-    // riskPerTradePct:0.01 — no override needed, RiskConfig requires all
-    // fields so a partial object literal here would not typecheck.
-    const tradeIntentEngine = new TradeIntentEngine();
-
-    const strategy = createSmcAgentStrategy({
-      setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
-      tradingAgentsPipeline, getInstrument: () => FAKE_INSTRUMENT,
-    });
-
-    const candle = buildSweepAndReversalCandles('BTCUSDT').filter((c) => c.interval === '5m').at(-1)!;
-    // Equity of 1 USDT cannot fund even the minimum position at this stop distance —
-    // TradeIntentEngine's internal RiskEngine must reject regardless of agent approval.
-    const result = await strategy.onCandleClose!(makeContext(1), candle);
-
-    expect(result).toBeNull();
-  });
-
-  it('produces a signal when structure, agents, and risk all agree the trade is sound', async () => {
-    const { setupEngine, structureEngine, smcEngine, planEngine, tradingAgentsPipeline } = buildPipeline();
-    const tradeIntentEngine = new TradeIntentEngine();
-
-    const strategy = createSmcAgentStrategy({
-      setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
-      tradingAgentsPipeline, getInstrument: () => FAKE_INSTRUMENT,
-    });
-
-    const candle = buildSweepAndReversalCandles('BTCUSDT').filter((c) => c.interval === '5m').at(-1)!;
-    const result = await strategy.onCandleClose!(makeContext(10000), candle);
-
-    if (result) {
-      expect(result.strategyId).toBe('smc-agent-v1');
-      expect(['OPEN_LONG', 'OPEN_SHORT']).toContain(result.action);
-      expect(Number(result.features.quantity)).toBeGreaterThan(0);
-    }
-    // If the fixture's synthetic candles don't clear SetupEngine's confluence
-    // threshold, `result` is legitimately null — the assertion above only
-    // fires when a signal IS produced, so this test can't false-fail on
-    // fixture data while still proving the low-equity case above rejects.
-  });
-});
 ```
 
-- [ ] **Step 2: Run the test**
+In `SmcAgentStrategyDeps`, change:
+
+```typescript
+tradingAgentsPipeline: TradingAgentsPipeline;
+```
+
+to:
+
+```typescript
+tradingAgentsPipeline: AgentDebatePipeline;
+```
+
+`TradingAgentsPipeline` already has exactly this `runCycle` signature, so it satisfies `AgentDebatePipeline` structurally — `engine.ts`'s real instantiation (`new TradingAgentsPipeline({...})`, from Task 5) needs no change and no behavior changes. Run `pnpm typecheck` after this edit alone to confirm `engine.ts` still compiles clean before writing the test.
+
+- [ ] **Step 2: Write the test**
+
+The candle fixture must produce a real `SetupCandidate` reaching `status: 'READY'` with confluence ≥ 65 (`DEFAULT_SETUP_CONFIG.minConfluenceScore`), and an `EXECUTABLE` `ExecutionPlan` — not just "any candles," since `SwingDetector` requires genuine strict-inequality pivots with confirming bars on both sides (flat/repeated candles never register). Build a 15m series with, in order: a swing high, a swing low, a sweep below the swing low that closes back above it (SSL sweep — liquidity grab), a strong bullish displacement candle immediately after (creates a bullish FVG), a break of structure candle closing above the swing high (BOS/CHOCH bullish), and a retest candle dipping back into the FVG. Mirror a small SSL sweep on the 5m series for `triggerEvidence`. Two pitfalls to avoid, both hard-won: `KlineStore.upsertCandle` (`src/market/Klines.ts`) silently drops any candle with `openTime <= 0` — anchor indices at `(i + 1) * stepMs`, not `i * stepMs`, so no candle lands at 0. And `SetupEngine` picks the *first* matching FVG via `.find(...)`, not the best one — keep any earlier candles' highs/lows tight enough that only the intended candle triple satisfies the gap condition, or an unrelated earlier FVG gets picked instead and produces a nonsensical entry price. Provide enough leading flat 4h/1h/15m/5m history before this sequence to satisfy `MIN_CLOSED_CANDLES` per timeframe (`src/market/MtfStateEngine.ts`) so `MtfStateEngine` reports `isFullySynchronized`.
+
+Write a fake `AgentDebatePipeline`:
+
+```typescript
+import type { AgentDebatePipeline } from '../../src/strategy/strategies/smc-agent.js';
+import type { CycleRecord } from '../../src/ai/schemas.js';
+
+function makeApprovingAgentPipeline(direction: 'LONG' | 'SHORT'): AgentDebatePipeline {
+  return {
+    async runCycle(ctx): Promise<CycleRecord> {
+      const decision = {
+        symbol: ctx.symbol, action: direction, leverage: 3, sizePct: 0.1,
+        rationale: 'Fixed test decision', confidence: 0.9,
+      };
+      return {
+        cycleId: `test-cycle-${ctx.symbol}`, symbol: ctx.symbol, startedAt: Date.now(),
+        analystReports: [], debate: [],
+        verdict: { prevailingSide: direction === 'LONG' ? 'BULL' : 'BEAR', rationale: 'test', conviction: 0.9 },
+        traderDecision: decision,
+        riskOpinions: [{ persona: 'SAFE', verdict: 'APPROVE', rationale: 'test' }],
+        fundManagerApproval: { approved: true, finalDecision: decision, rationale: 'test approval' },
+        executed: false,
+      };
+    },
+  };
+}
+```
+
+Write the two tests using `createSmcAgentStrategy` with real `SetupEngine`/`MtfStateEngine`/`MarketStructureEngine`/`SmcLocationEngine`/`ExecutionPlanEngine`/`TradeIntentEngine` (no fakes for any of these — they are what this test proves) and the fake `AgentDebatePipeline` above (matching the setup candidate's real direction) in place of a real `TradingAgentsPipeline`:
+
+1. **`does not produce a signal when the risk engine rejects due to insufficient equity`** — same account/context construction pattern as before (`equity: 1`), asserting `result` is `null`. With the fake pipeline always approving, a `null` result here can only mean the risk gate rejected — this is the property the whole task exists to prove.
+2. **`produces a signal when structure, agents, and risk all agree the trade is sound`** — `equity: 10000`, asserting `result` is non-null and its `strategyId`/`action`/`features.quantity` are sane. Because the fixture is now engineered (not incidental) to produce a real `EXECUTABLE` plan and the fake pipeline always approves, this test should reliably produce a signal — if it doesn't, that's a real finding to report, not something to route around with an `if (result)` guard.
+
+- [ ] **Step 3: Run the tests**
 
 Run: `pnpm vitest run test/unit/SmcAgentPipeline.integration.test.ts`
-Expected: PASS. The first test (insufficient equity) MUST pass unconditionally — if it fails, the risk gate is not blocking and this is a stop-the-line issue per AGENTS.md §6.2, not something to work around.
+Expected: PASS, both tests, for the real reasons stated in their names — not vacuously. Verify this yourself: temporarily log or assert `setupEngine.getReadySetups(...)` and `plan.status` inside the test while developing it, to confirm the fixture actually reaches a READY setup and an EXECUTABLE plan before trusting a `null`/non-`null` result. Remove any such debug logging before committing.
 
-- [ ] **Step 3: If the first test fails, debug before proceeding**
+The first test (insufficient equity) MUST pass for the reason it claims — if it doesn't, or if you can't confirm the fixture reaches `EXECUTABLE` at all, this is a stop-the-line issue per AGENTS.md §6.2, not something to route around.
 
-Read `TradeIntentEngine.processExecutionPlan` and `RiskEngine.validateSignalRisk` to confirm `maxAccountRiskPct`/`riskPerTradePct` actually reject a 1 USDT account. Do not weaken the test to make it pass — fix the wiring.
+- [ ] **Step 4: If either test fails or passes vacuously, debug before proceeding**
 
-- [ ] **Step 4: Commit**
+If the fixture doesn't reach a READY setup / EXECUTABLE plan: re-check the pitfalls in Step 2 (openTime<=0 drop, first-match FVG selection, insufficient leading history for `MIN_CLOSED_CANDLES`). If the fixture is confirmed correct but the insufficient-equity test still doesn't reject: read `TradeIntentEngine.processExecutionPlan` and `RiskEngine.validateSignalRisk` to confirm `maxAccountRiskPct`/`riskPerTradePct` actually reject a 1 USDT account. Do not weaken either test's assertions to force a pass — this test's entire purpose is to fail loudly if the risk gate doesn't work.
+
+- [ ] **Step 5: Run full typecheck, lint, and suite**
+
+Run: `pnpm typecheck && pnpm lint && pnpm vitest run`
+Expected: all PASS — confirms the Step 1 interface widening didn't break `engine.ts` or anything else.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add test/unit/SmcAgentPipeline.integration.test.ts
-git commit -m "test(strategy): integration-test the structure->agents->risk-gate pipeline"
+git add src/strategy/strategies/smc-agent.ts test/unit/SmcAgentPipeline.integration.test.ts
+git commit -m "test(strategy): integration-test the structure->agents->risk-gate pipeline
+
+Adds an AgentDebatePipeline seam (structural interface, no behavior
+change to TradingAgentsPipeline or engine.ts) so this test can isolate
+risk-gate ordering from the LLM debate's own correctness, which
+TradingAgentsPipeline's offline fallback cannot reach unconditionally
+(see docs/superpowers/plans/2026-08-22-graph-unification.md ledger,
+Task 7)."
 ```
 
 ---
