@@ -153,6 +153,7 @@ async function runBacktestCmd(): Promise<void> {
   console.log('='.repeat(60));
   console.log('INDICATOR STRATEGY BACKTEST');
   console.log('='.repeat(60));
+  console.warn('WARNING: the legacy indicator backtest path no longer computes position sizing (see docs/decisions/0004-unified-agentic-decision-pipeline.md) — all signals will report zero quantity and produce no trades. This path is retired pending a future unification plan.');
   console.log(`Start:      ${new Date(startTime).toISOString()}`);
   console.log(`End:        ${new Date(endTime).toISOString()}`);
   console.log(`Strategies: ${strategies.join(', ')}`);

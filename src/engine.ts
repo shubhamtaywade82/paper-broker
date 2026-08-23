@@ -149,6 +149,15 @@ export async function startEngine(): Promise<EngineHandle> {
     baseUrl: env.OLLAMA_BASE_URL,
   });
 
+  // Non-blocking: the agent debate already falls back to a safe NEUTRAL decision when
+  // Ollama is unreachable (see TradingAgentsPipeline.runTrader), so this check gates
+  // nothing — it exists purely so an operator sees why trading has gone quiet.
+  void tradingAgentsPipeline.checkOllamaReachable().then((reachable) => {
+    if (!reachable) {
+      logger.warn({ baseUrl: env.OLLAMA_BASE_URL }, 'Ollama unreachable at startup — agent debate will fall back to NEUTRAL (no trades) until it recovers');
+    }
+  });
+
   strategyEngine.register(
     createSmcAgentStrategy({
       setupEngine,
@@ -159,6 +168,8 @@ export async function startEngine(): Promise<EngineHandle> {
       tradingAgentsPipeline,
       getInstrument: (symbol) => broker.getInstrument(symbol),
       symbols,
+      getAllPositions: () => broker.getPositions(),
+      getAllOpenOrders: () => broker.getOpenOrders(),
     })
   );
 

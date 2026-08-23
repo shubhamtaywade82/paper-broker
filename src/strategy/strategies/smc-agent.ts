@@ -9,7 +9,7 @@ import type { ExecutionPlanEngine } from '../../market/execution/ExecutionPlanEn
 import type { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
 import type { MarketFactContext } from '../../ai/tradingAgents.js';
 import type { CycleRecord } from '../../ai/schemas.js';
-import type { AccountState, Instrument, Position } from '../../broker/types.js';
+import type { AccountState, Instrument, Order, Position } from '../../broker/types.js';
 import { toRiskAccountState, toPortfolioPositions } from '../../trading/risk/adapters.js';
 
 export interface AgentDebatePipeline {
@@ -51,6 +51,8 @@ export interface SmcAgentStrategyDeps {
   tradingAgentsPipeline: AgentDebatePipeline;
   getInstrument: (symbol: string) => Instrument | undefined;
   symbols?: string[];
+  getAllPositions?: () => Position[];
+  getAllOpenOrders?: () => Order[];
 }
 
 export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
@@ -93,10 +95,14 @@ async function evaluateCandle(
 
   const riskAccount = toRiskAccountState(account);
   const currentPosition = ctx.getPosition(symbol);
-  const riskPositions = toPortfolioPositions(
-    currentPosition ? [currentPosition] : ([] as Position[]),
-    ctx.getOpenOrders(symbol)
-  );
+  // Whole-account risk checks (e.g. maxOpenPositions) need positions/orders across ALL
+  // symbols, not just this candle's symbol — falls back to single-symbol view when the
+  // multi-symbol callbacks aren't wired (keeps existing callers/tests working unchanged).
+  const allPositions = deps.getAllPositions
+    ? deps.getAllPositions()
+    : (currentPosition ? [currentPosition] : ([] as Position[]));
+  const allOpenOrders = deps.getAllOpenOrders ? deps.getAllOpenOrders() : ctx.getOpenOrders(symbol);
+  const riskPositions = toPortfolioPositions(allPositions, allOpenOrders);
 
   const tradeSignal = deps.tradeIntentEngine.processExecutionPlan(plan, riskAccount, riskPositions, instrument, asOf);
   if (tradeSignal.status !== 'PAPER_READY') return null;

@@ -27,6 +27,7 @@ This project is a paper trading engine with real Binance market data and simulat
 |-----------------|-------------|------------------------------------------|
 | Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`                |
 | Agent loop      | implemented | `TradingAgentsPipeline` multi-agent debate drives every live signal via `createSmcAgentStrategy` (registered in `engine.ts`); also reachable manually via `/api/v1/agents/cycle` |
+| Ollama reachability | hard runtime dependency | If Ollama is unreachable, the agent debate always resolves to NEUTRAL and no trades occur (safe by design); `engine.ts` logs a startup warning if unreachable, but does not gate startup |
 | MCP             | planned     | Planned for tool orchestration           |
 | Trading supervision | implemented | LiveTradingGuard, DivergenceGuard, Risk check |
 
@@ -93,7 +94,7 @@ These must NOT change without an ADR:
 
 ### Deferred (not yet migrated to the unified pipeline)
 
-- ⏸️ `SizingEngine.ts`, the 6 non-Ollama classic strategy files, and `BacktestRunner.ts` remain on disk, unused by the live loop, and still serve `cli.ts`'s `backtest` CLI command — the CLI backtest path has not been unified with the SMC+agent pipeline
+- ⏸️ `SizingEngine.ts`, the 6 non-Ollama classic strategy files, and `BacktestRunner.ts` remain on disk, reachable via `cli.ts`'s `--engine=indicators` flag, but produce zero trades (`SignalExecutor` no longer computes sizing for signals that don't carry it) — this path is retired pending a future unification plan, not a working alternative to the default `--engine=smc` path
 
 ### Planned
 

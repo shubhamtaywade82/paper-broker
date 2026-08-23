@@ -52,6 +52,16 @@ export class TradingAgentsPipeline {
     });
   }
 
+  /** Best-effort reachability probe — never throws, used for startup operator visibility only. */
+  async checkOllamaReachable(): Promise<boolean> {
+    try {
+      const results = await this.client.healthCheck();
+      return results.some((r) => r.reachable);
+    } catch {
+      return false;
+    }
+  }
+
   async runCycle(ctx: MarketFactContext): Promise<CycleRecord> {
     const startedAt = Date.now();
     const cycleId = `cycle_${ctx.symbol}_${startedAt}`;

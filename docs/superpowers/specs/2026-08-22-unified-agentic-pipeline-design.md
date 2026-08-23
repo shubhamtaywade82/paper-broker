@@ -57,6 +57,20 @@ LLM agents with a deterministic risk gate, plus working mode branching
 
 ### 1. Composition root & graph model
 
+> **Revised after implementation (2026-08-23).** This section originally
+> specified a `src/graph/` module with a `StructureGraphBuilder` producing
+> typed nodes/edges. What actually shipped
+> (`src/strategy/strategies/smc-agent.ts`, plan
+> `docs/superpowers/plans/2026-08-22-graph-unification.md`, Tasks 1-3) is a
+> flat sequential `Strategy` function calling the existing
+> `SetupEngine`/`ExecutionPlanEngine`/`TradingAgentsPipeline`/`TradeIntentEngine`
+> in a fixed order — no graph data structure, no traversal. A graph
+> abstraction with exactly one traversal path is unjustified complexity per
+> this repo's own conventions (CLAUDE.md, CODE_QUALITY.md). The prose below
+> is left as the original design intent for historical context; treat the
+> actual pipeline order in `evaluateCandle` as authoritative over the
+> diagram/pseudocode that follows.
+
 `engine.ts` remains the single composition root. A new `src/graph/` module
 holds the unified pipeline:
 
