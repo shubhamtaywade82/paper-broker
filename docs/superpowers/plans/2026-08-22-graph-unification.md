@@ -860,31 +860,40 @@ git commit -m "feat(engine): register the SMC agent strategy, remove classic str
 > them here would break the CLI's only backtest path with no replacement.
 > The repoint of `cli.ts` to `ReplayEngine` (spec §3, "Backtest
 > unification") is Plan 2 of 4, not this plan. This task now deletes only
-> the one file nothing else references: `src/ai/ollama.ts`. The classic
+> the file nothing else references: `src/ai/ollama.ts`. The classic
 > strategies, `SizingEngine.ts`, and `BacktestRunner.ts` stay on disk —
 > unused by the live engine (Task 5 already stopped registering them) but
 > still compiled and still serving `cli.ts`'s backtest command — until
 > Plan 2 makes the whole trio safe to delete together.
+>
+> **Second revision (same day):** `src/strategy/strategies/ollama-trend-5m.ts`
+> imports `OllamaSignalGenerator` from `ai/ollama.ts` (type-only, but
+> `tsconfig.json` has no path exclusions so it still fails typecheck on
+> deletion). Verified `BacktestRunner.ts` does NOT import
+> `ollama-trend-5m.ts` (only the 6 non-Ollama classic strategies) and
+> nothing else references `createOllamaTrendStrategy` — it is not part of
+> the `BacktestRunner`/`cli.ts` cluster, so it's safe to delete alongside
+> `ai/ollama.ts` in this same task.
 
 **Files:**
-- Delete: `src/ai/ollama.ts`
-- Modify or delete (investigate first): `test/unit/TelegramNotifier.test.ts` — only if it actually references `OllamaSignalGenerator`/`ai/ollama`, which is likely a false-positive grep match
+- Delete: `src/ai/ollama.ts`, `src/strategy/strategies/ollama-trend-5m.ts`
+- Modify or delete (investigate first): `test/unit/TelegramNotifier.test.ts` — only if it actually references `OllamaSignalGenerator`/`ai/ollama`, which is likely a false-positive grep match; `test/unit/PortedStrategies.test.ts` — only if it has a test specifically for `createOllamaTrendStrategy`
 
-**Interfaces:** None — this task only removes one now-unreferenced file.
+**Interfaces:** None — this task only removes now-unreferenced files.
 
-- [ ] **Step 1: Confirm nothing outside `ai/ollama.ts` itself still imports `OllamaSignalGenerator`**
+- [ ] **Step 1: Confirm nothing outside these two files still imports them**
 
-Run: `grep -rln "OllamaSignalGenerator\|ai/ollama\.js" src test scripts`
+Run: `grep -rln "OllamaSignalGenerator\|ai/ollama\.js\|ollama-trend-5m\|createOllamaTrendStrategy" src test scripts`
 
-Task 5 already removed `engine.ts`'s only reference. Confirm the only remaining hit is `src/ai/ollama.ts` itself (the definition) plus, possibly, a test file for it (check for `test/unit/OllamaSignalGenerator.test.ts` or similar — if one exists and tests only this class, delete it too; if none exists, skip). If any other file appears, stop and read it before proceeding — do not delete something still in use.
+Task 5 already removed `engine.ts`'s only reference. Confirm the only remaining hits are `src/ai/ollama.ts` and `src/strategy/strategies/ollama-trend-5m.ts` themselves, plus, possibly, dedicated test files for either (check for `test/unit/OllamaSignalGenerator.test.ts` or a `createOllamaTrendStrategy`-specific block inside `test/unit/PortedStrategies.test.ts` — delete/trim only what's dedicated to these two files). If any other file appears, stop and read it before proceeding — do not delete something still in use.
 
-- [ ] **Step 2: Delete the file**
+- [ ] **Step 2: Delete the files**
 
 ```bash
-git rm src/ai/ollama.ts
+git rm src/ai/ollama.ts src/strategy/strategies/ollama-trend-5m.ts
 ```
 
-If Step 1 found a dedicated test file for it, `git rm` that too.
+If Step 1 found dedicated test coverage for either, remove that too (delete the file if it tests only these, or remove just the relevant test block if the file covers other things too).
 
 - [ ] **Step 3: Handle `test/unit/TelegramNotifier.test.ts`**
 
