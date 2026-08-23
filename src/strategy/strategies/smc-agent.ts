@@ -7,9 +7,14 @@ import type { MarketStructureEngine } from '../../market/structure/MarketStructu
 import type { SmcLocationEngine } from '../../market/smc/SmcLocationEngine.js';
 import type { ExecutionPlanEngine } from '../../market/execution/ExecutionPlanEngine.js';
 import type { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
-import type { MarketFactContext, TradingAgentsPipeline } from '../../ai/tradingAgents.js';
+import type { MarketFactContext } from '../../ai/tradingAgents.js';
+import type { CycleRecord } from '../../ai/schemas.js';
 import type { AccountState, Instrument, Position } from '../../broker/types.js';
 import { toRiskAccountState, toPortfolioPositions } from '../../trading/risk/adapters.js';
+
+export interface AgentDebatePipeline {
+  runCycle(ctx: MarketFactContext): Promise<CycleRecord>;
+}
 
 export function tradeSignalToSignalInput(
   ts: TradeSignal,
@@ -43,7 +48,7 @@ export interface SmcAgentStrategyDeps {
   smcEngine: SmcLocationEngine;
   planEngine: ExecutionPlanEngine;
   tradeIntentEngine: TradeIntentEngine;
-  tradingAgentsPipeline: TradingAgentsPipeline;
+  tradingAgentsPipeline: AgentDebatePipeline;
   getInstrument: (symbol: string) => Instrument | undefined;
   symbols?: string[];
 }
