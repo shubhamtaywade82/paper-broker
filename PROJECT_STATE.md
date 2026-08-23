@@ -26,7 +26,7 @@ This project is a paper trading engine with real Binance market data and simulat
 | Component       | Status      | Notes                                    |
 |-----------------|-------------|------------------------------------------|
 | Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`                |
-| Agent loop      | partial     | OllamaSignalGenerator for trend signals  |
+| Agent loop      | implemented | `TradingAgentsPipeline` multi-agent debate drives every live signal via `createSmcAgentStrategy` (registered in `engine.ts`); also reachable manually via `/api/v1/agents/cycle` |
 | MCP             | planned     | Planned for tool orchestration           |
 | Trading supervision | implemented | LiveTradingGuard, DivergenceGuard, Risk check |
 
@@ -82,15 +82,18 @@ These must NOT change without an ADR:
 - ✅ Funding payments simulation
 - ✅ Fee tracking (taker/maker)
 - ✅ SQLite event persistence (append-only + queryable tables)
-- ✅ Strategy engine with cooldowns and conflict rules
-- ✅ Signal executor with sizing logic
+- ✅ Strategy engine with cooldowns and conflict rules, hosting a single live strategy (`smc-agent-v1`)
+- ✅ SMC structure detection → `TradingAgentsPipeline` multi-agent debate → `TradeIntentEngine` risk gate drives every live/paper trading signal (`createSmcAgentStrategy`, wired in `engine.ts`); classic indicator strategies (EMA/RSI/breakout/momentum/grid/Ollama-trend) removed from the live loop
+- ✅ Signal executor executes pre-sized signals (quantity/leverage sourced from `signal.features`, computed upstream by the risk gate — `SignalExecutor` itself no longer contains sizing logic)
 - ✅ CLI for operational commands
-- ✅ Ollama integration for AI signals
 
 ### In Progress
 
-- 🔄 Multi-timeframe structure analysis
-- 🔄 Advanced setup detection (SMC concepts)
+- 🔄 Multi-timeframe structure analysis (`MtfStateEngine`, wired into the live SMC pipeline in `engine.ts`)
+
+### Deferred (not yet migrated to the unified pipeline)
+
+- ⏸️ `SizingEngine.ts`, the 6 non-Ollama classic strategy files, and `BacktestRunner.ts` remain on disk, unused by the live loop, and still serve `cli.ts`'s `backtest` CLI command — the CLI backtest path has not been unified with the SMC+agent pipeline
 
 ### Planned
 
@@ -107,7 +110,7 @@ These must NOT change without an ADR:
 
 ## Last Updated
 
-2025-01-XX
+2026-08-23
 
 ---
 
