@@ -850,75 +850,64 @@ git commit -m "feat(engine): register the SMC agent strategy, remove classic str
 
 ---
 
-## Task 6: Delete the retired classic-strategy code
+## Task 6: Delete the orphaned Ollama signal generator
+
+> **Revised during execution (see ledger, Task 6 entry, 2026-08-23).** The
+> original version of this task also deleted the 7 classic strategy files,
+> `SizingEngine.ts`, and `src/backtest/BacktestRunner.ts`. That was wrong:
+> `src/cli.ts`'s `backtest` subcommand still imports `BacktestRunner.ts`,
+> which in turn imports the classic strategies and `SizingEngine` — deleting
+> them here would break the CLI's only backtest path with no replacement.
+> The repoint of `cli.ts` to `ReplayEngine` (spec §3, "Backtest
+> unification") is Plan 2 of 4, not this plan. This task now deletes only
+> the one file nothing else references: `src/ai/ollama.ts`. The classic
+> strategies, `SizingEngine.ts`, and `BacktestRunner.ts` stay on disk —
+> unused by the live engine (Task 5 already stopped registering them) but
+> still compiled and still serving `cli.ts`'s backtest command — until
+> Plan 2 makes the whole trio safe to delete together.
 
 **Files:**
-- Delete: `src/strategy/strategies/ema-trend-5m.ts`, `src/strategy/strategies/breakout-15m.ts`, `src/strategy/strategies/rsi-mean-reversion-5m.ts`, `src/strategy/strategies/momentum-5m.ts`, `src/strategy/strategies/grid-15m.ts`, `src/strategy/strategies/mean-reversion-5m.ts`, `src/strategy/strategies/ollama-trend-5m.ts`, `src/strategy/SizingEngine.ts`, `src/ai/ollama.ts`
-- Modify or delete (investigate first): `test/unit/PortedStrategies.test.ts`, `test/unit/StrategyEngine.test.ts`, `test/unit/TelegramNotifier.test.ts`, `src/backtest/BacktestRunner.ts` (also deleted whole — see below)
+- Delete: `src/ai/ollama.ts`
+- Modify or delete (investigate first): `test/unit/TelegramNotifier.test.ts` — only if it actually references `OllamaSignalGenerator`/`ai/ollama`, which is likely a false-positive grep match
 
-**Interfaces:** None — this task only removes now-unreferenced code. `src/backtest/BacktestRunner.ts` is deleted here (not Task 7) because it imports the classic strategies being deleted in this task and would otherwise fail to compile.
+**Interfaces:** None — this task only removes one now-unreferenced file.
 
-- [ ] **Step 1: Confirm nothing outside the deletion set still imports these files**
+- [ ] **Step 1: Confirm nothing outside `ai/ollama.ts` itself still imports `OllamaSignalGenerator`**
 
-Run: `grep -rln "SizingEngine\|ema-trend-5m\|breakout-15m\|rsi-mean-reversion-5m\|momentum-5m\|grid-15m\|mean-reversion-5m\|ollama-trend-5m\|ai/ollama\.js\|OllamaSignalGenerator\|BacktestRunner" src test scripts`
+Run: `grep -rln "OllamaSignalGenerator\|ai/ollama\.js" src test scripts`
 
-Confirm the only remaining hits are the files listed for deletion/modification above (Tasks 3-5 already removed the `engine.ts`/`SignalExecutor.ts` references). If any other file appears, stop and read it before proceeding — do not delete something still in use.
+Task 5 already removed `engine.ts`'s only reference. Confirm the only remaining hit is `src/ai/ollama.ts` itself (the definition) plus, possibly, a test file for it (check for `test/unit/OllamaSignalGenerator.test.ts` or similar — if one exists and tests only this class, delete it too; if none exists, skip). If any other file appears, stop and read it before proceeding — do not delete something still in use.
 
-- [ ] **Step 2: Delete the strategy, sizing, and Ollama-signal-generator files**
+- [ ] **Step 2: Delete the file**
 
 ```bash
-git rm src/strategy/strategies/ema-trend-5m.ts \
-       src/strategy/strategies/breakout-15m.ts \
-       src/strategy/strategies/rsi-mean-reversion-5m.ts \
-       src/strategy/strategies/momentum-5m.ts \
-       src/strategy/strategies/grid-15m.ts \
-       src/strategy/strategies/mean-reversion-5m.ts \
-       src/strategy/strategies/ollama-trend-5m.ts \
-       src/strategy/SizingEngine.ts \
-       src/ai/ollama.ts \
-       src/backtest/BacktestRunner.ts
+git rm src/ai/ollama.ts
 ```
 
-- [ ] **Step 3: Handle `test/unit/PortedStrategies.test.ts`**
+If Step 1 found a dedicated test file for it, `git rm` that too.
 
-Run: `cat test/unit/PortedStrategies.test.ts`
+- [ ] **Step 3: Handle `test/unit/TelegramNotifier.test.ts`**
 
-If every test in the file imports and exercises only the deleted classic strategies, delete it: `git rm test/unit/PortedStrategies.test.ts`. If it also covers strategy logic that survives (unlikely, given the name), keep only those tests and remove the rest.
+Run: `grep -n "Ollama" test/unit/TelegramNotifier.test.ts`
 
-- [ ] **Step 4: Handle `test/unit/StrategyEngine.test.ts`**
+This file's earlier grep match is almost certainly incidental (e.g. a symbol list or unrelated substring), not an actual import of `ai/ollama.ts` — `TelegramNotifier` has no dependency on it. If the grep above returns nothing, no change needed. If it does return an actual import, remove just that reference.
 
-Run: `cat test/unit/StrategyEngine.test.ts`
-
-This file tests `StrategyEngine` itself (cooldowns, conflict rules, dispatch) — keep it. If any test constructs a classic strategy (e.g. `createEmaTrendStrategy`) as its test fixture, replace that fixture with an inline minimal `Strategy` object literal, e.g.:
-
-```typescript
-const testStrategy: Strategy = {
-  id: 'test-strategy', name: 'Test', enabled: true, symbols: ['BTCUSDT'],
-  intervals: ['5m'], priority: 1, cooldownMs: 0,
-  onCandleClose: () => ({ strategyId: 'test-strategy', symbol: 'BTCUSDT', action: 'OPEN_LONG', confidence: 0.9, ttlMs: 60000, features: {} }),
-};
-```
-
-- [ ] **Step 5: Handle `test/unit/TelegramNotifier.test.ts`**
-
-Run: `grep -n "Ollama\|SizingEngine\|ema-trend\|breakout-15m\|rsi-mean-reversion\|momentum-5m\|grid-15m\|mean-reversion-5m" test/unit/TelegramNotifier.test.ts`
-
-This file's earlier grep match is almost certainly incidental (e.g. a symbol list or unrelated substring), not an actual import of deleted code — `TelegramNotifier` has no dependency on strategies. If the grep above returns nothing, no change needed. If it does return an actual import, remove just that reference.
-
-- [ ] **Step 6: Run the full test suite and typecheck**
+- [ ] **Step 4: Run the full test suite and typecheck**
 
 Run: `pnpm typecheck && pnpm vitest run`
-Expected: PASS — no import errors, no orphaned test failures.
+Expected: PASS — no import errors, no orphaned test failures. Note: `src/strategy/strategies/*` classic strategy files, `SizingEngine.ts`, and `BacktestRunner.ts` remain in the tree and still compile/test cleanly — they are simply unused by `engine.ts` after Task 5, not deleted.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "refactor: delete classic indicator strategies, SizingEngine, OllamaSignalGenerator, BacktestRunner
+git commit -m "refactor(ai): delete orphaned OllamaSignalGenerator
 
-Superseded by the SMC structure + multi-agent debate pipeline
-(createSmcAgentStrategy) wired into engine.ts in the previous commit.
-Per docs/decisions/0004-unified-agentic-decision-pipeline.md."
+Superseded by TradingAgentsPipeline, wired into engine.ts via
+createSmcAgentStrategy (Task 5). The classic indicator strategies,
+SizingEngine, and BacktestRunner remain — cli.ts's backtest command
+still depends on them until Plan 2 (backtest unification) repoints
+it to ReplayEngine. Per docs/decisions/0004-unified-agentic-decision-pipeline.md."
 ```
 
 ---
