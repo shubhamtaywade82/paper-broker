@@ -1,7 +1,7 @@
+import path from 'node:path';
 import type { Instrument } from '../broker/types.js';
 import { PaperBroker } from '../broker/PaperBroker.js';
 import { StrategyEngine } from '../strategy/StrategyEngine.js';
-import { SizingEngine } from '../strategy/SizingEngine.js';
 import { OrderFactory } from '../strategy/OrderFactory.js';
 import { SignalExecutor } from '../strategy/SignalExecutor.js';
 import { SignalRepository } from '../persistence/repositories/SignalRepository.js';
@@ -97,7 +97,7 @@ export class BacktestRunner {
     this.config = config;
     this.db = new DatabaseManager(config.dataDir);
     this.signalRepo = new SignalRepository(this.db.raw);
-    this.eventLog = new EventLog(config.dataDir);
+    this.eventLog = new EventLog(path.join(config.dataDir, 'events.jsonl'));
     this.snapshotStore = new SnapshotStore(config.dataDir);
 
     this.broker = new PaperBroker({
@@ -110,15 +110,10 @@ export class BacktestRunner {
       marketSlippageBps: config.marketSlippageBps ?? 2,
     });
 
-    const sizingEngine = new SizingEngine({
-      riskPerTrade: 0.005,
-      maxNotional: 5000,
-    });
-    const orderFactory = new OrderFactory();
+    const orderFactory = new OrderFactory({ defaultLeverage: 5 });
 
     this.signalExecutor = new SignalExecutor({
       broker: this.broker,
-      sizing: sizingEngine,
       orderFactory,
       signals: this.signalRepo,
       getMarketState: (s) => this.broker.getMarket(s),

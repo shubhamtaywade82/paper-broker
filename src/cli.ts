@@ -6,6 +6,10 @@ import { BinanceStreamHandler } from './binance/streams.js';
 import { MarketStateManager } from './market/MarketState.js';
 import { startEngine } from './engine.js';
 import { runBacktest, type BacktestConfig } from './backtest/BacktestRunner.js';
+import { ReplayEngine } from './research/replay/ReplayEngine.js';
+import { BinanceHistoricalFetcher } from './research/replay/BinanceHistoricalFetcher.js';
+import { DEFAULT_PAPER_CONFIG } from './broker/paper/SmcPaperBroker.js';
+import type { ReplayConfig } from './research/replay/types.js';
 
 const SYMBOLS = symbols;
 const TIMEFRAMES = ['1m', '5m', '15m'];
@@ -67,23 +71,92 @@ async function runMonitor(): Promise<void> {
   process.on('SIGTERM', () => stop('SIGTERM'));
 }
 
+async function runSmcBacktest(symbol: string, days: number): Promise<void> {
+  console.log('='.repeat(60));
+  console.log('SMC INSTITUTIONAL REPLAY BACKTEST');
+  console.log('='.repeat(60));
+  console.log(`Symbol:     ${symbol}`);
+  console.log(`Duration:   ${days} days`);
+  console.log(`Initial:    ${env.PAPER_STARTING_USDT} USDT`);
+  console.log('='.repeat(60));
+  console.log(`[Replay] Fetching historical klines & funding from Binance...`);
+
+  const dataset = await BinanceHistoricalFetcher.loadSolusdtDataset(days, symbol);
+  const now = Date.now();
+  const startTime = now - days * 24 * 60 * 60 * 1000;
+
+  const config: ReplayConfig = {
+    symbol,
+    startTime,
+    endTime: now,
+    initialEquity: env.PAPER_STARTING_USDT,
+    riskPerTradePct: 0.02,
+    maxDailyLossPct: 0.05,
+    maxOpenPositions: 3,
+    defaultLeverage: 5,
+    strategyVersion: 'v1',
+    minConfluenceScore: 40,
+    paperBrokerConfig: DEFAULT_PAPER_CONFIG,
+  };
+
+  console.log(`[Replay] Executing point-in-time multi-timeframe simulation...`);
+  const report = ReplayEngine.runBacktest(dataset, config);
+
+  console.log('\n' + '='.repeat(60));
+  console.log('SMC BACKTEST REPORT');
+  console.log('='.repeat(60));
+  console.log(`Period:         ${new Date(report.startTime).toISOString()} → ${new Date(report.endTime).toISOString()} (${report.durationDays}d)`);
+  console.log(`Initial Equity: $${report.initialEquity.toFixed(2)}`);
+  console.log(`Final Equity:   $${report.finalEquity.toFixed(2)}`);
+  console.log(`Total Return:   $${report.totalNetPnl.toFixed(2)} (${report.totalReturnPct.toFixed(2)}%)`);
+  console.log(`Total Trades:   ${report.coreMetrics.totalTrades} (Wins: ${report.coreMetrics.winningTrades}, Losses: ${report.coreMetrics.losingTrades})`);
+  console.log(`Win Rate:       ${(report.coreMetrics.winRate * 100).toFixed(1)}%`);
+  console.log(`Profit Factor:  ${report.coreMetrics.profitFactor === Infinity ? '∞' : report.coreMetrics.profitFactor.toFixed(2)}`);
+  console.log(`Max Drawdown:   $${report.coreMetrics.maxDrawdown.toFixed(2)}`);
+  console.log(`Average R:      ${report.coreMetrics.averageR.toFixed(2)}R`);
+
+  if (report.archetypeBreakdown.length > 0) {
+    console.log('\nArchetype Breakdown:');
+    for (const a of report.archetypeBreakdown) {
+      console.log(`  ${a.archetype}: trades=${a.totalTrades}, winRate=${(a.winRate * 100).toFixed(1)}%, netPnl=$${a.netPnl.toFixed(2)}, avgR=${a.averageR.toFixed(2)}R`);
+    }
+  }
+
+  if (report.monteCarlo) {
+    console.log('\nMonte Carlo Risk:');
+    console.log(`  Iterations:        ${report.monteCarlo.iterations}`);
+    console.log(`  P95 Max Drawdown:  $${report.monteCarlo.maxDrawdownP95.toFixed(2)}`);
+    console.log(`  Ruin Probability:  ${(report.monteCarlo.probabilityOfRuin * 100).toFixed(1)}%`);
+  }
+  console.log('='.repeat(60));
+}
+
 async function runBacktestCmd(): Promise<void> {
   const args = process.argv.slice(3);
+  const engineStr = args.find(a => a.startsWith('--engine='))?.split('=')[1] ?? 'smc';
+  const symbolStr = args.find(a => a.startsWith('--symbol='))?.split('=')[1] ?? 'SOLUSDT';
+  const daysStr = args.find(a => a.startsWith('--days='))?.split('=')[1];
   const startStr = args.find(a => a.startsWith('--start='))?.split('=')[1];
   const endStr = args.find(a => a.startsWith('--end='))?.split('=')[1];
   const stratStr = args.find(a => a.startsWith('--strategies='))?.split('=')[1];
+
+  if (engineStr === 'smc') {
+    const days = daysStr ? parseInt(daysStr, 10) : 3;
+    await runSmcBacktest(symbolStr.toUpperCase(), days);
+    process.exit(0);
+  }
 
   const startTime = startStr ? new Date(startStr).getTime() : Date.now() - 7 * 24 * 60 * 60 * 1000;
   const endTime = endStr ? new Date(endStr).getTime() : Date.now();
   const strategies = stratStr ? stratStr.split(',') : ['all'];
 
   console.log('='.repeat(60));
-  console.log('BACKTEST MODE');
+  console.log('INDICATOR STRATEGY BACKTEST');
   console.log('='.repeat(60));
-  console.log(`Start: ${new Date(startTime).toISOString()}`);
-  console.log(`End:   ${new Date(endTime).toISOString()}`);
+  console.log(`Start:      ${new Date(startTime).toISOString()}`);
+  console.log(`End:        ${new Date(endTime).toISOString()}`);
   console.log(`Strategies: ${strategies.join(', ')}`);
-  console.log(`Symbols: ${SYMBOLS.join(', ')}`);
+  console.log(`Symbols:    ${SYMBOLS.join(', ')}`);
   console.log('='.repeat(60));
 
   const config: BacktestConfig = {
@@ -101,7 +174,7 @@ async function runBacktestCmd(): Promise<void> {
   console.log('\n' + '='.repeat(60));
   console.log('BACKTEST RESULTS');
   console.log('='.repeat(60));
-  console.log(`Period: ${new Date(result.startTime).toISOString()} → ${new Date(result.endTime).toISOString()}`);
+  console.log(`Period:         ${new Date(result.startTime).toISOString()} → ${new Date(result.endTime).toISOString()}`);
   console.log(`Initial Equity: ${result.initialEquity.toFixed(4)} USDT`);
   console.log(`Final Equity:   ${result.finalEquity.toFixed(4)} USDT`);
   console.log(`Total Return:   ${result.totalReturn.toFixed(4)} USDT (${result.totalReturnPct.toFixed(2)}%)`);
@@ -137,6 +210,8 @@ switch (command) {
     break;
   default:
     console.log('Usage: node dist/cli.js <trade|monitor|backtest>');
-    console.log('  backtest options: --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,breakout,...');
+    console.log('  backtest options:');
+    console.log('    SMC engine (default):        --engine=smc --symbol=SOLUSDT --days=3');
+    console.log('    Legacy indicator engine:     --engine=indicators --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,...');
     process.exit(1);
 }

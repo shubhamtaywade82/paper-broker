@@ -11,9 +11,18 @@ export class RegimeAnalyzer {
       'LOW_VOLATILITY',
     ];
 
-    // Partition trades across regimes deterministically
+    const regimeGroups = new Map<RegimeMetrics['regime'], PaperTradeRecord[]>();
+    for (const r of regimes) {
+      regimeGroups.set(r, []);
+    }
+
+    for (const t of trades) {
+      const regime = this.classifyTradeRegime(t);
+      regimeGroups.get(regime)?.push(t);
+    }
+
     return regimes.map((regime) => {
-      const filtered = trades.filter((_t, idx) => idx % regimes.length === regimes.indexOf(regime));
+      const filtered = regimeGroups.get(regime) ?? [];
       let winCount = 0;
       let netPnl = 0;
       let grossProfit = 0;
@@ -44,5 +53,31 @@ export class RegimeAnalyzer {
         averageR,
       };
     });
+  }
+
+  private static classifyTradeRegime(t: PaperTradeRecord): RegimeMetrics['regime'] {
+    const st = (t.setupType ?? '').toUpperCase();
+    const riskDist = Math.abs(t.entryPrice - t.initialStopLoss);
+
+    // High volatility if adverse excursion exceeds 1.5x risk distance
+    if (riskDist > 0 && t.maxAdverseExcursion > riskDist * 1.5) {
+      return 'HIGH_VOLATILITY';
+    }
+
+    // Range / liquidity sweep setups
+    if (st.includes('SWEEP') || st.includes('RANGE') || st.includes('EQUAL')) {
+      return 'RANGE';
+    }
+
+    // Trend continuation / trend setups
+    if (st.includes('CHOCH_CONTINUATION') || st.includes('BOS') || st.includes('TREND')) {
+      return t.direction === 'LONG' ? 'TREND_UP' : 'TREND_DOWN';
+    }
+
+    // Directional fallback
+    if (t.direction === 'LONG') return 'TREND_UP';
+    if (t.direction === 'SHORT') return 'TREND_DOWN';
+
+    return 'RANGE';
   }
 }

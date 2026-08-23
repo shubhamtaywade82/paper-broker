@@ -9,6 +9,7 @@ import { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
 import { SmcPaperBroker } from '../../broker/paper/SmcPaperBroker.js';
 import type { HistoricalDataset } from '../replay/types.js';
 import { HistoricalDataLoader } from '../replay/HistoricalDataLoader.js';
+import { getInstrumentConfig } from '../../config/instruments.js';
 import type { DiagnosticCandidateTrace, DiagnosticReport, FunnelStageStats } from './types.js';
 
 interface FunnelAccumulator {
@@ -74,7 +75,11 @@ export class DiagnosticFunnelEngine {
     traces: DiagnosticCandidateTrace[],
     scoreDist: Record<string, number>
   ): void {
-    const allCandles = [...dataset.candles4h, ...dataset.candles1h, ...dataset.candles15m, ...dataset.candles5m].sort((a, b) => a.openTime - b.openTime);
+    const allCandles = [
+      ...dataset.candles4h, ...dataset.candles1h,
+      ...dataset.candles15m, ...dataset.candles5m,
+      ...(dataset.candles1m ?? []),
+    ].sort((a, b) => a.openTime - b.openTime);
 
     for (const candle of allCandles) {
       store.upsertCandle(candle);
@@ -362,21 +367,6 @@ export class DiagnosticFunnelEngine {
   }
 
   private static makeDefaultInstrument(symbol: string) {
-    return {
-      symbol,
-      baseAsset: 'SOL',
-      quoteAsset: 'USDT',
-      contractType: 'PERPETUAL',
-      status: 'TRADING',
-      tickSize: '0.01',
-      stepSize: '0.001',
-      minQty: '0.001',
-      minNotional: '5.0',
-      pricePrecision: 2,
-      quantityPrecision: 3,
-      maintenanceMarginRate: '0.005',
-      createdAtUtc: new Date().toISOString(),
-      updatedAtUtc: new Date().toISOString(),
-    };
+    return getInstrumentConfig(symbol);
   }
 }

@@ -17,6 +17,7 @@ import { MonteCarloSimulator } from '../analytics/MonteCarloSimulator.js';
 import { StatisticalValidationEngine } from '../analytics/StatisticalValidationEngine.js';
 import { HistoricalDataLoader } from './HistoricalDataLoader.js';
 import { DEFAULT_SETUP_CONFIG } from '../../market/setup/ConfluenceScorer.js';
+import { getInstrumentConfig } from '../../config/instruments.js';
 import type { BacktestReport, HistoricalDataset, ReplayConfig } from './types.js';
 
 export class ReplayEngine {
@@ -63,13 +64,28 @@ export class ReplayEngine {
     signalsMap: Map<string, TradeSignal>,
     inst: ReturnType<typeof this.makeDefaultInstrument>
   ): void {
-    const allCandles = [...dataset.candles4h, ...dataset.candles1h, ...dataset.candles15m, ...dataset.candles5m]
-      .sort((a, b) => a.openTime - b.openTime);
+    // Include 1m candles for granular intrabar fill evaluation
+    const allCandles = [
+      ...dataset.candles4h, ...dataset.candles1h,
+      ...dataset.candles15m, ...dataset.candles5m,
+      ...(dataset.candles1m ?? []),
+    ].sort((a, b) => a.openTime - b.openTime);
+
+    // Prepare sorted funding rates for interleaved application
+    const fundingRates = dataset.fundingRates ?? [];
+    let fundingIdx = 0;
 
     for (const candle of allCandles) {
       store.upsertCandle(candle);
       broker.processCandle(candle);
 
+      // Apply funding rates that fall before or at this candle timestamp
+      while (fundingIdx < fundingRates.length && fundingRates[fundingIdx]!.timestamp <= candle.openTime) {
+        broker.processFunding(dataset.symbol, fundingRates[fundingIdx]!.fundingRate, fundingRates[fundingIdx]!.timestamp);
+        fundingIdx++;
+      }
+
+      // Strategy evaluation only on 5m candle closes (not 1m)
       if (candle.interval === '5m') {
         const setups = setupEngine.getReadySetups(dataset.symbol, candle.openTime);
         const struct = structureEngine.computeMultiTimeframeStructure(dataset.symbol, candle.openTime);
@@ -133,21 +149,6 @@ export class ReplayEngine {
   }
 
   private static makeDefaultInstrument(symbol: string) {
-    return {
-      symbol,
-      baseAsset: 'SOL',
-      quoteAsset: 'USDT',
-      contractType: 'PERPETUAL',
-      status: 'TRADING',
-      tickSize: '0.01',
-      stepSize: '0.001',
-      minQty: '0.001',
-      minNotional: '5.0',
-      pricePrecision: 2,
-      quantityPrecision: 3,
-      maintenanceMarginRate: '0.005',
-      createdAtUtc: new Date().toISOString(),
-      updatedAtUtc: new Date().toISOString(),
-    };
+    return getInstrumentConfig(symbol);
   }
 }

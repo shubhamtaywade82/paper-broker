@@ -394,6 +394,7 @@ export class ApiServer {
       }
       return {
         id: row.id,
+        runId: row.id,
         symbol: row.symbol,
         start_time: row.start_time,
         end_time: row.end_time,

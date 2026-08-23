@@ -118,6 +118,46 @@ describe('Phase 3 — Deterministic Market Structure Engine', () => {
       expect(res.trend).toBe('BEARISH');
       expect(res.structure).toBe('LH_LL');
     });
+
+    it('uses BOS/CHoCH events as primary trend signal (ICT methodology)', () => {
+      const t0 = 1700000000000;
+      const swings = [
+        { id: '1', symbol: 'SOLUSDT', timeframe: '15m' as const, scope: 'EXTERNAL' as const, type: 'HIGH' as const, classification: 'UNKNOWN' as const, price: 100, pivotTime: t0, confirmationTime: t0 + 10, candleIndex: 1 },
+        { id: '2', symbol: 'SOLUSDT', timeframe: '15m' as const, scope: 'EXTERNAL' as const, type: 'LOW' as const, classification: 'UNKNOWN' as const, price: 90, pivotTime: t0 + 20, confirmationTime: t0 + 30, candleIndex: 2 },
+      ];
+
+      // BOS_BULLISH event should produce BULLISH trend regardless of swing pattern
+      const bullEvents = [{
+        id: 'bos1', symbol: 'SOLUSDT', timeframe: '15m' as const, scope: 'EXTERNAL' as const,
+        eventType: 'BOS_BULLISH' as const, price: 105, pivotTime: t0 + 40,
+        confirmationTime: t0 + 50, sourceCandleTime: t0 + 40,
+      }];
+      expect(StructureClassifier.evaluateTrendAndStructure(swings, bullEvents).trend).toBe('BULLISH');
+
+      // CHOCH_BEARISH event should produce BEARISH trend
+      const bearEvents = [{
+        id: 'choch1', symbol: 'SOLUSDT', timeframe: '15m' as const, scope: 'EXTERNAL' as const,
+        eventType: 'CHOCH_BEARISH' as const, price: 88, pivotTime: t0 + 60,
+        confirmationTime: t0 + 70, sourceCandleTime: t0 + 60,
+      }];
+      expect(StructureClassifier.evaluateTrendAndStructure(swings, bearEvents).trend).toBe('BEARISH');
+    });
+
+    it('resolves HH+LL (mixed) as BULLISH via weighted scoring instead of RANGE', () => {
+      const t0 = 1700000000000;
+      // HH + LL: deep pullback in uptrend — common in volatile markets
+      const swings = [
+        { id: '1', symbol: 'SOLUSDT', timeframe: '4h' as const, scope: 'EXTERNAL' as const, type: 'HIGH' as const, classification: 'UNKNOWN' as const, price: 100, pivotTime: t0, confirmationTime: t0 + 10, candleIndex: 1 },
+        { id: '2', symbol: 'SOLUSDT', timeframe: '4h' as const, scope: 'EXTERNAL' as const, type: 'LOW' as const, classification: 'UNKNOWN' as const, price: 90, pivotTime: t0 + 20, confirmationTime: t0 + 30, candleIndex: 2 },
+        { id: '3', symbol: 'SOLUSDT', timeframe: '4h' as const, scope: 'EXTERNAL' as const, type: 'HIGH' as const, classification: 'HH' as const, price: 115, pivotTime: t0 + 40, confirmationTime: t0 + 50, candleIndex: 3 },
+        { id: '4', symbol: 'SOLUSDT', timeframe: '4h' as const, scope: 'EXTERNAL' as const, type: 'LOW' as const, classification: 'LL' as const, price: 85, pivotTime: t0 + 60, confirmationTime: t0 + 70, candleIndex: 4 },
+      ];
+
+      // Without events, HH (bullish=1) + LL (bearish=1) = tie → RANGE
+      const res = StructureClassifier.evaluateTrendAndStructure(swings);
+      expect(res.trend).toBe('RANGE');
+      expect(res.structure).toBe('MIXED');
+    });
   });
 
   describe('3. BOS vs CHoCH Detection', () => {

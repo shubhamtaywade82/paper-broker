@@ -102,6 +102,30 @@ describe('Phase 9 — Research Analytics Engine', () => {
     expect(b65?.winRate).toBe(0);
   });
 
+  it('classifies trade performance by market regime accurately', () => {
+    const trades: PaperTradeRecord[] = [
+      makeMockTrade('T1', 'CHOCH_CONTINUATION_LONG', 'LONG', 200, 2.0),
+      makeMockTrade('T2', 'CHOCH_CONTINUATION_SHORT', 'SHORT', -100, -1.0),
+      makeMockTrade('T3', 'SSL_SWEEP_REVERSAL_LONG', 'LONG', 150, 1.5),
+    ];
+
+    const regimes = RegimeAnalyzer.evaluateRegimes(trades);
+    expect(regimes.length).toBe(5);
+
+    const trendUp = regimes.find((r) => r.regime === 'TREND_UP');
+    const trendDown = regimes.find((r) => r.regime === 'TREND_DOWN');
+    const range = regimes.find((r) => r.regime === 'RANGE');
+
+    expect(trendUp?.totalTrades).toBe(1);
+    expect(trendUp?.netPnl).toBe(200);
+
+    expect(trendDown?.totalTrades).toBe(1);
+    expect(trendDown?.netPnl).toBe(-100);
+
+    expect(range?.totalTrades).toBe(1);
+    expect(range?.netPnl).toBe(150);
+  });
+
   it('runs Monte Carlo simulations and derives drawdown confidence intervals', () => {
     const trades: PaperTradeRecord[] = [
       makeMockTrade('T1', 'SSL_SWEEP_REVERSAL_LONG', 'LONG', 200),
