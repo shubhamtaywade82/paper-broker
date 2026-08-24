@@ -18,7 +18,6 @@ import {
   ArrowDownRight,
   Zap,
   Play,
-  CheckCircle2,
 } from 'lucide-react';
 
 export function DashboardView() {
@@ -35,17 +34,20 @@ export function DashboardView() {
   } = useStore();
 
   useDashboard();
-  useCycles(selectedSymbol);
+  useCycles();
   useRiskSummary();
   usePerformance('30d');
 
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
   const triggerCycle = useTriggerCycle();
 
+  const [agentStreamFilter, setAgentStreamFilter] = React.useState<string>('ALL');
+
   const latestCycle = cycles.length > 0 ? cycles[0] : null;
 
   // Convert cycles into chart markers for visual context
   const chartMarkers: ChartMarker[] = cycles
+    .filter((c) => !c.symbol || c.symbol === selectedSymbol)
     .slice(0, 8)
     .filter((c) => c.startedAt && c.startedAt > 0)
     .map((c): ChartMarker => ({
@@ -254,31 +256,155 @@ export function DashboardView() {
           )}
         </div>
 
-        {/* Live Activity Stream (1 col) */}
+        {/* Agent Flow Stream (1 col) */}
         <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between border-b border-[#1b2537] pb-2.5 mb-3">
-            <h3 className="font-bold text-white uppercase text-xs">Live Stream</h3>
-            <span className="text-[10px] text-gray-500">REALTIME</span>
+          <div className="flex flex-col gap-2 border-b border-[#1b2537] pb-2.5 mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-purple-400" />
+                <h3 className="font-bold text-white uppercase text-xs">Agent Flow Stream</h3>
+              </div>
+              <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold text-[9px] flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                FLOW
+              </span>
+            </div>
+
+            {/* Quick Symbol Filter Pills */}
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {['ALL', 'SOLUSDT', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT'].map((sym) => (
+                <button
+                  key={sym}
+                  onClick={() => setAgentStreamFilter(sym)}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                    agentStreamFilter === sym
+                      ? 'bg-purple-600 text-white shadow'
+                      : 'bg-[#141d2e] text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {sym.replace('USDT', '')}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="space-y-2 overflow-y-auto max-h-56">
-            {liveEvents.slice(0, 5).map((evt, idx) => (
-              <div
-                key={evt.id || idx}
-                className="bg-[#080c14] border border-[#1b2537] p-2 rounded-lg flex items-center justify-between text-[11px]"
-              >
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span className="text-gray-300 truncate max-w-[170px]">
-                    {String(evt.payload['symbol'] || evt.type)}: {String(evt.payload['action'] || evt.type)}
+          {(() => {
+            const rawAgentEvents = liveEvents.filter(
+              (e) => e.type !== 'trade' && e.type !== 'book' && e.stream !== 'market'
+            );
+
+            const filteredLive = agentStreamFilter === 'ALL'
+              ? rawAgentEvents
+              : rawAgentEvents.filter((e) => String(e.payload['symbol'] || '').includes(agentStreamFilter.replace('USDT', '')));
+
+            const filteredCycles = agentStreamFilter === 'ALL'
+              ? cycles
+              : cycles.filter((c) => c.symbol === agentStreamFilter || c.symbol.includes(agentStreamFilter.replace('USDT', '')));
+
+            if (filteredLive.length === 0 && filteredCycles.length > 0) {
+              return (
+                <div className="space-y-2 overflow-y-auto max-h-56">
+                  {filteredCycles.slice(0, 6).map((c, idx) => (
+                    <div
+                      key={c.cycleId || idx}
+                      className="bg-[#080c14] border border-[#1b2537] p-2.5 rounded-lg text-[11px] space-y-1 hover:border-purple-500/30 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300">
+                            AGENT CYCLE
+                          </span>
+                          <span className="font-bold text-white">{c.symbol}</span>
+                          <span
+                            className={`px-1 py-0.2 rounded text-[9px] font-bold ${
+                              c.action?.includes('LONG') || c.action?.includes('BUY')
+                                ? 'text-emerald-400'
+                                : c.action?.includes('SHORT') || c.action?.includes('SELL')
+                                ? 'text-red-400'
+                                : 'text-gray-400'
+                            }`}
+                          >
+                            {c.action || 'HOLD'}
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-gray-500">
+                          {c.completedAt || c.startedAt
+                            ? new Date(c.completedAt || c.startedAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })
+                            : 'RECENT'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 line-clamp-1">
+                        {c.rationale || c.verdict || `Conf: ${(Number(c.confidence ?? 0) * 100).toFixed(0)}%`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+
+            if (filteredLive.length === 0) {
+              return (
+                <div className="py-8 text-center flex flex-col items-center justify-center space-y-2">
+                  <Bot className="w-7 h-7 text-purple-400/50 animate-pulse" />
+                  <span className="text-xs text-gray-300 font-semibold">Agent Stream Active</span>
+                  <span className="text-[10px] text-gray-500 max-w-[200px]">
+                    Evaluating all pairs • Listening for candle events &amp; adaptive regime dynamics
                   </span>
                 </div>
-                <span className="text-[9px] text-gray-500 shrink-0">
-                  {new Date(evt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </span>
+              );
+            }
+
+            return (
+              <div className="space-y-2 overflow-y-auto max-h-56">
+                {filteredLive.slice(0, 6).map((evt, idx) => {
+                  const sym = String(evt.payload['symbol'] || '');
+                  const action = String(evt.payload['action'] || evt.type);
+                  const detail = String(evt.payload['detail'] || evt.payload['reasoning'] || evt.payload['message'] || '');
+                  const isOrder = evt.type === 'order';
+                  const isRisk = evt.type === 'risk';
+
+                  return (
+                    <div
+                      key={evt.id || idx}
+                      className="bg-[#080c14] border border-[#1b2537] p-2.5 rounded-lg text-[11px] space-y-1 hover:border-purple-500/30 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              isOrder
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : isRisk
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : 'bg-purple-500/20 text-purple-300'
+                            }`}
+                          >
+                            {isOrder ? 'ORDER' : isRisk ? 'RISK' : 'AGENT'}
+                          </span>
+                          {sym && <span className="font-bold text-white">{sym}</span>}
+                          <span className="text-gray-300 font-semibold">{action}</span>
+                        </div>
+                        <span className="text-[9px] text-gray-500">
+                          {new Date(evt.timestamp).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      {detail && (
+                        <p className="text-[10px] text-gray-400 line-clamp-1">{detail}</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            );
+          })()}
         </div>
       </div>
     </div>

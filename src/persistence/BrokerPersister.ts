@@ -2,11 +2,13 @@ import type Database from 'better-sqlite3';
 import type { Fill, Order, Position, BrokerPersister } from '../broker/types.js';
 
 export class SQLiteBrokerPersister implements BrokerPersister {
+  private db: Database.Database;
   private insertOrder: Database.Statement;
   private insertFill: Database.Statement;
   private insertPosition: Database.Statement;
 
   constructor(db: Database.Database) {
+    this.db = db;
     this.insertOrder = db.prepare(`
       INSERT INTO orders (
         id, client_order_id, account_id, symbol, strategy_id, signal_id,
@@ -145,5 +147,111 @@ export class SQLiteBrokerPersister implements BrokerPersister {
       updatedAtUtc: position.updatedAtUtc,
       closedAtUtc: position.closedAtUtc ?? null,
     });
+  }
+
+  loadOpenPositions(accountId = 'paper-main'): Position[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM positions
+      WHERE account_id = ? AND status = 'OPEN' AND CAST(qty AS REAL) != 0
+    `).all(accountId) as Array<{
+      account_id: string;
+      symbol: string;
+      position_side: string;
+      status: string;
+      qty: string;
+      entry_price: string;
+      unrealized_pnl: string;
+      realized_pnl: string;
+      leverage: number;
+      margin_type: string | null;
+      initial_margin: string;
+      maintenance_margin: string;
+      maintenance_margin_rate: string;
+      total_fees: string;
+      total_funding: string;
+      opened_at_utc: string | null;
+      updated_at_utc: string;
+      closed_at_utc: string | null;
+    }>;
+
+    return rows.map((r) => ({
+      accountId: r.account_id,
+      symbol: r.symbol,
+      positionSide: r.position_side as Position['positionSide'],
+      status: r.status as 'OPEN' | 'CLOSED',
+      qty: parseFloat(r.qty || '0'),
+      entryPrice: parseFloat(r.entry_price || '0'),
+      unrealizedPnl: parseFloat(r.unrealized_pnl || '0'),
+      realizedPnl: parseFloat(r.realized_pnl || '0'),
+      leverage: Number(r.leverage || 5),
+      marginType: r.margin_type as Position['marginType'],
+      initialMargin: parseFloat(r.initial_margin || '0'),
+      maintenanceMargin: parseFloat(r.maintenance_margin || '0'),
+      maintenanceMarginRate: parseFloat(r.maintenance_margin_rate || '0.005'),
+      totalFees: parseFloat(r.total_fees || '0'),
+      totalFunding: parseFloat(r.total_funding || '0'),
+      openedAtUtc: r.opened_at_utc ?? undefined,
+      updatedAtUtc: r.updated_at_utc || new Date().toISOString(),
+      closedAtUtc: r.closed_at_utc ?? undefined,
+    }));
+  }
+
+  loadOpenOrders(accountId = 'paper-main'): Order[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE account_id = ? AND status IN ('NEW', 'PARTIALLY_FILLED')
+    `).all(accountId) as Array<{
+      id: string;
+      client_order_id: string | null;
+      account_id: string;
+      symbol: string;
+      strategy_id: string | null;
+      signal_id: string | null;
+      side: string;
+      type: string;
+      time_in_force: string;
+      status: string;
+      position_side: string;
+      quantity: string;
+      filled_qty: string;
+      limit_price: string | null;
+      stop_price: string | null;
+      avg_fill_price: string;
+      leverage: number;
+      margin_type: string | null;
+      reduce_only: number;
+      post_only: number;
+      close_position: number;
+      reject_reason: string | null;
+      submitted_at_utc: string;
+      updated_at_utc: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      clientOrderId: r.client_order_id || r.id,
+      accountId: r.account_id,
+      symbol: r.symbol,
+      strategyId: r.strategy_id ?? undefined,
+      signalId: r.signal_id ?? undefined,
+      side: r.side as Order['side'],
+      type: r.type as Order['type'],
+      timeInForce: r.time_in_force as Order['timeInForce'],
+      status: r.status as Order['status'],
+      positionSide: r.position_side as Order['positionSide'],
+      quantity: parseFloat(r.quantity || '0'),
+      filledQty: parseFloat(r.filled_qty || '0'),
+      limitPrice: r.limit_price !== null ? parseFloat(r.limit_price) : undefined,
+      stopPrice: r.stop_price !== null ? parseFloat(r.stop_price) : undefined,
+      avgFillPrice: parseFloat(r.avg_fill_price || '0'),
+      leverage: Number(r.leverage || 5),
+      marginType: r.margin_type as Order['marginType'],
+      reduceOnly: Boolean(r.reduce_only),
+      postOnly: Boolean(r.post_only),
+      closePosition: Boolean(r.close_position),
+      rejectReason: r.reject_reason ?? undefined,
+      submittedAtUtc: r.submitted_at_utc || new Date().toISOString(),
+      updatedAtUtc: r.updated_at_utc || new Date().toISOString(),
+    }));
   }
 }

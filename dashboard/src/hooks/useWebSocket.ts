@@ -46,10 +46,14 @@ export function useWebSocket() {
                 }
                 break;
               case 'trade.stream':
-                addLiveEvent({ type: 'trade', stream: 'market', payload: data.payload });
+                if (data.payload.symbol && data.payload.price) {
+                  setLivePrice(String(data.payload.symbol), Number(data.payload.price));
+                }
                 break;
               case 'book.update':
-                addLiveEvent({ type: 'book', stream: 'market', payload: data.payload });
+                if (data.payload.symbol && (data.payload.lastPrice || data.payload.price)) {
+                  setLivePrice(String(data.payload.symbol), Number(data.payload.lastPrice || data.payload.price));
+                }
                 break;
               case 'account.updated':
                 if (data.payload) setAccount(data.payload as never);

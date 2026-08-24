@@ -213,13 +213,56 @@ export async function startEngine(): Promise<EngineHandle> {
       persistencePath: `${dataDir}/adaptive_supertrend_qtable.json`,
       onSignalGenerated: (signal, sym) => {
         logger.info({ sym, action: signal.action, conf: signal.confidence }, 'Adaptive Supertrend signal generated');
+        const now = Date.now();
+        const cycleId = `ast_${sym}_${now}`;
         wsGateway.broadcast('agent.step', {
-          cycleId: `ast_${Date.now()}`,
+          cycleId,
           symbol: sym,
           stage: 'trader_decision',
           status: 'completed',
           detail: signal.reasoning,
-          timestamp: Date.now(),
+          timestamp: now,
+        });
+        wsGateway.broadcast('agent.cycle', {
+          id: cycleId,
+          symbol: sym,
+          action: signal.action,
+          confidence: signal.confidence,
+          regime: signal.regimeKey,
+          stopLossPrice: signal.stopLossPrice,
+          takeProfitPrice: signal.takeProfitPrice,
+          reasoning: signal.reasoning,
+          status: 'COMPLETED',
+          timestamp: now,
+        });
+        events.logAgentCycle({
+          cycleId,
+          symbol: sym,
+          startedAt: now,
+          analystReports: [
+            {
+              role: 'AdaptiveSupertrendAgent',
+              stance: signal.action.includes('LONG') ? 'BULLISH' : signal.action.includes('SHORT') ? 'BEARISH' : 'NEUTRAL',
+              confidence: signal.confidence,
+              reasoning: signal.reasoning,
+              regime: signal.regimeKey,
+            },
+          ],
+          debate: [],
+          verdict: {
+            prevailingSide: signal.action,
+            confidence: signal.confidence,
+            rationale: signal.reasoning,
+          },
+          traderDecision: {
+            action: signal.action,
+            confidence: signal.confidence,
+            stopLoss: signal.stopLossPrice,
+            takeProfit: signal.takeProfitPrice,
+          },
+          riskOpinions: [],
+          fundManagerApproval: { approved: true, rationale: 'Adaptive Supertrend parameters verified' },
+          executed: signal.action !== 'HOLD',
         });
       },
     })

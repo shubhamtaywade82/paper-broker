@@ -95,6 +95,20 @@ export class PaperBroker implements ExecutionBroker {
       this.instruments.set(instrument.symbol, instrument);
     }
 
+    if (this.persister?.loadOpenPositions) {
+      const persistedPositions = this.persister.loadOpenPositions(config.accountId);
+      for (const pos of persistedPositions) {
+        this.positions.set(pos.symbol, pos);
+      }
+    }
+
+    if (this.persister?.loadOpenOrders) {
+      const persistedOrders = this.persister.loadOpenOrders(config.accountId);
+      for (const ord of persistedOrders) {
+        this.orders.set(ord.id, ord);
+      }
+    }
+
     this.account = this.calculateAccountState();
   }
 
