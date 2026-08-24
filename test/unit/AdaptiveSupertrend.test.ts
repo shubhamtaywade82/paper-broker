@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
 import { createAdaptiveSupertrendStrategy } from '../../src/strategy/strategies/adaptive-supertrend.js';
 import { createStrategyContext } from '../../src/strategy/StrategyContext.js';
 import { KlineStore } from '../../src/market/Klines.js';
+import type { Position } from '../../src/broker/types.js';
 
 function createMockCandles(count: number, basePrice = 100, trend = 0.5): Candle[] {
   const candles: Candle[] = [];
@@ -141,6 +142,60 @@ describe('AI-Based Adaptive Supertrend Module', () => {
     expect(reloadedAI.getLearnedStatesCount()).toBeGreaterThan(0);
   });
 
+  it('C-08: bootstraps the Bellman update from the next state, not the state being updated', () => {
+    // Two distinct, pre-seeded regimes with very different Q-values, so the
+    // choice of bootstrap source is observable in the result. Both builds
+    // start from the identical (state, action, reward) triple; only the
+    // `nextState` argument to the final learn() call differs.
+    const lowValueState = 'low_weak_neutral';
+    const highValueState = 'high_strong_overbought';
+    const targetReward = 0.2;
+
+    function buildDivergedTable(): AdaptiveParameterAI {
+      const ai = new AdaptiveParameterAI({ epsilon: 0 });
+      ai.learn(lowValueState, 0, 0);
+      for (let i = 0; i < 5; i++) ai.learn(lowValueState, 0, -1); // drives low state's action-0 value down
+      ai.learn(highValueState, 0, 0);
+      for (let i = 0; i < 5; i++) ai.learn(highValueState, 1, 1); // drives high state's action-1 value up
+      return ai;
+    }
+
+    const bootstrapFromLowState = buildDivergedTable();
+    bootstrapFromLowState.learn(lowValueState, 1, targetReward, lowValueState);
+
+    const bootstrapFromHighState = buildDivergedTable();
+    bootstrapFromHighState.learn(lowValueState, 1, targetReward, highValueState);
+
+    // Bootstrapping off the high-value state must yield a strictly larger
+    // updated Q-value than bootstrapping off the (still-low) same state, for
+    // an identical (state, action, reward) triple — proving the fix actually
+    // consults the passed-in nextState rather than the state being updated.
+    const qLow = bootstrapFromLowState['qTable' as never] as unknown as Map<string, number[]>;
+    const qHigh = bootstrapFromHighState['qTable' as never] as unknown as Map<string, number[]>;
+    const valueWithLowBootstrap = qLow.get(lowValueState)![1]!;
+    const valueWithHighBootstrap = qHigh.get(lowValueState)![1]!;
+    expect(valueWithHighBootstrap).toBeGreaterThan(valueWithLowBootstrap);
+  });
+
+  it('C-08: omitting nextState does not bootstrap off the state being updated (no self-reuse bug)', () => {
+    const state = 'medium_medium_neutral';
+    const ai = new AdaptiveParameterAI({ epsilon: 0 });
+    // Push action 1's value high so, under the old buggy behavior, updating
+    // action 0 in the SAME state (with no explicit nextState) would bootstrap
+    // off that high value via Math.max(...qValues) over the current state's
+    // own array.
+    ai.learn(state, 1, 0);
+    for (let i = 0; i < 10; i++) ai.learn(state, 1, 1);
+
+    // Update action 0 with reward 0 and no nextState — correct behavior:
+    // future-value term is 0, so the result should trend toward 0, not get
+    // pulled up toward action 1's high value.
+    ai.learn(state, 0, 0);
+    const qTable = ai['qTable' as never] as unknown as Map<string, number[]>;
+    const action0Value = qTable.get(state)![0]!;
+    expect(action0Value).toBeLessThan(0.3);
+  });
+
   it('calculateAdaptiveSupertrend computes dynamic bands & crossover', () => {
     const candles = createMockCandles(50, 100, 2.0);
     const res = calculateAdaptiveSupertrend(candles, { atrPeriod: 10, multiplier: 2.0 });
@@ -251,5 +306,70 @@ describe('Adaptive Supertrend Strategy Integration', () => {
       expect(signal.features?.quantity).toBeGreaterThan(0);
       expect(signal.features?.leverage).toBe(5);
     }
+  });
+
+  it('C-08: settles the pending decision with the real realized outcome once the position closes, not a hardcoded reward', () => {
+    const klines = new KlineStore(500);
+    const mockCandles = createMockCandles(60, 100, 2.0);
+    for (const c of mockCandles) klines.upsertCandle(c);
+
+    const learnSpy = vi.spyOn(AdaptiveParameterAI.prototype, 'learn');
+
+    const strategy = createAdaptiveSupertrendStrategy({
+      getInstrument: () => ({
+        symbol: 'BTCUSDT', baseAsset: 'BTC', quoteAsset: 'USDT',
+        pricePrecision: 2, quantityPrecision: 3, tickSize: 0.01, stepSize: 0.001,
+        minQuantity: 0.001, maxQuantity: 100, minNotional: 5, defaultLeverage: 10,
+        maxLeverage: 50, maintenanceMarginRate: 0.01, makerFeeRate: 0.0002, takerFeeRate: 0.0005,
+      } as any),
+      minConfidence: 0.1,
+    });
+
+    let currentPosition: Position | undefined = undefined;
+    const ctx = createStrategyContext(
+      'adaptive-supertrend-v1',
+      () => ({
+        symbol: 'BTCUSDT', bid: 199.9, ask: 200.1, last: 200.0, mark: 200.0,
+        localTsUtc: Date.now(), stale: false,
+      }),
+      klines,
+      () => ({
+        walletBalance: 10000, unrealizedPnl: 0, equity: 10000, initialMargin: 0,
+        maintenanceMargin: 0, availableBalance: 10000, totalFees: 0, totalFunding: 0,
+        totalRealizedPnl: 0, openPositionsCount: 0, openOrdersCount: 0, dailyRealizedPnl: 0,
+      } as any),
+      () => currentPosition,
+      () => [],
+      () => ({} as any)
+    );
+
+    const lastCandle = mockCandles[mockCandles.length - 1]!;
+    const openSignal = strategy.onCandleClose!(ctx, lastCandle) as ReturnType<NonNullable<typeof strategy.onCandleClose>>;
+    expect(openSignal).not.toBeNull();
+    // No outcome is known yet at entry — learn() must not fire until settlement.
+    expect(learnSpy).not.toHaveBeenCalled();
+
+    // Position is now open; further candles must not settle until it's flat.
+    currentPosition = { qty: 1 } as Position;
+    strategy.onCandleClose!(ctx, { ...lastCandle, close: lastCandle.close + 50 });
+    expect(learnSpy).not.toHaveBeenCalled();
+
+    // Position closes favorably in whichever direction was actually opened.
+    currentPosition = undefined;
+    const action = (openSignal as { action: string }).action;
+    const winningClose = action === 'OPEN_LONG' ? lastCandle.close + 20 : lastCandle.close - 20;
+    strategy.onCandleClose!(ctx, { ...lastCandle, close: winningClose });
+
+    expect(learnSpy).toHaveBeenCalledTimes(1);
+    const [state, actionIndex, reward, nextState] = learnSpy.mock.calls[0]!;
+    expect(typeof state).toBe('string');
+    expect(typeof actionIndex).toBe('number');
+    // A winning trade must produce a positive reward derived from the actual
+    // price move — not the old hardcoded 0.5 regardless of outcome.
+    expect(reward).toBeGreaterThan(0);
+    expect(typeof nextState).toBe('string');
+    expect(nextState).not.toBe('');
+
+    learnSpy.mockRestore();
   });
 });

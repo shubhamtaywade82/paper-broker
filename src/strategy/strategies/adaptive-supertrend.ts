@@ -5,13 +5,33 @@ import { parseSignalInput, type SignalInput } from '../signal.js';
 import type { Instrument } from '../../broker/types.js';
 import {
   extractMarketFeatures,
+  formatRegimeKey,
   AdaptiveParameterAI,
   calculateAdaptiveSupertrend,
   FuzzySignalAI,
   type AdaptiveSignal,
+  type MarketFeatures,
 } from '../adaptive-supertrend/index.js';
 
 export const ADAPTIVE_SUPERTREND_STRATEGY_ID = 'adaptive-supertrend-v1';
+
+// C-08: learn() used to be called with a hardcoded reward of 0.5 at signal
+// generation time, before the trade's outcome was known — meaningless
+// feedback that made the Q-table converge on noise. A pending decision is now
+// tracked per symbol and settled (real learn() call, with the actual realized
+// directional return as reward) once the resulting position goes flat.
+interface PendingLearn {
+  state: string;
+  actionIndex: number;
+  entryPrice: number;
+  side: 'LONG' | 'SHORT';
+}
+
+// A directional move of this magnitude in the trade's favor maps to reward
+// 1.0 (and against, to -1.0); reward is linear and clamped to [-1, 1] beyond
+// that. 2% is a coarse but reasonable scale for the leveraged, ATR-sized
+// stops this strategy trades with.
+const REWARD_NORMALIZATION_RETURN = 0.02;
 
 export interface AdaptiveSupertrendDeps {
   getInstrument: (symbol: string) => Instrument | undefined;
@@ -29,6 +49,7 @@ export function createAdaptiveSupertrendStrategy(deps: AdaptiveSupertrendDeps): 
     persistencePath: deps.persistencePath ?? 'data/adaptive_supertrend_memory.json',
   });
   const signalAI = new FuzzySignalAI();
+  const pendingLearns = new Map<string, PendingLearn>();
 
   return {
     id: ADAPTIVE_SUPERTREND_STRATEGY_ID,
@@ -38,14 +59,39 @@ export function createAdaptiveSupertrendStrategy(deps: AdaptiveSupertrendDeps): 
     intervals: deps.intervals ?? ['1m', '5m', '15m'],
     priority: 8,
     cooldownMs: 30_000,
-    onCandleClose: (ctx, candle) => evaluateCandle(deps, paramAI, signalAI, ctx, candle),
+    onCandleClose: (ctx, candle) => evaluateCandle(deps, paramAI, signalAI, pendingLearns, ctx, candle),
   };
+}
+
+/** Settles a still-pending (state, action) decision once its position has gone flat, feeding the real realized outcome back into the Q-table. */
+function settlePendingLearn(
+  paramAI: AdaptiveParameterAI,
+  pendingLearns: Map<string, PendingLearn>,
+  ctx: StrategyContext,
+  candle: Candle,
+  features: MarketFeatures
+): void {
+  const pending = pendingLearns.get(candle.symbol);
+  if (!pending) return;
+
+  const position = ctx.getPosition(candle.symbol);
+  if (position && position.qty !== 0) return; // trade still open — nothing to settle yet
+
+  const directionalReturn =
+    pending.side === 'LONG'
+      ? (candle.close - pending.entryPrice) / pending.entryPrice
+      : (pending.entryPrice - candle.close) / pending.entryPrice;
+  const reward = Math.max(-1, Math.min(1, directionalReturn / REWARD_NORMALIZATION_RETURN));
+
+  paramAI.learn(pending.state, pending.actionIndex, reward, formatRegimeKey(features));
+  pendingLearns.delete(candle.symbol);
 }
 
 function evaluateCandle(
   deps: AdaptiveSupertrendDeps,
   paramAI: AdaptiveParameterAI,
   signalAI: FuzzySignalAI,
+  pendingLearns: Map<string, PendingLearn>,
   ctx: StrategyContext,
   candle: Candle
 ): SignalInput | null {
@@ -54,6 +100,8 @@ function evaluateCandle(
 
   const features = extractMarketFeatures(candles);
   if (!features) return null;
+
+  settlePendingLearn(paramAI, pendingLearns, ctx, candle, features);
 
   const { params, state, actionIndex } = paramAI.chooseAction(features);
   const stResult = calculateAdaptiveSupertrend(candles, params);
@@ -83,7 +131,19 @@ function evaluateCandle(
   if (signal.action === 'HOLD') return null;
 
   deps.onSignalGenerated?.(signal, candle.symbol);
-  paramAI.learn(state, actionIndex, 0.5);
+
+  // Record the decision for later settlement (see settlePendingLearn) rather
+  // than learning immediately with a placeholder reward. Don't clobber an
+  // already-pending entry for this symbol — that trade hasn't closed yet, so
+  // its (state, action) attribution is still the one awaiting a real outcome.
+  if (!pendingLearns.has(candle.symbol)) {
+    pendingLearns.set(candle.symbol, {
+      state,
+      actionIndex,
+      entryPrice: signal.currentPrice,
+      side: signal.action === 'OPEN_LONG' ? 'LONG' : 'SHORT',
+    });
+  }
 
   // This strategy otherwise only ever tries to OPEN a position — it never
   // looks at what it's already holding. If the trend has reversed against an
