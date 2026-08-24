@@ -240,5 +240,24 @@ describe('Phase 4 — Deterministic SMC Location Engine', () => {
       expect(mtfSmc.timeframes['15m']).toBeDefined();
       expect(mtfSmc.timeframes['5m']).toBeDefined();
     });
+
+    it('bounds cache growth instead of accumulating one entry per call forever (C-05)', () => {
+      const store = new KlineStore();
+      const structureEngine = new MarketStructureEngine(store);
+      const smcEngine = new SmcLocationEngine(store, structureEngine);
+      const t0 = 1700000000000;
+      store.upsertCandle(makeCandle(t0, 100, 102, 98, 101));
+      store.upsertCandle(makeCandle(t0 + 900_000, 101, 105, 100, 104));
+
+      // Simulate live trading: computeState called on every "tick" with a
+      // fresh Date.now()-like timestamp, well past SMC_CACHE_MAX_ENTRIES calls.
+      const calls = 2500;
+      for (let i = 0; i < calls; i++) {
+        smcEngine.getSmcContextAsOf('SOLUSDT', '15m', t0 + 2_000_000 + i);
+      }
+
+      expect(smcEngine.cacheSize).toBeLessThanOrEqual(2000);
+      expect(smcEngine.cacheSize).toBeGreaterThan(0);
+    });
   });
 });
