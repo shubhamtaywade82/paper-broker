@@ -5,6 +5,7 @@ import { BinanceClient } from '@nemesis-oss/binance-sdk';
 import { BinanceStreamHandler } from './binance/streams.js';
 import { MarketStateManager } from './market/MarketState.js';
 import { startEngine } from './engine.js';
+import { createShutdownHandler } from './index.js';
 import { runBacktest, type BacktestConfig } from './backtest/BacktestRunner.js';
 import { ReplayEngine } from './research/replay/ReplayEngine.js';
 import { BinanceHistoricalFetcher } from './research/replay/BinanceHistoricalFetcher.js';
@@ -27,14 +28,15 @@ async function runTrade(): Promise<void> {
 
   console.log('[Main] Engine started. Press Ctrl+C to stop.');
 
-  const shutdown = async (signal: string): Promise<void> => {
-    console.log(`\n[Main] Received ${signal}, shutting down...`);
-    await engine.stop();
-    process.exit(0);
-  };
+  // Medium finding ("process.exit(0) skips cleanup handlers"): this used to
+  // duplicate index.ts's original unguarded shutdown pattern (no
+  // concurrent-shutdown guard, no force-exit timeout, no try/catch) rather
+  // than reusing the fix — reuse createShutdownHandler (see index.ts / H-13)
+  // instead of re-introducing that bug here.
+  const shutdown = createShutdownHandler(engine);
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 async function runMonitor(): Promise<void> {
@@ -61,7 +63,10 @@ async function runMonitor(): Promise<void> {
 
   console.log('[Monitor] Connected. Press Ctrl+C to stop.');
 
-  const stop = async (signal: string): Promise<void> => {
+  let shuttingDown = false;
+  const stop = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`\n[Monitor] Received ${signal}, shutting down...`);
     streams.disconnect();
     process.exit(0);
@@ -197,7 +202,23 @@ async function runBacktestCmd(): Promise<void> {
   process.exit(0);
 }
 
+function printUsage(): void {
+  console.log('Usage: node dist/cli.js <trade|monitor|backtest> [--help]');
+  console.log('  backtest options:');
+  console.log('    SMC engine (default):        --engine=smc --symbol=SOLUSDT --days=3');
+  console.log('    Legacy indicator engine:     --engine=indicators --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,...');
+}
+
 const command = process.argv[2] ?? 'trade';
+
+// Medium finding ("no proper argument parsing or --help flag"): --help/-h
+// used to fall through to the `default` case, which printed usage but still
+// exited 1 — treating a help request as a failure (a script checking $?
+// after --help would see an error). Recognized explicitly, exits 0.
+if (command === '--help' || command === '-h') {
+  printUsage();
+  process.exit(0);
+}
 
 switch (command) {
   case 'trade':
@@ -210,9 +231,6 @@ switch (command) {
     await runBacktestCmd();
     break;
   default:
-    console.log('Usage: node dist/cli.js <trade|monitor|backtest>');
-    console.log('  backtest options:');
-    console.log('    SMC engine (default):        --engine=smc --symbol=SOLUSDT --days=3');
-    console.log('    Legacy indicator engine:     --engine=indicators --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,...');
+    printUsage();
     process.exit(1);
 }
