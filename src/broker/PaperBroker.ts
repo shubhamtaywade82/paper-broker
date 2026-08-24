@@ -917,18 +917,42 @@ export class PaperBroker implements ExecutionBroker {
 
       const closeSide: OrderSide = position.qty > 0 ? 'SELL' : 'BUY';
       const closeQty = Math.abs(position.qty);
+      const nowIso = new Date().toISOString();
 
-      const realized = this.applyPositionFill(
-        position.symbol,
-        closeSide,
-        closeQty,
-        market.mark,
-        position.leverage,
-        new Date().toISOString()
-      );
+      // C-04: forced liquidation used to close positions by calling
+      // applyPositionFill() directly, bypassing fillOrder/executeFill entirely —
+      // no Fill record, no fee, no ORDER_FILLED event, and the close was
+      // effectively invisible to the append-only audit trail. Route it through
+      // a synthetic MARKET order tagged strategyId=LIQUIDATION so it gets the
+      // same Fill/fee/event treatment as any other close.
+      const order: Order = {
+        id: ulid(),
+        clientOrderId: `liq-${ulid()}`,
+        accountId: position.accountId,
+        symbol: position.symbol,
+        strategyId: 'LIQUIDATION',
+        side: closeSide,
+        type: 'MARKET',
+        timeInForce: 'GTC',
+        status: 'NEW',
+        positionSide: position.positionSide,
+        quantity: closeQty,
+        filledQty: 0,
+        avgFillPrice: 0,
+        leverage: position.leverage,
+        reduceOnly: true,
+        postOnly: false,
+        closePosition: true,
+        submittedAtUtc: nowIso,
+        updatedAtUtc: nowIso,
+      };
+      this.orders.set(order.id, order);
 
-      this.walletBalance = D(this.walletBalance).add(realized).toNumber();
-      this.totalRealizedPnl = D(this.totalRealizedPnl).add(realized).toNumber();
+      this.executeFill(order, closeQty, market.mark, 'TAKER', nowIso);
+
+      order.status = 'FILLED';
+      order.updatedAtUtc = nowIso;
+      this.emitOrderEvent('ORDER_FILLED', order, { executionPrice: market.mark, reason: 'LIQUIDATION' });
     }
 
     this.recalculateAccount();
