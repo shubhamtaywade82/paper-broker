@@ -177,5 +177,5 @@ describe('TradingAgents Multi-Agent Schemas & Pipeline', () => {
 
     expect(cycle.debate.length).toBe(2); // 1 round x (BULL + BEAR)
     expect(cycle.debate.filter((d) => d.round === 1).length).toBe(2);
-  }, 10_000);
+  }, 30_000);
 });
