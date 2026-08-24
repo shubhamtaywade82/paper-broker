@@ -63,12 +63,19 @@ export class PaperBroker implements ExecutionBroker {
   private risk: RiskLimits;
 
   private dayStartEquity: number;
+  // H-15: distinct from dayStartEquity, which resets to the current equity
+  // at every UTC day boundary (correct for the daily-loss circuit breaker,
+  // wrong for drawdown). peakEquity is a running high-water mark that only
+  // ever increases, so drawdown = (peak - equity) / peak actually reflects
+  // the worst intraday pullback instead of resetting to ~0 every day.
+  private peakEquity: number;
   private currentUtcDay: string;
   private isLiquidating = false;
 
   constructor(config: PaperBrokerConfig) {
     this.walletBalance = config.startingUsdt;
     this.dayStartEquity = config.startingUsdt;
+    this.peakEquity = config.startingUsdt;
     this.currentUtcDay = new Date().toISOString().slice(0, 10);
     this.marketState = config.marketState;
     this.eventLog = config.eventLog;
@@ -868,6 +875,10 @@ export class PaperBroker implements ExecutionBroker {
     const availableBalance = Math.max(0, D(equity).sub(initialMargin).toNumber());
     const marginRatio = maintenanceMargin > 0 ? equity / maintenanceMargin : 0;
 
+    if (equity > this.peakEquity) {
+      this.peakEquity = equity;
+    }
+
     return {
       walletBalance: this.walletBalance,
       unrealizedPnl,
@@ -881,8 +892,8 @@ export class PaperBroker implements ExecutionBroker {
       totalRealizedPnl: this.totalRealizedPnl,
       openPositionsCount,
       openOrdersCount: this.getOpenOrders().length,
-      peakEquity: this.dayStartEquity,
-      drawdown: this.dayStartEquity > 0 ? Math.max(0, (this.dayStartEquity - equity) / this.dayStartEquity) : 0,
+      peakEquity: this.peakEquity,
+      drawdown: this.peakEquity > 0 ? Math.max(0, (this.peakEquity - equity) / this.peakEquity) : 0,
       liquidations: this.liquidations,
     };
   }

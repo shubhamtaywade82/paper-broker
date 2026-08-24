@@ -690,7 +690,7 @@ export class ApiServer {
           executionConfig: { minTp1RiskReward: 1.0, minTp2RiskReward: 1.5, minTp3RiskReward: 2.0 },
           paperBrokerConfig: {
             makerFeeRate: 0.0002,
-            takerFeeRate: 0.0005,
+            takerFeeRate: 0.0004, // H-12: aligned with PaperBroker's live-trading default (4bps)
             slippageModel: 'FIXED_TICKS',
             slippageFixedTicks: 1,
             ambiguousIntrabarPolicy: 'CONSERVATIVE',

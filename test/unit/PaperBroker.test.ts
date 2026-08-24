@@ -552,6 +552,38 @@ describe('PaperBroker', () => {
     expect(broker.getPosition('BTCUSDT')?.qty).toBeCloseTo(0.2, 10);
   });
 
+  it('H-15: tracks a true intraday peak equity (not day-start) and computes drawdown from it', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+
+    // Price rallies -> equity rises well above the starting 10000 balance ->
+    // a new peak, tracked independently of the UTC-day boundary.
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 149.9, ask: 150.1, last: 150, mark: 150,
+      localTsUtc: Date.now(), stale: false,
+    });
+    const atPeak = broker.getAccount();
+    expect(atPeak.equity).toBeGreaterThan(10000);
+    expect(atPeak.peakEquity).toBeCloseTo(atPeak.equity, 6);
+    expect(atPeak.drawdown).toBe(0);
+
+    // Price pulls back, but equity is STILL above the day-start balance of
+    // 10000 — under the old (dayStartEquity - equity)/dayStartEquity
+    // calculation this would clamp to 0 despite a real pullback from the peak.
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 119.9, ask: 120.1, last: 120, mark: 120,
+      localTsUtc: Date.now(), stale: false,
+    });
+    const afterPullback = broker.getAccount();
+    expect(afterPullback.equity).toBeGreaterThan(10000);
+    expect(afterPullback.equity).toBeLessThan(atPeak.equity);
+    expect(afterPullback.peakEquity).toBeCloseTo(atPeak.peakEquity, 6); // peak persists, not reset
+    expect(afterPullback.drawdown).toBeGreaterThan(0); // real pullback is now captured
+  });
+
   describe('forced liquidation (C-04)', () => {
     // Previously, checkLiquidation() closed positions by calling applyPositionFill()
     // directly — no Fill record, no fee, no ORDER_FILLED event. It now routes

@@ -68,6 +68,40 @@ Work required:
 
 ## Strategy Layer
 
+### ❌ Dual Paper Broker Architectures (H-11)
+
+Two entirely separate paper broker implementations exist with no shared
+interface or adapter:
+
+- `PaperBroker` (`src/broker/PaperBroker.ts`, types in `src/broker/types.ts`)
+  — used by the live engine (`engine.ts`) and `BacktestRunner.ts`. Implements
+  `ExecutionBroker` with `Order`/`Fill`/`Position`/`AccountState` types.
+- `SmcPaperBroker` (`src/broker/paper/SmcPaperBroker.ts`, types in
+  `src/broker/paper/types.ts`) — used by `ReplayEngine` (the backtest engine
+  reachable via `/api/v1/backtest/run`). Implements a parallel
+  `PaperOrder`/`PaperFill`/`PaperPosition`/`PaperAccountState` type system
+  with different field names (e.g. `CANCELED` vs `CANCELLED`), different
+  status enums, and different PnL/fee application logic.
+
+Current status:
+- No shared interface or adapter layer exists between them.
+- A bug fix or behavioral change made to one is not automatically reflected
+  in the other — verify both when touching fill/PnL/fee logic.
+- H-12 (taker fee default mismatch, 4bps vs 5bps) was one concrete symptom of
+  this and has been fixed (both now default to 4bps), but that was a numeric
+  alignment, not a structural fix — the two implementations can still drift
+  again independently.
+
+Work required (not attempted in this pass — see AGENTS.md Section 20, this is
+a materially large refactor touching both the live and backtest execution
+paths and needs its own design/ADR, not a fix folded into an unrelated
+change):
+- Design a shared `ExecutionBroker`-compatible interface (or adapter) that
+  both implementations satisfy, or
+- Migrate `ReplayEngine` onto `PaperBroker` directly (as `BacktestRunner`
+  already does) and retire `SmcPaperBroker`, with full behavioral-parity
+  testing across both live and backtest paths before cutover.
+
 ### ⚠️ grid-15m Documented Exception to the Execution Contract
 
 `createGridStrategy` (`src/strategy/strategies/grid-15m.ts`) calls
