@@ -269,8 +269,8 @@ export function AgentControlCenterView() {
           <span className="text-[10px] text-gray-500 uppercase block">Decisions Today</span>
           <span className="text-base font-black text-white">{cycles.length}</span>
         </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Trades / Skipped</span>
+        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5" title="Fund Manager approval on debate outcome — not a real paper order. Only the autonomous loop (candle close + setup + risk gate) submits real trades.">
+          <span className="text-[10px] text-gray-500 uppercase block">Approved / Skipped</span>
           <span className="text-base font-black text-emerald-400">
             {executedCount} <span className="text-gray-500 font-normal">/ {noTradeCount}</span>
           </span>
@@ -329,6 +329,7 @@ export function AgentControlCenterView() {
           <button
             onClick={() => triggerCycle.mutate({ symbol: selectedSymbol, model: triggerModel })}
             disabled={triggerCycle.isPending}
+            title="Runs the debate for inspection only — never submits a real paper order, even if approved. Only the autonomous loop (candle close + setup + risk gate) trades."
             className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-50"
           >
             <Play className="w-3.5 h-3.5" />
@@ -460,10 +461,13 @@ export function AgentControlCenterView() {
                   Started: {new Date(detailData.startedAt).toLocaleString()}
                 </p>
               </div>
-              <span className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                detailData.fundManagerApproval?.approved ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-              }`}>
-                {detailData.fundManagerApproval?.approved ? 'APPROVED & EXECUTED' : 'REJECTED BY RISK'}
+              <span
+                className={`px-3 py-1 rounded-lg text-xs font-bold ${
+                  detailData.fundManagerApproval?.approved ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                }`}
+                title="Debate outcome only — manually triggered cycles never submit a real paper order."
+              >
+                {detailData.fundManagerApproval?.approved ? 'APPROVED (NOT A REAL ORDER)' : 'REJECTED BY RISK'}
               </span>
             </div>
 

@@ -259,6 +259,23 @@ function getInitialSymbol(): string {
   return 'SOLUSDT';
 }
 
+function getInitialOperatingMode(): 'paper' | 'shadow' | 'live' {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('nemesis_operating_mode');
+    if (saved === 'paper' || saved === 'shadow' || saved === 'live') {
+      return saved;
+    }
+  }
+  return 'paper';
+}
+
+function getInitialLiveArmed(): boolean {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('nemesis_live_armed') === 'true';
+  }
+  return false;
+}
+
 export const useStore = create<StoreState>((set) => ({
   activeTab: getInitialTab(),
   selectedSymbol: getInitialSymbol(),
@@ -274,8 +291,8 @@ export const useStore = create<StoreState>((set) => ({
   riskSummary: null,
   performance: null,
   wsConnected: false,
-  operatingMode: 'paper',
-  liveArmed: false,
+  operatingMode: getInitialOperatingMode(),
+  liveArmed: getInitialLiveArmed(),
   liveEvents: [],
   livePrice: {},
   tickers: {},
@@ -306,11 +323,18 @@ export const useStore = create<StoreState>((set) => ({
   setRiskSummary: (riskSummary) => set({ riskSummary }),
   setPerformance: (perf) => set({ performance: perf }),
   setWsConnected: (wsConnected) => set({ wsConnected }),
-  setOperatingMode: (operatingMode, armed) =>
+  setOperatingMode: (operatingMode, armed) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nemesis_operating_mode', operatingMode);
+      if (armed !== undefined) {
+        localStorage.setItem('nemesis_live_armed', String(armed));
+      }
+    }
     set((state) => ({
       operatingMode,
       liveArmed: armed !== undefined ? armed : state.liveArmed,
-    })),
+    }));
+  },
   addLiveEvent: (event) =>
     set((state) => ({
       liveEvents: [

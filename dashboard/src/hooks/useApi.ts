@@ -401,6 +401,25 @@ export function useArmMode() {
         body: JSON.stringify({ passcode }),
       }),
     onSuccess: () => {
+      useStore.getState().setOperatingMode('live', true);
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
+    },
+  });
+}
+
+export function useDisarmMode() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      fetchJson<{ armed: boolean }>('/api/v1/mode/disarm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => {
+      useStore.getState().setOperatingMode('live', false);
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
     },

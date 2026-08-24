@@ -255,7 +255,7 @@ export class ApiServer {
         mode: this.profile?.mode ?? 'paper',
         liveArmed: this.profile?.liveArmed ?? false,
         realOrders: this.profile?.realOrders ?? false,
-        engineRunning: this.engine.isRunning(),
+        engineRunning: typeof this.engine?.isRunning === 'function' ? this.engine.isRunning() : false,
         account,
         positions,
         signals: recentSignals,
@@ -618,8 +618,18 @@ export class ApiServer {
         return reply.code(409).send({ error: 'NOT_LIVE_MODE', message: 'Arming requires TRADING_MODE=live' });
       }
       this.profile.liveArmed = true;
-      this.wsGateway.broadcast('mode.changed', { mode: this.profile?.mode, liveArmed: true });
+      this.profile.realOrders = true;
+      this.wsGateway.broadcast('mode.changed', { mode: this.profile.mode, liveArmed: true });
       return reply.send({ armed: true });
+    });
+
+    this.app.post('/api/v1/mode/disarm', async (_request, reply) => {
+      if (this.profile) {
+        this.profile.liveArmed = false;
+        this.profile.realOrders = false;
+        this.wsGateway.broadcast('mode.changed', { mode: this.profile.mode, liveArmed: false });
+      }
+      return reply.send({ armed: false });
     });
 
     this.app.post('/engine/start', async () => {

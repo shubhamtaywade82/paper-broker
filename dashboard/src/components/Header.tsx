@@ -50,27 +50,37 @@ export function Header() {
 
           {/* Operating Profile Badge */}
           <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#080c14] border border-[#1b2537]">
-            <Shield className="w-3.5 h-3.5 text-blue-400" />
+            <Shield className={`w-3.5 h-3.5 ${operatingMode === 'live' ? 'text-red-400' : operatingMode === 'shadow' ? 'text-amber-400' : 'text-emerald-400'}`} />
             <span
               className={`font-bold uppercase text-[10px] ${
                 operatingMode === 'live'
                   ? 'text-red-400'
                   : operatingMode === 'shadow'
                   ? 'text-amber-400'
-                  : 'text-blue-400'
+                  : 'text-emerald-400'
               }`}
             >
               {operatingMode}
             </span>
-            <span
-              className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
-                liveArmed
-                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                  : 'bg-gray-800 text-gray-400'
-              }`}
-            >
-              {liveArmed ? 'ARMED' : 'DISARMED'}
-            </span>
+            {operatingMode === 'paper' ? (
+              <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                SIMULATED
+              </span>
+            ) : operatingMode === 'shadow' ? (
+              <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                READ-ONLY
+              </span>
+            ) : (
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                  liveArmed
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'
+                    : 'bg-gray-800 text-gray-400'
+                }`}
+              >
+                {liveArmed ? 'ARMED' : 'DISARMED'}
+              </span>
+            )}
           </div>
 
           {/* Compact Mobile Symbol Selector */}

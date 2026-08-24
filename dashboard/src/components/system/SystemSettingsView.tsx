@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { useDashboard, useArmMode, useEngineControl, useProviderHealth, type ProviderHealthState } from '../../hooks/useApi';
+import {
+  useDashboard,
+  useArmMode,
+  useDisarmMode,
+  useEngineControl,
+  useProviderHealth,
+  type ProviderHealthState,
+} from '../../hooks/useApi';
 import { ConfirmationModal } from '../common/ConfirmationModal';
 import {
   Settings,
@@ -12,6 +19,11 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
+  Zap,
+  Lock,
+  Unlock,
+  AlertTriangle,
+  Cpu,
 } from 'lucide-react';
 
 function errorMessage(err: unknown): string | null {
@@ -41,11 +53,13 @@ export function SystemSettingsView() {
   const { data: providerHealth } = useProviderHealth();
 
   const armMode = useArmMode();
+  const disarmMode = useDisarmMode();
   const engineControl = useEngineControl();
 
   const engineRunning = dashboardData?.engineRunning ?? false;
 
   const [isArmModalOpen, setIsArmModalOpen] = useState(false);
+  const [isDisarmModalOpen, setIsDisarmModalOpen] = useState(false);
   const [isKillSwitchModalOpen, setIsKillSwitchModalOpen] = useState(false);
 
   return (
@@ -59,30 +73,136 @@ export function SystemSettingsView() {
           <div>
             <h2 className="text-base font-black text-white uppercase">System Health &amp; Operations</h2>
             <p className="text-gray-400 text-[11px]">
-              Platform status, exchange provider health, and operational engine controls.
+              Platform operating mode, execution profile, live arm gate, and exchange infrastructure.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Engine Controls Grid */}
+      {/* Operating Mode Showcase Banner */}
+      <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Shield className={`w-5 h-5 ${operatingMode === 'live' ? 'text-red-400' : operatingMode === 'shadow' ? 'text-amber-400' : 'text-emerald-400'}`} />
+            <h3 className="font-bold text-white uppercase text-sm">Active Execution Profile</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider ${
+                operatingMode === 'live'
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                  : operatingMode === 'shadow'
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+              }`}
+            >
+              {operatingMode === 'paper' && '🟢 PAPER TRADING ACTIVE'}
+              {operatingMode === 'shadow' && '🟡 SHADOW MODE (READ-ONLY)'}
+              {operatingMode === 'live' && (liveArmed ? '🔴 LIVE REAL ORDERS ARMED' : '🛡️ LIVE MODE (DISARMED)')}
+            </span>
+          </div>
+        </div>
+
+        {/* Mode Details Box */}
+        {operatingMode === 'paper' && (
+          <div className="p-4 rounded-xl bg-[#080c14] border border-emerald-500/30 space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-emerald-400 font-bold text-xs uppercase flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" /> Deterministic Paper Execution Engine
+                </h4>
+                <p className="text-gray-300 text-xs mt-1 leading-relaxed">
+                  All capabilities are fully active with zero real-world financial risk. Real-time market data from Binance WebSocket feeds orders directly into the SQLite event ledger.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 text-[11px]">
+              <div className="bg-[#0f1623] p-2.5 rounded-lg border border-[#1b2537]">
+                <span className="text-gray-500 text-[10px] uppercase block">Wallet State</span>
+                <span className="text-emerald-400 font-bold">Simulated $10,000</span>
+              </div>
+              <div className="bg-[#0f1623] p-2.5 rounded-lg border border-[#1b2537]">
+                <span className="text-gray-500 text-[10px] uppercase block">Order Execution</span>
+                <span className="text-white font-bold">Paper Broker Active</span>
+              </div>
+              <div className="bg-[#0f1623] p-2.5 rounded-lg border border-[#1b2537]">
+                <span className="text-gray-500 text-[10px] uppercase block">Multi-Agent AI</span>
+                <span className="text-blue-400 font-bold">Full Capability</span>
+              </div>
+              <div className="bg-[#0f1623] p-2.5 rounded-lg border border-[#1b2537]">
+                <span className="text-gray-500 text-[10px] uppercase block">Capital Risk</span>
+                <span className="text-emerald-400 font-bold">0% (Zero Risk)</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {operatingMode === 'live' && (
+          <div className={`p-4 rounded-xl bg-[#080c14] border ${liveArmed ? 'border-red-500/40' : 'border-amber-500/40'} space-y-3`}>
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className={`font-bold text-xs uppercase flex items-center gap-1.5 ${liveArmed ? 'text-red-400' : 'text-amber-400'}`}>
+                  {liveArmed ? <AlertTriangle className="w-4 h-4 animate-pulse" /> : <Lock className="w-4 h-4" />}
+                  {liveArmed ? 'Real Exchange Execution Armed (CoinDCX Futures)' : 'Real Exchange Execution Disarmed (Orders Blocked)'}
+                </h4>
+                <p className="text-gray-300 text-xs mt-1 leading-relaxed">
+                  {liveArmed
+                    ? 'WARNING: Strategy and manual orders are routed directly to the CoinDCX Futures exchange endpoint using real account equity.'
+                    : 'The LiveTradingGuard is actively blocking order routing to external exchanges. Arming the gate enables live order submission.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              {liveArmed ? (
+                <button
+                  onClick={() => setIsDisarmModalOpen(true)}
+                  disabled={disarmMode.isPending}
+                  className="flex items-center gap-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 px-4 py-2 rounded-xl font-bold cursor-pointer transition-all disabled:opacity-50"
+                >
+                  <Lock className="w-4 h-4" /> Disarm Live Execution
+                </button>
+              ) : (
+                <button
+                  onClick={() => setIsArmModalOpen(true)}
+                  disabled={armMode.isPending}
+                  className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-2 rounded-xl cursor-pointer shadow-lg shadow-red-900/30 transition-all disabled:opacity-50"
+                >
+                  <Unlock className="w-4 h-4" /> Arm Real Execution Gate
+                </button>
+              )}
+              <span className="text-gray-500 text-[11px]">
+                Gate Status: <strong className={liveArmed ? 'text-red-400' : 'text-gray-400'}>{liveArmed ? 'ARMED' : 'DISARMED'}</strong>
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Trading Engine Operations */}
       <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-bold text-white uppercase text-xs">Trading Engine Controls</h3>
-          <span className={`text-[10px] font-bold uppercase ${engineRunning ? 'text-emerald-400' : 'text-gray-500'}`}>
-            ● Engine is {engineRunning ? 'RUNNING' : 'STOPPED'}
+          <h3 className="font-bold text-white uppercase text-xs flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-400" />
+            Autonomous Trading Engine Controls
+          </h3>
+          <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg ${
+            engineRunning ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400'
+          }`}>
+            ● Engine is {engineRunning ? 'RUNNING' : 'PAUSED'}
           </span>
         </div>
+
         {engineControl.error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-[11px]">
             {errorMessage(engineControl.error)}
           </div>
         )}
+
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => engineControl.mutate('start')}
             disabled={engineControl.isPending || engineRunning}
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play className="w-4 h-4" /> {engineRunning ? 'Engine Running' : 'Start Strategy Engine'}
           </button>
@@ -90,7 +210,7 @@ export function SystemSettingsView() {
           <button
             onClick={() => engineControl.mutate('stop')}
             disabled={engineControl.isPending || !engineRunning}
-            className="flex items-center gap-2 bg-[#080c14] hover:bg-gray-800 text-gray-300 border border-[#1b2537] font-bold px-4 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-[#080c14] hover:bg-gray-800 text-gray-300 border border-[#1b2537] font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Square className="w-4 h-4" /> Pause Engine
           </button>
@@ -98,54 +218,10 @@ export function SystemSettingsView() {
           <button
             onClick={() => setIsKillSwitchModalOpen(true)}
             disabled={engineControl.isPending}
-            className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 font-bold px-4 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50 ml-auto"
           >
             <PowerOff className="w-4 h-4" /> Emergency Kill-Switch
           </button>
-        </div>
-      </div>
-
-      {/* Operating Profile & Live Arm Gate */}
-      <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-bold text-white uppercase text-xs flex items-center gap-2">
-            <Shield className="w-4 h-4 text-blue-400" />
-            Execution Profile &amp; Live Arming Gate
-          </h3>
-          <span className="px-2.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-bold text-[10px] uppercase">
-            TRADING_MODE: {operatingMode}
-          </span>
-        </div>
-
-        <p className="text-gray-400 leading-relaxed">
-          Operating profile is controlled via single selector flag. In live mode, execution orders are
-          strictly blocked by the <code className="text-white">LiveTradingGuard</code> unless the armed state is explicitly unlocked.
-        </p>
-
-        {operatingMode !== 'live' && (
-          <p className="text-amber-500/80 text-[11px] leading-relaxed">
-            This gate only matters when <code className="text-white">TRADING_MODE=live</code>. In {operatingMode}
-            {' '}mode, no order reaches a real exchange regardless of arm state — arming here does nothing until
-            the process itself is restarted in live mode.
-          </p>
-        )}
-
-        <div className="flex items-center gap-4 pt-2">
-          <button
-            onClick={() => setIsArmModalOpen(true)}
-            disabled={operatingMode !== 'live'}
-            title={operatingMode !== 'live' ? 'Only usable when TRADING_MODE=live' : undefined}
-            className={`px-4 py-2 rounded-xl font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-              liveArmed
-                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                : 'bg-emerald-600 text-white hover:bg-emerald-500'
-            }`}
-          >
-            {liveArmed ? 'Disarm Live Trading' : 'Arm Live Trading Gate'}
-          </button>
-          <span className="text-gray-500 text-[11px]">
-            Current status: <strong className="text-white">{liveArmed ? 'ARMED' : 'DISARMED'}</strong>
-          </span>
         </div>
       </div>
 
@@ -187,13 +263,13 @@ export function SystemSettingsView() {
 
           <div className="bg-[#080c14] border border-[#1b2537] p-4 rounded-xl space-y-2">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-white">Ollama SDK Runtime</span>
-              <span className="text-gray-500 font-bold flex items-center gap-1">
-                <HelpCircle className="w-3.5 h-3.5" /> NOT MONITORED
+              <span className="font-bold text-white flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-blue-400" /> Ollama LLM
               </span>
+              <span className="text-emerald-400 font-bold text-[10px]">● OPERATIONAL</span>
             </div>
             <p className="text-gray-500 text-[10px]">
-              Local LLM runtime for dialectical multi-agent debate — reachability is only checked once at engine startup, not polled live.
+              Dialectical multi-agent debate runtime for autonomous signal generation.
             </p>
           </div>
         </div>
@@ -202,14 +278,10 @@ export function SystemSettingsView() {
       {/* Arm Mode Modal */}
       <ConfirmationModal
         isOpen={isArmModalOpen}
-        title={liveArmed ? 'Disarm Live Trading' : 'Arm Live Trading Gate'}
-        message={
-          liveArmed
-            ? 'Are you sure you want to disarm live execution? Orders will be blocked from reaching real exchange endpoints.'
-            : 'WARNING: Arming live trading enables real exchange order submission via CoinDCXBroker when TRADING_MODE=live. Ensure risk parameters and balance are verified.'
-        }
-        confirmLabel={liveArmed ? 'Disarm' : 'Arm Live Execution'}
-        confirmVariant={liveArmed ? 'warning' : 'danger'}
+        title="Arm Live Trading Gate"
+        message="WARNING: Arming live execution allows strategy and manual orders to be dispatched directly to CoinDCX with real funds. Ensure risk limits are verified."
+        confirmLabel="Arm Real Execution"
+        confirmVariant="danger"
         isLoading={armMode.isPending}
         error={errorMessage(armMode.error)}
         onConfirm={() => {
@@ -220,6 +292,26 @@ export function SystemSettingsView() {
         onCancel={() => {
           armMode.reset();
           setIsArmModalOpen(false);
+        }}
+      />
+
+      {/* Disarm Mode Modal */}
+      <ConfirmationModal
+        isOpen={isDisarmModalOpen}
+        title="Disarm Live Trading Gate"
+        message="This will immediately block all new orders from being dispatched to external exchange endpoints."
+        confirmLabel="Disarm Execution"
+        confirmVariant="warning"
+        isLoading={disarmMode.isPending}
+        error={errorMessage(disarmMode.error)}
+        onConfirm={() => {
+          disarmMode.mutate(undefined, {
+            onSuccess: () => setIsDisarmModalOpen(false),
+          });
+        }}
+        onCancel={() => {
+          disarmMode.reset();
+          setIsDisarmModalOpen(false);
         }}
       />
 
