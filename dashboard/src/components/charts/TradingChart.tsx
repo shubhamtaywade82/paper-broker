@@ -10,6 +10,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts';
+import { useStore } from '../../store/useStore';
 
 export interface ChartMarker {
   time: number;
@@ -52,7 +53,13 @@ export function TradingChart({
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const lastBarRef = useRef<CandlestickData | null>(null);
+  const initialFitDoneRef = useRef(false);
 
+  const livePrice = useStore((s) => s.livePrice[symbol]);
+  const prevSymbolRef = useRef(symbol);
+
+  // Initialize Lightweight Chart instance
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -71,25 +78,12 @@ export function TradingChart({
       },
       crosshair: {
         mode: 1,
-        vertLine: {
-          color: '#3b82f6',
-          width: 1,
-          style: 3,
-          labelBackgroundColor: '#1a2332',
-        },
-        horzLine: {
-          color: '#3b82f6',
-          width: 1,
-          style: 3,
-          labelBackgroundColor: '#1a2332',
-        },
+        vertLine: { color: '#3b82f6', width: 1, style: 3, labelBackgroundColor: '#1a2332' },
+        horzLine: { color: '#3b82f6', width: 1, style: 3, labelBackgroundColor: '#1a2332' },
       },
       rightPriceScale: {
         borderColor: '#1b2537',
-        scaleMargins: {
-          top: 0.1,
-          bottom: showVolume ? 0.25 : 0.1,
-        },
+        scaleMargins: { top: 0.1, bottom: showVolume ? 0.25 : 0.1 },
       },
       timeScale: {
         borderColor: '#1b2537',
@@ -114,10 +108,7 @@ export function TradingChart({
         priceScaleId: '',
       });
       volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-          top: 0.8,
-          bottom: 0,
-        },
+        scaleMargins: { top: 0.8, bottom: 0 },
       });
     }
 
@@ -136,11 +127,18 @@ export function TradingChart({
       window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
+      lastBarRef.current = null;
     };
   }, [height, showVolume]);
 
+  // Update historical dataset when candles or symbol changes
   useEffect(() => {
     if (!candleSeriesRef.current || candles.length === 0) return;
+
+    if (prevSymbolRef.current !== symbol) {
+      initialFitDoneRef.current = false;
+      prevSymbolRef.current = symbol;
+    }
 
     const formattedCandles: CandlestickData[] = candles
       .map((c) => ({
@@ -150,9 +148,8 @@ export function TradingChart({
         low: c.low,
         close: c.close,
       }))
-      .sort((a, b) => (Number(a.time) - Number(b.time)));
+      .sort((a, b) => Number(a.time) - Number(b.time));
 
-    // Deduplicate timestamps if any
     const uniqueCandles: CandlestickData[] = [];
     const seen = new Set<number>();
     for (const c of formattedCandles) {
@@ -163,6 +160,7 @@ export function TradingChart({
     }
 
     candleSeriesRef.current.setData(uniqueCandles);
+    lastBarRef.current = uniqueCandles[uniqueCandles.length - 1] || null;
 
     if (volumeSeriesRef.current && showVolume) {
       const volumeData: HistogramData[] = candles
@@ -171,7 +169,7 @@ export function TradingChart({
           value: c.volume,
           color: c.close >= c.open ? 'rgba(5, 205, 153, 0.25)' : 'rgba(255, 77, 79, 0.25)',
         }))
-        .sort((a, b) => (Number(a.time) - Number(b.time)));
+        .sort((a, b) => Number(a.time) - Number(b.time));
 
       const uniqueVolumes: HistogramData[] = [];
       const volSeen = new Set<number>();
@@ -184,25 +182,30 @@ export function TradingChart({
       volumeSeriesRef.current.setData(uniqueVolumes);
     }
 
-    if (markers.length > 0) {
-      const seriesMarkers: SeriesMarker<Time>[] = markers
-        .map((m) => ({
-          time: Math.floor(m.time / 1000) as UTCTimestamp,
-          position: m.position,
-          color: m.color,
-          shape: m.shape,
-          text: m.text,
-        }))
-        .filter((m) => !isNaN(Number(m.time)) && Number(m.time) > 0)
-        .sort((a, b) => Number(a.time) - Number(b.time));
+    applyChartMarkers(candleSeriesRef.current, markers);
 
-      candleSeriesRef.current.setMarkers(seriesMarkers);
-    } else {
-      candleSeriesRef.current.setMarkers([]);
+    if (!initialFitDoneRef.current) {
+      chartRef.current?.timeScale().fitContent();
+      initialFitDoneRef.current = true;
     }
+  }, [candles, markers, showVolume, symbol]);
 
-    chartRef.current?.timeScale().fitContent();
-  }, [candles, markers, showVolume]);
+  // Real-time live price tick updates on the forming candle bar
+  useEffect(() => {
+    if (!candleSeriesRef.current || !livePrice || !lastBarRef.current) return;
+
+    const currentBar = lastBarRef.current;
+    const updatedBar: CandlestickData = {
+      time: currentBar.time,
+      open: currentBar.open,
+      high: Math.max(currentBar.high, livePrice),
+      low: Math.min(currentBar.low, livePrice),
+      close: livePrice,
+    };
+
+    lastBarRef.current = updatedBar;
+    candleSeriesRef.current.update(updatedBar);
+  }, [livePrice]);
 
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -210,8 +213,18 @@ export function TradingChart({
     <div className="bg-[#0b101b] rounded-xl border border-[#1b2537] overflow-hidden flex flex-col">
       <div className="h-10 px-4 border-b border-[#1b2537] flex items-center justify-between bg-[#0f1623]/80">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-white font-mono text-xs">{symbol}</span>
-          <span className="text-[10px] text-gray-500 font-mono">CANDLESTICK + VOLUME</span>
+          <span className="font-bold text-white font-mono text-xs flex items-center gap-1.5">
+            {symbol}
+            {livePrice && (
+              <span className="text-emerald-400 font-bold ml-1 text-xs">
+                ${livePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              </span>
+            )}
+          </span>
+          <span className="text-[10px] text-gray-500 font-mono hidden sm:inline flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
+            LIVE TICK FEED
+          </span>
         </div>
         {onTimeframeChange && (
           <div className="flex items-center gap-1">
@@ -243,4 +256,27 @@ export function TradingChart({
       </div>
     </div>
   );
+}
+
+function applyChartMarkers(
+  series: ISeriesApi<'Candlestick'>,
+  markers: ChartMarker[]
+): void {
+  if (markers.length === 0) {
+    series.setMarkers([]);
+    return;
+  }
+
+  const seriesMarkers: SeriesMarker<Time>[] = markers
+    .map((m) => ({
+      time: Math.floor(m.time / 1000) as UTCTimestamp,
+      position: m.position,
+      color: m.color,
+      shape: m.shape,
+      text: m.text,
+    }))
+    .filter((m) => !isNaN(Number(m.time)) && Number(m.time) > 0)
+    .sort((a, b) => Number(a.time) - Number(b.time));
+
+  series.setMarkers(seriesMarkers);
 }

@@ -7,6 +7,7 @@ export type WebSocketEventType =
   | 'health.updated'
   | 'incident.reported'
   | 'mode.changed'
+  | 'mode.aggressive'
   | 'kill_switch.activated'
   | 'trade.stream'
   | 'book.update'

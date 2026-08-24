@@ -6,6 +6,8 @@ import {
   useDisarmMode,
   useEngineControl,
   useProviderHealth,
+  useSetAggressiveMode,
+  useTriggerEvaluation,
   type ProviderHealthState,
 } from '../../hooks/useApi';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -48,13 +50,15 @@ function ProviderStatusBadge({ health }: { health?: ProviderHealthState }) {
 }
 
 export function SystemSettingsView() {
-  const { operatingMode, liveArmed } = useStore();
+  const { operatingMode, liveArmed, aggressiveMode } = useStore();
   const { data: dashboardData } = useDashboard();
   const { data: providerHealth } = useProviderHealth();
 
   const armMode = useArmMode();
   const disarmMode = useDisarmMode();
   const engineControl = useEngineControl();
+  const setAggressive = useSetAggressiveMode();
+  const triggerEval = useTriggerEvaluation();
 
   const engineRunning = dashboardData?.engineRunning ?? false;
 
@@ -176,6 +180,44 @@ export function SystemSettingsView() {
             </div>
           </div>
         )}
+
+        {/* Aggressive Fast-Paced Simulation Mode Box */}
+        <div className="p-4 rounded-xl bg-[#080c14] border border-purple-500/30 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-purple-400 font-bold text-xs uppercase flex items-center gap-1.5">
+                <Zap className="w-4 h-4" /> Fast Aggressive Simulation Profile
+              </h4>
+              <p className="text-gray-300 text-xs mt-1 leading-relaxed">
+                Evaluates setups rapidly on 1-minute bars with lower confluence thresholds and tight dynamic ATR brackets (1.0x SL / 1.5x TP).
+                Enables testing the complete trade lifecycle (entry, position flipping, SL/TP execution, fee deduction, and realized PnL) in real-time.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => triggerEval.mutate()}
+                disabled={triggerEval.isPending}
+                className="flex items-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 border border-purple-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{triggerEval.isPending ? 'Evaluating...' : 'Scan All Pairs Now'}</span>
+              </button>
+
+              <button
+                onClick={() => setAggressive.mutate(!aggressiveMode)}
+                disabled={setAggressive.isPending}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
+                  aggressiveMode
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/30'
+                    : 'bg-[#0f1623] text-gray-400 hover:text-white border border-[#1b2537]'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{aggressiveMode ? 'Aggressive: ON' : 'Aggressive: OFF'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Trading Engine Operations */}

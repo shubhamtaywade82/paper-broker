@@ -154,10 +154,16 @@ describe('SignalExecutor', () => {
     await run(db, executor, 'OPEN_LONG', { features: { quantity: 9.803, leverage: 5 } });
 
     const openOrders = broker.getOpenOrders();
-    expect(openOrders.length).toBe(1);
-    expect(openOrders[0]?.type).toBe('STOP_MARKET');
-    expect(openOrders[0]?.stopPrice).toBe(95);
-    expect(openOrders[0]?.reduceOnly).toBe(true);
+    expect(openOrders.length).toBe(2);
+    const stopOrder = openOrders.find((o) => o.type === 'STOP_MARKET');
+    expect(stopOrder).toBeDefined();
+    expect(stopOrder?.stopPrice).toBe(95);
+    expect(stopOrder?.reduceOnly).toBe(true);
+
+    const tpOrder = openOrders.find((o) => o.type === 'TAKE_PROFIT_MARKET');
+    expect(tpOrder).toBeDefined();
+    expect(tpOrder?.stopPrice).toBe(110);
+    expect(tpOrder?.reduceOnly).toBe(true);
   });
 
   it('uses the quantity and leverage from signal.features, not a sizing engine', async () => {

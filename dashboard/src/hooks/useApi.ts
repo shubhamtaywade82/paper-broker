@@ -33,6 +33,7 @@ export function useDashboard() {
   const setAccount = useStore((s) => s.setAccount);
   const setPositions = useStore((s) => s.setPositions);
   const setOperatingMode = useStore((s) => s.setOperatingMode);
+  const setAggressiveMode = useStore((s) => s.setAggressiveMode);
 
   return useQuery({
     queryKey: ['dashboard'],
@@ -40,6 +41,7 @@ export function useDashboard() {
       const data = await fetchJson<{
         mode?: 'paper' | 'shadow' | 'live';
         liveArmed?: boolean;
+        aggressiveMode?: boolean;
         engineRunning?: boolean;
         account: AccountInfo;
         positions: Position[];
@@ -50,6 +52,7 @@ export function useDashboard() {
       if (data.account) setAccount(data.account);
       if (data.positions) setPositions(data.positions);
       if (data.mode) setOperatingMode(data.mode, data.liveArmed);
+      if (typeof data.aggressiveMode === 'boolean') setAggressiveMode(data.aggressiveMode);
       return data;
     },
     refetchInterval: 5000,
@@ -457,6 +460,42 @@ export function useTriggerCycle() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cycles'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useSetAggressiveMode() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      return fetchJson<{ aggressive: boolean }>('/api/v1/mode/aggressive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    },
+    onSuccess: (res) => {
+      useStore.getState().setAggressiveMode(res.aggressive);
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useTriggerEvaluation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      return fetchJson<{ evaluated: number }>('/api/v1/engine/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
     },
   });
 }

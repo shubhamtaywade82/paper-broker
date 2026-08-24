@@ -621,12 +621,14 @@ export class PaperBroker implements ExecutionBroker {
       const slippage = D(this.marketSlippageBps).div(10000);
 
       if (order.side === 'BUY') {
-        if (!market.ask) return NaN;
-        return D(market.ask).mul(D(1).add(slippage)).toNumber();
+        const ask = market.ask ?? market.last ?? market.mark;
+        if (!ask || !Number.isFinite(ask) || ask <= 0) return NaN;
+        return D(ask).mul(D(1).add(slippage)).toNumber();
       }
 
-      if (!market.bid) return NaN;
-      return D(market.bid).mul(D(1).sub(slippage)).toNumber();
+      const bid = market.bid ?? market.last ?? market.mark;
+      if (!bid || !Number.isFinite(bid) || bid <= 0) return NaN;
+      return D(bid).mul(D(1).sub(slippage)).toNumber();
     }
 
     if (order.type === 'LIMIT') {
@@ -661,6 +663,15 @@ export class PaperBroker implements ExecutionBroker {
       (market.bid && market.ask ? D(market.bid).add(market.ask).div(2).toNumber() : undefined);
 
     if (!triggerReference) return false;
+
+    const isTakeProfit = order.type === 'TAKE_PROFIT_MARKET';
+
+    if (isTakeProfit) {
+      if (order.side === 'SELL') {
+        return triggerReference >= order.stopPrice;
+      }
+      return triggerReference <= order.stopPrice;
+    }
 
     if (order.side === 'BUY') {
       return triggerReference >= order.stopPrice;

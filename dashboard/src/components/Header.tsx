@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { useStore, SUPPORTED_SYMBOLS } from '../store/useStore';
-import { useTriggerCycle, useEngineControl } from '../hooks/useApi';
+import {
+  useTriggerCycle,
+  useEngineControl,
+  useSetAggressiveMode,
+  useTriggerEvaluation,
+} from '../hooks/useApi';
 import { ConfirmationModal } from './common/ConfirmationModal';
 import { OrderModal } from './common/OrderModal';
 import {
@@ -11,6 +16,7 @@ import {
   Play,
   Plus,
   PowerOff,
+  Zap,
 } from 'lucide-react';
 
 export function Header() {
@@ -20,6 +26,7 @@ export function Header() {
     livePrice,
     operatingMode,
     liveArmed,
+    aggressiveMode,
     selectedSymbol,
     setSelectedSymbol,
   } = useStore();
@@ -29,6 +36,8 @@ export function Header() {
 
   const triggerCycle = useTriggerCycle();
   const engineControl = useEngineControl();
+  const setAggressive = useSetAggressiveMode();
+  const triggerEval = useTriggerEvaluation();
 
   return (
     <>
@@ -82,6 +91,21 @@ export function Header() {
               </span>
             )}
           </div>
+
+          {/* Fast Aggressive Mode Toggle */}
+          <button
+            onClick={() => setAggressive.mutate(!aggressiveMode)}
+            disabled={setAggressive.isPending}
+            title="Aggressive Simulation Mode: evaluates 1m candles with tight stops and rapid lifecycle execution"
+            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold uppercase transition-all cursor-pointer ${
+              aggressiveMode
+                ? 'bg-purple-500/20 text-purple-400 border-purple-500/40 shadow-lg shadow-purple-900/30 animate-pulse'
+                : 'bg-[#080c14] text-gray-400 hover:text-white border-[#1b2537]'
+            }`}
+          >
+            <Zap className={`w-3.5 h-3.5 ${aggressiveMode ? 'text-purple-400' : 'text-gray-500'}`} />
+            <span>AGGRESSIVE MODE: {aggressiveMode ? 'ON' : 'OFF'}</span>
+          </button>
 
           {/* Compact Mobile Symbol Selector */}
           <div className="flex lg:hidden items-center gap-1 bg-[#080c14] border border-[#1b2537] rounded-lg px-2 py-1">
@@ -187,6 +211,16 @@ export function Header() {
             >
               <Play className="w-3.5 h-3.5" />
               <span>{triggerCycle.isPending ? 'Debating...' : 'Cycle'}</span>
+            </button>
+
+            <button
+              onClick={() => triggerEval.mutate()}
+              disabled={triggerEval.isPending}
+              title="Immediately runs a fresh strategy candle evaluation across all configured pairs"
+              className="flex items-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 border border-purple-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>{triggerEval.isPending ? 'Scanning...' : 'Scan Pairs'}</span>
             </button>
 
             <button

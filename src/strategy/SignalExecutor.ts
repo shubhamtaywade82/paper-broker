@@ -38,10 +38,10 @@ export class SignalExecutor {
 
     const entryPrice =
       signal.action === 'CLOSE_LONG' || signal.action === 'OPEN_SHORT'
-        ? market?.bid
-        : market?.ask;
+        ? market?.bid ?? market?.last ?? market?.mark
+        : market?.ask ?? market?.last ?? market?.mark;
 
-    if (entryPrice === undefined) {
+    if (entryPrice === undefined || !Number.isFinite(entryPrice) || entryPrice <= 0) {
       log.warn(`[Signal] No price for ${signal.symbol}, skipping order`);
       return true;
     }
@@ -79,12 +79,23 @@ export class SignalExecutor {
 
       signals.updateStatus(signal.id, 'EXECUTED', order.id);
 
-      if (signal.action.startsWith('OPEN') && signal.stopLossPrice) {
-        const stop = orderFactory.buildStopLossOrder(signal, quantity, leverage);
-        if (stop) {
-          const stopOrder = broker.submitOrder(stop);
-          if (stopOrder.status === 'REJECTED') {
-            log.warn(`[Signal] Stop order rejected: ${stopOrder.rejectReason ?? 'unknown'}`);
+      if (signal.action.startsWith('OPEN')) {
+        if (signal.stopLossPrice) {
+          const stop = orderFactory.buildStopLossOrder(signal, quantity, leverage);
+          if (stop) {
+            const stopOrder = broker.submitOrder(stop);
+            if (stopOrder.status === 'REJECTED') {
+              log.warn(`[Signal] Stop order rejected: ${stopOrder.rejectReason ?? 'unknown'}`);
+            }
+          }
+        }
+        if (signal.takeProfitPrice) {
+          const tp = orderFactory.buildTakeProfitOrder(signal, quantity, leverage);
+          if (tp) {
+            const tpOrder = broker.submitOrder(tp);
+            if (tpOrder.status === 'REJECTED') {
+              log.warn(`[Signal] TP order rejected: ${tpOrder.rejectReason ?? 'unknown'}`);
+            }
           }
         }
       }

@@ -98,6 +98,23 @@ export async function startEngine(): Promise<EngineHandle> {
         logger.error({ err, symbol, interval }, 'Failed to preload historical klines');
       }
     }
+
+    const recent1m = klines.getCandles(symbol, '1m', 1);
+    const recentDefault = klines.getCandles(symbol, timeframes[0] ?? '15m', 1);
+    const latest = recent1m.length > 0 ? recent1m[0] : recentDefault[0];
+    if (latest) {
+      marketState.onBookTicker(symbol, latest.close * 0.9999, latest.close * 1.0001, 10, 10);
+      marketState.onAggTrade(symbol, latest.close, latest.volume);
+      broker.onMarket({
+        symbol,
+        bid: latest.close * 0.9999,
+        ask: latest.close * 1.0001,
+        last: latest.close,
+        mark: latest.close,
+        localTsUtc: Date.now(),
+        stale: false,
+      });
+    }
   }
 
   const orderFactory = new OrderFactory({ defaultLeverage: 5 });
@@ -185,11 +202,14 @@ export async function startEngine(): Promise<EngineHandle> {
     })
   );
 
+  let aggressiveMode = false;
+
   strategyEngine.register(
     createAdaptiveSupertrendStrategy({
       getInstrument: (symbol) => broker.getInstrument(symbol),
       symbols,
       intervals: timeframes,
+      isAggressive: () => aggressiveMode,
       persistencePath: `${dataDir}/adaptive_supertrend_qtable.json`,
       onSignalGenerated: (signal, sym) => {
         logger.info({ sym, action: signal.action, conf: signal.confidence }, 'Adaptive Supertrend signal generated');
@@ -207,19 +227,25 @@ export async function startEngine(): Promise<EngineHandle> {
 
   await strategyEngine.start();
 
-  // Trigger initial candle evaluation across preloaded historical bars so the engine
-  // immediately evaluates trading opportunities upon startup rather than waiting 5-15m
-  for (const symbol of symbols) {
-    for (const interval of timeframes) {
-      const recent = klines.getCandles(symbol, interval, 2);
-      if (recent.length > 0) {
-        const latestClosed = recent[recent.length - 1]!;
-        strategyEngine.onCandleClose(latestClosed).catch((err) => {
-          logger.warn({ err, symbol, interval }, 'Startup candle evaluation notice');
-        });
+  async function evaluateAllSymbols(): Promise<number> {
+    let count = 0;
+    for (const symbol of symbols) {
+      for (const interval of timeframes) {
+        const recent = klines.getCandles(symbol, interval, 2);
+        if (recent.length > 0) {
+          const latestClosed = recent[recent.length - 1]!;
+          await strategyEngine.onCandleClose(latestClosed).catch((err) => {
+            logger.warn({ err, symbol, interval }, 'Candle evaluation notice');
+          });
+          count++;
+        }
       }
     }
+    return count;
   }
+
+  // Trigger initial candle evaluation across preloaded historical bars
+  void evaluateAllSymbols();
 
   const api = new ApiServer({
     broker,
@@ -233,6 +259,12 @@ export async function startEngine(): Promise<EngineHandle> {
     wsGateway,
     host: '0.0.0.0',
     port: env.PORT,
+    getAggressiveMode: () => aggressiveMode,
+    onSetAggressiveMode: (enabled) => {
+      aggressiveMode = enabled;
+      logger.info({ aggressiveMode }, 'Aggressive simulation mode updated');
+    },
+    onTriggerEvaluation: evaluateAllSymbols,
   });
 
   await api.start();

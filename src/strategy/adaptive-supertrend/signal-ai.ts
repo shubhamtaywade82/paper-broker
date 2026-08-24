@@ -16,6 +16,8 @@ export class FuzzySignalAI {
     currentPrice: number;
     supertrendValue: number;
     minConfidence?: number;
+    slAtrMult?: number;
+    tpAtrMult?: number;
   }): AdaptiveSignal {
     const {
       stDirection,
@@ -25,28 +27,34 @@ export class FuzzySignalAI {
       currentPrice,
       supertrendValue,
       minConfidence = 0.55,
+      slAtrMult = 1.5,
+      tpAtrMult = 2.5,
     } = options;
 
     const { rsi, macdHist, volumeRatio, atr } = features;
 
     // Fuzzify Supertrend Direction & Freshness
-    const stBullish = stDirection === 1 ? (isCrossover ? 1.0 : 0.8) : 0;
-    const stBearish = stDirection === -1 ? (isCrossover ? 1.0 : 0.8) : 0;
+    const stBullish = stDirection === 1 ? (isCrossover ? 1.0 : 0.85) : 0;
+    const stBearish = stDirection === -1 ? (isCrossover ? 1.0 : 0.85) : 0;
 
-    // RSI Membership (Bullish if oversold recovery, Bearish if overbought breakdown)
-    const rsiBullish = 1 - this.fuzzyMembership(rsi, 30, 70);
-    const rsiBearish = this.fuzzyMembership(rsi, 30, 70);
+    // RSI Momentum (Bullish if RSI > 50 heading up, Bearish if RSI < 50)
+    const rsiBullish = this.fuzzyMembership(rsi, 40, 70);
+    const rsiBearish = 1 - this.fuzzyMembership(rsi, 30, 60);
 
-    // MACD Histogram Momentum (Positive histogram bullish)
-    const macdBullish = this.fuzzyMembership(macdHist, -0.002 * currentPrice, 0.002 * currentPrice);
+    // MACD Histogram Momentum (Positive histogram bullish, negative bearish)
+    const macdBullish = this.fuzzyMembership(macdHist, -0.001 * currentPrice, 0.001 * currentPrice);
     const macdBearish = 1 - macdBullish;
 
-    // Volume Confirmation (Ratio > 1.0 confirms institutional interest)
-    const volConfirm = this.fuzzyMembership(volumeRatio, 0.7, 1.6);
+    // Volume Confirmation (Baseline 0.5 + boost for high volume)
+    const volConfirm = 0.5 + 0.5 * this.fuzzyMembership(volumeRatio, 0.5, 1.5);
 
-    // Fuzzy Confluence Rule
-    const buyStrength = Math.min(stBullish, Math.max(rsiBullish, macdBullish), volConfirm);
-    const sellStrength = Math.min(stBearish, Math.max(rsiBearish, macdBearish), volConfirm);
+    // Weighted Fuzzy Confluence Rule
+    const buyStrength = stBullish > 0
+      ? 0.55 * stBullish + 0.30 * Math.max(rsiBullish, macdBullish) + 0.15 * volConfirm
+      : 0;
+    const sellStrength = stBearish > 0
+      ? 0.55 * stBearish + 0.30 * Math.max(rsiBearish, macdBearish) + 0.15 * volConfirm
+      : 0;
 
     let action: 'OPEN_LONG' | 'OPEN_SHORT' | 'HOLD' = 'HOLD';
     let confidence = 0;
@@ -56,13 +64,13 @@ export class FuzzySignalAI {
     if (buyStrength > sellStrength && buyStrength >= minConfidence) {
       action = 'OPEN_LONG';
       confidence = Math.round(buyStrength * 100) / 100;
-      stopLossPrice = Math.min(supertrendValue, currentPrice - 1.5 * atr);
-      takeProfitPrice = currentPrice + 2.5 * atr;
+      stopLossPrice = Math.min(supertrendValue, currentPrice - slAtrMult * atr);
+      takeProfitPrice = currentPrice + tpAtrMult * atr;
     } else if (sellStrength > buyStrength && sellStrength >= minConfidence) {
       action = 'OPEN_SHORT';
       confidence = Math.round(sellStrength * 100) / 100;
-      stopLossPrice = Math.max(supertrendValue, currentPrice + 1.5 * atr);
-      takeProfitPrice = currentPrice - 2.5 * atr;
+      stopLossPrice = Math.max(supertrendValue, currentPrice + slAtrMult * atr);
+      takeProfitPrice = currentPrice - tpAtrMult * atr;
     }
 
     const regimeKey = formatRegimeKey(features);

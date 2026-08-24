@@ -189,6 +189,7 @@ interface StoreState {
   wsConnected: boolean;
   operatingMode: 'paper' | 'shadow' | 'live';
   liveArmed: boolean;
+  aggressiveMode: boolean;
   liveEvents: LiveEventItem[];
   livePrice: Record<string, number>;
   tickers: Record<string, TickerData>;
@@ -209,6 +210,7 @@ interface StoreState {
   setPerformance: (perf: PerformanceMetrics) => void;
   setWsConnected: (connected: boolean) => void;
   setOperatingMode: (mode: 'paper' | 'shadow' | 'live', armed?: boolean) => void;
+  setAggressiveMode: (aggressive: boolean) => void;
   addLiveEvent: (event: { type: string; payload: Record<string, unknown>; stream?: string; id?: string }) => void;
   setLivePrice: (symbol: string, price: number) => void;
   setTickers: (tickers: Record<string, TickerData>) => void;
@@ -293,6 +295,7 @@ export const useStore = create<StoreState>((set) => ({
   wsConnected: false,
   operatingMode: getInitialOperatingMode(),
   liveArmed: getInitialLiveArmed(),
+  aggressiveMode: false,
   liveEvents: [],
   livePrice: {},
   tickers: {},
@@ -335,6 +338,7 @@ export const useStore = create<StoreState>((set) => ({
       liveArmed: armed !== undefined ? armed : state.liveArmed,
     }));
   },
+  setAggressiveMode: (aggressiveMode) => set({ aggressiveMode }),
   addLiveEvent: (event) =>
     set((state) => ({
       liveEvents: [

@@ -63,6 +63,9 @@ export interface ApiServerOptions {
   wsGateway?: WebSocketGateway;
   host?: string;
   port?: number;
+  onSetAggressiveMode?: (enabled: boolean) => void;
+  getAggressiveMode?: () => boolean;
+  onTriggerEvaluation?: () => Promise<number>;
 }
 
 export class ApiServer {
@@ -81,8 +84,10 @@ export class ApiServer {
   private host: string;
   private port: number;
   private startedAt = Date.now();
+  private options: ApiServerOptions;
 
   constructor(options: ApiServerOptions) {
+    this.options = options;
     this.broker = options.broker;
     this.engine = options.engine;
     this.signals = options.signals;
@@ -255,6 +260,7 @@ export class ApiServer {
         mode: this.profile?.mode ?? 'paper',
         liveArmed: this.profile?.liveArmed ?? false,
         realOrders: this.profile?.realOrders ?? false,
+        aggressiveMode: this.options.getAggressiveMode?.() ?? false,
         engineRunning: typeof this.engine?.isRunning === 'function' ? this.engine.isRunning() : false,
         account,
         positions,
@@ -630,6 +636,19 @@ export class ApiServer {
         this.wsGateway.broadcast('mode.changed', { mode: this.profile.mode, liveArmed: false });
       }
       return reply.send({ armed: false });
+    });
+
+    this.app.post('/api/v1/mode/aggressive', async (request, reply) => {
+      const body = (request.body as { enabled?: boolean } | undefined) ?? {};
+      const enabled = body.enabled ?? true;
+      this.options.onSetAggressiveMode?.(enabled);
+      this.wsGateway.broadcast('mode.aggressive', { aggressive: enabled });
+      return reply.send({ aggressive: enabled });
+    });
+
+    this.app.post('/api/v1/engine/evaluate', async (_request, reply) => {
+      const evaluated = (await this.options.onTriggerEvaluation?.()) ?? 0;
+      return reply.send({ evaluated });
     });
 
     this.app.post('/engine/start', async () => {

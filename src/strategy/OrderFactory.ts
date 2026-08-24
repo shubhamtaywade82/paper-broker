@@ -110,4 +110,38 @@ export class OrderFactory {
 
     return null;
   }
+
+  buildTakeProfitOrder(signal: Signal, quantity: number, leverage?: number): OrderCommand | null {
+    if (!signal.takeProfitPrice) return null;
+
+    const common = {
+      symbol: signal.symbol,
+      quantity,
+      leverage: leverage ?? this.config.defaultLeverage,
+      strategyId: signal.strategyId,
+      signalId: signal.id,
+      reduceOnly: true,
+      workingType: 'MARK_PRICE' as const,
+    };
+
+    if (signal.action === 'OPEN_LONG') {
+      return {
+        ...common,
+        side: 'SELL' as OrderSide,
+        type: 'TAKE_PROFIT_MARKET' as OrderType,
+        stopPrice: Number(signal.takeProfitPrice),
+      };
+    }
+
+    if (signal.action === 'OPEN_SHORT') {
+      return {
+        ...common,
+        side: 'BUY' as OrderSide,
+        type: 'TAKE_PROFIT_MARKET' as OrderType,
+        stopPrice: Number(signal.takeProfitPrice),
+      };
+    }
+
+    return null;
+  }
 }

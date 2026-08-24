@@ -20,6 +20,7 @@ export interface AdaptiveSupertrendDeps {
   minConfidence?: number;
   riskFraction?: number;
   persistencePath?: string;
+  isAggressive?: () => boolean;
   onSignalGenerated?: (signal: AdaptiveSignal, symbol: string) => void;
 }
 
@@ -34,9 +35,9 @@ export function createAdaptiveSupertrendStrategy(deps: AdaptiveSupertrendDeps): 
     name: 'AI-Based Adaptive Supertrend',
     enabled: true,
     symbols: deps.symbols ?? ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
-    intervals: deps.intervals ?? ['15m', '5m'],
+    intervals: deps.intervals ?? ['1m', '5m', '15m'],
     priority: 8,
-    cooldownMs: 180_000,
+    cooldownMs: 30_000,
     onCandleClose: (ctx, candle) => evaluateCandle(deps, paramAI, signalAI, ctx, candle),
   };
 }
@@ -62,6 +63,11 @@ function evaluateCandle(
 
   if (currentSt === undefined || Number.isNaN(currentSt) || currentDir === undefined) return null;
 
+  const aggressive = deps.isAggressive?.() ?? false;
+  const minConfidence = deps.minConfidence ?? (aggressive ? 0.30 : 0.55);
+  const slAtrMult = aggressive ? 1.0 : 1.5;
+  const tpAtrMult = aggressive ? 1.5 : 2.5;
+
   const signal = signalAI.generateSignal({
     stDirection: currentDir,
     isCrossover: stResult.isCrossover,
@@ -69,7 +75,9 @@ function evaluateCandle(
     params,
     currentPrice: candle.close,
     supertrendValue: currentSt,
-    minConfidence: deps.minConfidence ?? 0.6,
+    minConfidence,
+    slAtrMult,
+    tpAtrMult,
   });
 
   if (signal.action === 'HOLD') return null;
