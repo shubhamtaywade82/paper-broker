@@ -8,6 +8,9 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
 
+  API_KEY: z.string().min(16).optional(),
+  LIVE_ARM_PASSCODE: z.string().min(4).optional(),
+
   TRADING_MODE: z.enum(['paper', 'shadow', 'live']).default('paper'),
   LIVE_TRADING_ARMED: z
     .string()

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import crypto from 'node:crypto';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { z } from 'zod';
 import type { ExecutionBroker } from '../broker/types.js';
@@ -49,6 +50,30 @@ const ArmModeSchema = z.object({
   passcode: z.string().min(1).optional(),
 });
 
+const MAX_QUERY_LIMIT = 1000;
+
+/** Clamps a client-supplied `limit` query param into [1, MAX_QUERY_LIMIT], falling back to `def` when absent/invalid. */
+function parseLimit(raw: string | undefined, def: number, max = MAX_QUERY_LIMIT): number {
+  const n = raw !== undefined ? parseInt(raw, 10) : def;
+  if (!Number.isFinite(n) || n <= 0) return def;
+  return Math.min(n, max);
+}
+
+const SYMBOL_PATTERN = /^[A-Z0-9]{2,20}$/;
+
+/** Whitelists symbol values before they are interpolated into outbound Binance proxy URLs. */
+function isValidSymbol(symbol: string): boolean {
+  return SYMBOL_PATTERN.test(symbol);
+}
+
+/** Constant-time string comparison for API key checks (mismatched lengths short-circuit safely). */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 export interface ApiServerOptions {
   broker: ExecutionBroker;
   engine: StrategyEngine;
@@ -66,6 +91,10 @@ export interface ApiServerOptions {
   onSetAggressiveMode?: (enabled: boolean) => void;
   getAggressiveMode?: () => boolean;
   onTriggerEvaluation?: () => Promise<number>;
+  /** When set, requires `Authorization: Bearer <apiKey>` (or `x-api-key`) on all order/engine/mode control endpoints. */
+  apiKey?: string;
+  /** When set, `/api/v1/mode/arm` requires a matching `passcode` in the request body. */
+  armPasscode?: string;
 }
 
 export class ApiServer {
@@ -85,6 +114,9 @@ export class ApiServer {
   private port: number;
   private startedAt = Date.now();
   private options: ApiServerOptions;
+  private backtestInFlight = false;
+  private indexHtmlCache?: string;
+  private readonly assetCache = new Map<string, Buffer>();
 
   constructor(options: ApiServerOptions) {
     this.options = options;
@@ -107,8 +139,33 @@ export class ApiServer {
 
   private async init(): Promise<void> {
     await this.app.register(fastifyWebsocket);
+    if (!this.options.apiKey) {
+      logger.warn('API_KEY not configured — order/engine/mode control endpoints are unauthenticated (assumes trusted/localhost deployment)');
+    }
     this.registerRoutes();
   }
+
+  /**
+   * Fastify preHandler guarding order submission, kill switch, mode/arm, and engine
+   * control routes. No-ops when `apiKey` is unset so local/dev/test deployments keep
+   * working without configuration (see PROJECT_STATE.md "No authentication on API yet").
+   */
+  private requireApiKey = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const expected = this.options.apiKey;
+    if (!expected) return;
+
+    const authHeader = request.headers['authorization'];
+    const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length)
+      : undefined;
+    const apiKeyHeader = request.headers['x-api-key'];
+    const provided = bearer ?? (typeof apiKeyHeader === 'string' ? apiKeyHeader : undefined);
+
+    if (!provided || !safeEqual(provided, expected)) {
+      metrics.inc('api_auth_rejections_total');
+      reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Valid API key required' });
+    }
+  };
 
   private registerRoutes(): void {
     this.registerWebSocketRoutes();
@@ -150,29 +207,52 @@ export class ApiServer {
     const distPath = path.resolve(process.cwd(), 'dashboard', 'dist');
     const indexPath = path.join(distPath, 'index.html');
 
+    const assetsDir = path.resolve(distPath, 'assets');
+
     this.app.get('/assets/:file', async (request, reply) => {
       const { file } = request.params as { file: string };
-      const filePath = path.join(distPath, 'assets', file);
-      if (fs.existsSync(filePath)) {
-        const ext = path.extname(filePath);
-        const mimeType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.svg' ? 'image/svg+xml' : 'application/octet-stream';
-        return reply.type(mimeType).send(fs.readFileSync(filePath));
+      // Strip any directory components (blocks "../" traversal) and reject
+      // anything that still doesn't round-trip to a bare filename.
+      const safeName = path.basename(file);
+      if (!safeName || safeName === '.' || safeName === '..' || safeName !== file) {
+        return reply.code(400).send({ error: 'INVALID_FILE_PARAM' });
       }
-      return reply.code(404).send({ error: 'FILE_NOT_FOUND' });
+      const filePath = path.join(assetsDir, safeName);
+
+      const cached = this.assetCache.get(safeName);
+      if (cached) {
+        const ext = path.extname(safeName);
+        const mimeType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.svg' ? 'image/svg+xml' : 'application/octet-stream';
+        return reply.type(mimeType).send(cached);
+      }
+
+      try {
+        const contents = await fs.promises.readFile(filePath);
+        this.assetCache.set(safeName, contents);
+        const ext = path.extname(safeName);
+        const mimeType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.svg' ? 'image/svg+xml' : 'application/octet-stream';
+        return reply.type(mimeType).send(contents);
+      } catch {
+        return reply.code(404).send({ error: 'FILE_NOT_FOUND' });
+      }
     });
 
-    this.app.get('/', async (_req, reply) => {
-      if (fs.existsSync(indexPath)) {
-        return reply.type('text/html').send(fs.readFileSync(indexPath, 'utf-8'));
+    const readIndexHtml = async (): Promise<string> => {
+      if (this.indexHtmlCache !== undefined) return this.indexHtmlCache;
+      try {
+        this.indexHtmlCache = await fs.promises.readFile(indexPath, 'utf-8');
+      } catch {
+        this.indexHtmlCache = DASHBOARD_HTML;
       }
-      return reply.type('text/html').send(DASHBOARD_HTML);
+      return this.indexHtmlCache;
+    };
+
+    this.app.get('/', async (_req, reply) => {
+      return reply.type('text/html').send(await readIndexHtml());
     });
 
     this.app.get('/dashboard', async (_req, reply) => {
-      if (fs.existsSync(indexPath)) {
-        return reply.type('text/html').send(fs.readFileSync(indexPath, 'utf-8'));
-      }
-      return reply.type('text/html').send(DASHBOARD_HTML);
+      return reply.type('text/html').send(await readIndexHtml());
     });
 
     this.app.get('/favicon.ico', async (_req, reply) => {
@@ -285,11 +365,14 @@ export class ApiServer {
       incidents: this.errorNormalizer?.getRecentIncidents(50) ?? [],
     }));
 
-    this.app.get('/api/v1/klines', async (request) => {
+    this.app.get('/api/v1/klines', async (request, reply) => {
       const query = request.query as { symbol?: string; interval?: string; limit?: string };
-      const symbol = query.symbol || 'SOLUSDT';
+      const symbol = (query.symbol || 'SOLUSDT').toUpperCase();
+      if (!isValidSymbol(symbol)) {
+        return reply.code(400).send({ error: 'INVALID_SYMBOL' });
+      }
       const interval = query.interval || '15m';
-      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      const limit = parseLimit(query.limit, 100);
       let cached = this.klines?.getCandles(symbol, interval, limit) ?? [];
       if (cached.length === 0 && this.klines) {
         cached = await this.klines.fetchHistoricalKlines(symbol, interval, limit);
@@ -299,7 +382,7 @@ export class ApiServer {
 
     this.app.get('/api/v1/activity', async (request) => {
       const query = request.query as { limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const limit = parseLimit(query.limit, 20);
       const events = this.events.getEvents({ limit });
       return events.map(e => ({
         id: e.id,
@@ -311,7 +394,7 @@ export class ApiServer {
 
     this.app.get('/api/v1/fills', async (request) => {
       const query = request.query as { symbol?: string; limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      const limit = parseLimit(query.limit, 100);
       const events = this.events.getEvents({ type: 'FILL_CREATED', limit });
       return events
         .map((e) => e.payload as Record<string, unknown>)
@@ -320,7 +403,7 @@ export class ApiServer {
 
     this.app.get('/api/v1/journal', async (request) => {
       const query = request.query as { symbol?: string; limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      const limit = parseLimit(query.limit, 100);
 
       // signalId is shared between the order that opened a position and the
       // STOP_MARKET order placed alongside it (both come from the same Signal) —
@@ -365,7 +448,7 @@ export class ApiServer {
 
     this.app.get('/api/v1/equity-curve', async (request) => {
       const query = request.query as { limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      const limit = parseLimit(query.limit, 100);
       if (!this.snapshots) return [];
       return this.snapshots.queryAccountSnapshots('paper-main', limit);
     });
@@ -391,9 +474,12 @@ export class ApiServer {
       };
     });
 
-    this.app.get('/api/v1/orderbook', async (request) => {
+    this.app.get('/api/v1/orderbook', async (request, reply) => {
       const query = request.query as { symbol?: string; limit?: string };
-      const symbol = query.symbol || 'SOLUSDT';
+      const symbol = (query.symbol || 'SOLUSDT').toUpperCase();
+      if (!isValidSymbol(symbol)) {
+        return reply.code(400).send({ error: 'INVALID_SYMBOL' });
+      }
       let binanceLimit = 50;
       const requested = query.limit ? parseInt(query.limit, 10) : 50;
       if (requested <= 5) binanceLimit = 5;
@@ -437,10 +523,13 @@ export class ApiServer {
       };
     });
 
-    this.app.get('/api/v1/trades', async (request) => {
+    this.app.get('/api/v1/trades', async (request, reply) => {
       const query = request.query as { symbol?: string; limit?: string };
-      const symbol = query.symbol || 'SOLUSDT';
-      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const symbol = (query.symbol || 'SOLUSDT').toUpperCase();
+      if (!isValidSymbol(symbol)) {
+        return reply.code(400).send({ error: 'INVALID_SYMBOL' });
+      }
+      const limit = parseLimit(query.limit, 20, 1000);
       try {
         const res = await fetch(`https://fapi.binance.com/fapi/v1/trades?symbol=${symbol}&limit=${limit}`);
         if (!res.ok) return [];
@@ -477,8 +566,8 @@ export class ApiServer {
 
     this.app.get('/api/v1/agents/cycles', async (request) => {
       const query = request.query as { symbol?: string; limit?: string; offset?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 20;
-      const offset = query.offset ? parseInt(query.offset, 10) : 0;
+      const limit = parseLimit(query.limit, 20);
+      const offset = query.offset ? Math.max(0, parseInt(query.offset, 10) || 0) : 0;
       const cycles = this.events.getAgentCycles({ symbol: query.symbol, limit, offset });
       return { cycles, total: cycles.length };
     });
@@ -520,7 +609,7 @@ export class ApiServer {
   private registerBacktestRoutes(): void {
     this.app.get('/api/v1/backtest/history', async (request) => {
       const query = request.query as { limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const limit = parseLimit(query.limit, 20);
       const rows = this.events.raw.prepare(
         'SELECT id, symbol, start_time, end_time, duration_days, initial_equity, final_equity, total_net_pnl, total_return_pct, total_trades, win_rate, profit_factor, max_drawdown, avg_r, created_at_utc FROM backtest_runs ORDER BY created_at_utc DESC LIMIT ?'
       ).all(limit) as Array<Record<string, unknown>>;
@@ -563,9 +652,17 @@ export class ApiServer {
       };
     });
 
-    this.app.post('/api/v1/backtest/run', async (request, reply) => {
+    this.app.post('/api/v1/backtest/run', { preHandler: this.requireApiKey }, async (request, reply) => {
+      if (this.backtestInFlight) {
+        return reply.code(429).send({ error: 'BACKTEST_IN_PROGRESS', message: 'Another backtest run is already in progress' });
+      }
+      this.backtestInFlight = true;
       const body = (request.body ?? {}) as Record<string, unknown>;
       const symbol = String(body['symbol'] || 'SOLUSDT').toUpperCase();
+      if (!isValidSymbol(symbol)) {
+        this.backtestInFlight = false;
+        return reply.code(400).send({ error: 'INVALID_SYMBOL' });
+      }
       const days = Math.min(Math.max(Number(body['days'] || 3), 1), 30);
       const initialEquity = Math.max(Number(body['initialEquity'] || 10000), 100);
       const riskPerTradePct = Math.min(Math.max(Number(body['riskPerTradePct'] || 0.02), 0.005), 0.1);
@@ -630,12 +727,14 @@ export class ApiServer {
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Backtest failed');
         return reply.code(500).send({ error: 'BACKTEST_FAILED', message: (err as Error).message });
+      } finally {
+        this.backtestInFlight = false;
       }
     });
   }
 
   private registerCommandRoutes(): void {
-    this.app.post('/orders', async (request, reply) => {
+    this.app.post('/orders', { preHandler: this.requireApiKey }, async (request, reply) => {
       const parsed = CreateOrderSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'INVALID_ORDER', details: parsed.error.flatten() });
@@ -652,7 +751,7 @@ export class ApiServer {
       }
     });
 
-    this.app.post('/orders/cancel', async (request, reply) => {
+    this.app.post('/orders/cancel', { preHandler: this.requireApiKey }, async (request, reply) => {
       const parsed = CancelOrderSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'INVALID_REQUEST', details: parsed.error.flatten() });
@@ -667,7 +766,7 @@ export class ApiServer {
       return reply.send(order);
     });
 
-    this.app.post('/orders/cancel-all', async (request) => {
+    this.app.post('/orders/cancel-all', { preHandler: this.requireApiKey }, async (request) => {
       const parsed = CancelAllSchema.safeParse(request.body);
       const symbol = parsed.success ? parsed.data.symbol : undefined;
       await this.broker.cancelAllOrders(symbol);
@@ -675,7 +774,7 @@ export class ApiServer {
       return { canceled: true, symbol: symbol ?? 'all' };
     });
 
-    this.app.post('/api/v1/mode/arm', async (request, reply) => {
+    this.app.post('/api/v1/mode/arm', { preHandler: this.requireApiKey }, async (request, reply) => {
       const parsed = ArmModeSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'INVALID_REQUEST' });
@@ -683,13 +782,18 @@ export class ApiServer {
       if (this.profile?.mode !== 'live') {
         return reply.code(409).send({ error: 'NOT_LIVE_MODE', message: 'Arming requires TRADING_MODE=live' });
       }
+      const requiredPasscode = this.options.armPasscode;
+      if (requiredPasscode && (!parsed.data.passcode || !safeEqual(parsed.data.passcode, requiredPasscode))) {
+        metrics.inc('api_auth_rejections_total');
+        return reply.code(403).send({ error: 'INVALID_PASSCODE', message: 'Live arm passcode missing or incorrect' });
+      }
       this.profile.liveArmed = true;
       this.profile.realOrders = true;
       this.wsGateway.broadcast('mode.changed', { mode: this.profile.mode, liveArmed: true });
       return reply.send({ armed: true });
     });
 
-    this.app.post('/api/v1/mode/disarm', async (_request, reply) => {
+    this.app.post('/api/v1/mode/disarm', { preHandler: this.requireApiKey }, async (_request, reply) => {
       if (this.profile) {
         this.profile.liveArmed = false;
         this.profile.realOrders = false;
@@ -698,7 +802,7 @@ export class ApiServer {
       return reply.send({ armed: false });
     });
 
-    this.app.post('/api/v1/mode/aggressive', async (request, reply) => {
+    this.app.post('/api/v1/mode/aggressive', { preHandler: this.requireApiKey }, async (request, reply) => {
       const body = (request.body as { enabled?: boolean } | undefined) ?? {};
       const enabled = body.enabled ?? true;
       this.options.onSetAggressiveMode?.(enabled);
@@ -706,24 +810,24 @@ export class ApiServer {
       return reply.send({ aggressive: enabled });
     });
 
-    this.app.post('/api/v1/engine/evaluate', async (_request, reply) => {
+    this.app.post('/api/v1/engine/evaluate', { preHandler: this.requireApiKey }, async (_request, reply) => {
       const evaluated = (await this.options.onTriggerEvaluation?.()) ?? 0;
       return reply.send({ evaluated });
     });
 
-    this.app.post('/engine/start', async () => {
+    this.app.post('/engine/start', { preHandler: this.requireApiKey }, async () => {
       await this.engine.start();
       metrics.inc('engine_starts_total');
       return { started: true };
     });
 
-    this.app.post('/engine/stop', async () => {
+    this.app.post('/engine/stop', { preHandler: this.requireApiKey }, async () => {
       this.engine.stop();
       metrics.inc('engine_stops_total');
       return { stopped: true };
     });
 
-    this.app.post('/engine/kill-switch', async () => {
+    this.app.post('/engine/kill-switch', { preHandler: this.requireApiKey }, async () => {
       await this.broker.cancelAllOrders();
       this.engine.stop();
       this.wsGateway.broadcast('kill_switch.activated', { activatedAtUtc: new Date().toISOString() });
@@ -731,9 +835,12 @@ export class ApiServer {
       return { killSwitch: true };
     });
 
-    this.app.post('/api/v1/agents/cycle', async (request, reply) => {
+    this.app.post('/api/v1/agents/cycle', { preHandler: this.requireApiKey }, async (request, reply) => {
       const body = (request.body as { symbol?: string; model?: string } | undefined) ?? {};
       const symbol = (body.symbol || 'SOLUSDT').toUpperCase();
+      if (!isValidSymbol(symbol)) {
+        return reply.code(400).send({ error: 'INVALID_SYMBOL' });
+      }
       const state = this.marketState?.getState(symbol);
       const mark = state?.mark ?? 140;
       const lastPrice = state?.last ?? mark;
