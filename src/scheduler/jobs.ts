@@ -20,7 +20,10 @@ export class Scheduler {
   private options: SchedulerOptions;
   private jobs: cron.ScheduledTask[] = [];
   private timers: NodeJS.Timeout[] = [];
-  private lastFundingApplied = new Map<string, number>();
+  // Medium finding: keyed by symbol, stores the `nextFundingTimeUtc` window
+  // that funding was already applied for — not a wall-clock apply timestamp
+  // (see the fix note below).
+  private lastFundingWindowApplied = new Map<string, number>();
 
   constructor(options: SchedulerOptions) {
     this.options = options;
@@ -85,8 +88,24 @@ export class Scheduler {
       }, 5000),
 
       setInterval(() => {
+        // Medium finding ("funding may be applied multiple times per
+        // cycle"): broker.applyFunding() is a single GLOBAL operation — it
+        // sweeps every open position across every symbol in one call. The
+        // old loop called it once per due symbol inside this same tick, so
+        // if 3 symbols were due simultaneously, all open positions (not just
+        // those 3 symbols') got funding applied 3 times in one tick. It also
+        // debounced against a 1s wall-clock window inside a 5s-interval
+        // loop, which could never actually suppress a repeat on the *next*
+        // tick if the market feed hadn't yet advanced nextFundingTimeUtc.
+        //
+        // Fixed: call applyFunding() at most once per tick, and debounce per
+        // symbol against the funding *window* (nextFundingTimeUtc itself)
+        // rather than wall-clock elapsed time — a symbol can't re-trigger
+        // this until its own nextFundingTimeUtc actually advances to a new
+        // window.
         const now = Date.now();
         const states = marketState.getAllStates();
+        let shouldApply = false;
 
         for (const state of states) {
           if (state.stale) continue;
@@ -97,10 +116,14 @@ export class Scheduler {
 
           if (Number.isNaN(nextFunding) || now < nextFunding) continue;
 
-          const lastApplied = this.lastFundingApplied.get(state.symbol);
-          if (lastApplied !== undefined && now - lastApplied < 1000) continue;
+          const lastAppliedWindow = this.lastFundingWindowApplied.get(state.symbol);
+          if (lastAppliedWindow === nextFunding) continue;
 
-          this.lastFundingApplied.set(state.symbol, now);
+          this.lastFundingWindowApplied.set(state.symbol, nextFunding);
+          shouldApply = true;
+        }
+
+        if (shouldApply) {
           broker.applyFunding();
           metrics.inc('funding_payments_total', 1);
         }

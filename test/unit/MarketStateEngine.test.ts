@@ -130,6 +130,32 @@ describe('event-driven market-state pipeline', () => {
     await position.applyFill('SOLUSDT', 'LONG');
     expect(position.getState('SOLUSDT')).toBe('LONG');
   });
+
+  it('applyIntent emits the event type matching the actual intent action, not always POSITION_OPENED (Medium)', async () => {
+    const bus = new TradingEventBus();
+    const position = new PositionStateMachine(bus);
+    const evidence = { structure: [], liquidity: [], flow: [], volume: [], derivatives: [] };
+
+    const openEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'OPEN', reason: 'BOS_RETEST', confidence: 0.8, evidence,
+    });
+    expect(openEvent?.type).toBe('ENTRY_INTENT');
+
+    await position.applyFill('SOLUSDT', 'LONG'); // FLAT -> LONG so REDUCE/CLOSE below are valid transitions
+
+    const reduceEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'REDUCE', reason: 'STRUCTURE_BREAK', confidence: 0.6, evidence,
+    });
+    expect(reduceEvent?.type).toBe('REDUCE_INTENT');
+
+    const closeEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'CLOSE', reason: 'STRUCTURE_BREAK', confidence: 0.6, evidence,
+    });
+    expect(closeEvent?.type).toBe('EXIT_INTENT');
+    // None of these must be the old hardcoded 'POSITION_OPENED', which
+    // applyFill (not applyIntent) is responsible for emitting.
+    expect([openEvent?.type, reduceEvent?.type, closeEvent?.type]).not.toContain('POSITION_OPENED');
+  });
 });
 
 describe('TradingEventBus.publish concurrency (C-07)', () => {
