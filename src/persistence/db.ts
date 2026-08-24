@@ -116,6 +116,7 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_orders_symbol ON orders(symbol);
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
       CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders(strategy_id);
+      CREATE INDEX IF NOT EXISTS idx_orders_signal_id ON orders(signal_id);
 
       CREATE TABLE IF NOT EXISTS fills (
         id TEXT PRIMARY KEY,

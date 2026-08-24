@@ -138,6 +138,29 @@ describe('TelegramNotifier enabled send path (H-09, H-10)', () => {
     vi.useRealTimers();
   });
 
+  it('H-09/Medium: escapes HTML special characters in interpolated fields (HTML injection)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const notifier = new TelegramNotifier({ enabled: true, botToken: BOT_TOKEN, chatId: '99999' });
+    await notifier.notifyIncident({
+      incidentId: 'INC-1',
+      severity: 'CRITICAL',
+      classification: 'TRADING_UNSAFE',
+      component: 'Test<script>alert(1)</script>',
+      message: 'connection to <a href="http://evil.example">click me</a> & retry failed',
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body.text).not.toContain('<script>');
+    expect(body.text).not.toContain('<a href');
+    expect(body.text).toContain('&lt;script&gt;');
+    expect(body.text).toContain('&amp;');
+
+    vi.unstubAllGlobals();
+  });
+
   it('logs (without throwing) on a non-ok response', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

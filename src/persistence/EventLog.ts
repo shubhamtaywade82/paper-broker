@@ -316,12 +316,32 @@ export class EventLog {
     fundManagerApproval: unknown;
     executed: boolean;
   }): void {
+    // Medium finding ("INSERT OR REPLACE silently destroys data"): checked
+    // against the actual schema — every column in agent_cycles is provided
+    // here and nothing has a foreign key onto cycle_id, so REPLACE's
+    // delete-then-insert semantics don't currently lose or cascade-delete
+    // anything. Switched to ON CONFLICT DO UPDATE anyway as a defensive
+    // upsert: it can't silently null out a future column this INSERT
+    // forgets to list, and won't trigger cascading deletes if a foreign key
+    // onto this table is ever added later.
     this.db.prepare(`
-      INSERT OR REPLACE INTO agent_cycles (
+      INSERT INTO agent_cycles (
         cycle_id, symbol, started_at, completed_at, status,
         analyst_reports, debate_history, verdict,
         trader_decision, risk_opinions, fund_manager_approval, executed
       ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cycle_id) DO UPDATE SET
+        symbol = excluded.symbol,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        status = excluded.status,
+        analyst_reports = excluded.analyst_reports,
+        debate_history = excluded.debate_history,
+        verdict = excluded.verdict,
+        trader_decision = excluded.trader_decision,
+        risk_opinions = excluded.risk_opinions,
+        fund_manager_approval = excluded.fund_manager_approval,
+        executed = excluded.executed
     `).run(
       record.cycleId,
       record.symbol,

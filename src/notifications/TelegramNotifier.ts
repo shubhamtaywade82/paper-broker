@@ -18,6 +18,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Medium finding ("HTML injection in Telegram message templates"): every
+// notifyX() method interpolates dynamic strings (symbols, error messages,
+// incident text, reasons) directly into `<b>...</b>` templates sent with
+// parse_mode: 'HTML'. An unescaped '<', '>', or '&' either breaks Telegram's
+// HTML parser (silently failing delivery — a 400 "can't parse entities") or,
+// for Telegram's supported tags like <a>, could let attacker-influenced text
+// (e.g. an exchange error message) inject a rendered link/formatting into
+// the alert. Escape before interpolating, same as escaping for any other
+// HTML-rendering sink.
+function esc(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export class TelegramNotifier {
   private enabled: boolean;
   private botToken?: string;
@@ -122,10 +138,10 @@ export class TelegramNotifier {
     const icon = realOrders ? '🔴' : '🟢';
     const text = [
       `<b>${icon} TRADING SYSTEM ONLINE</b>`,
-      `<b>Mode:</b> ${mode.toUpperCase()}`,
-      `<b>Execution:</b> ${venue}`,
+      `<b>Mode:</b> ${esc(mode.toUpperCase())}`,
+      `<b>Execution:</b> ${esc(venue)}`,
       `<b>Real Orders:</b> ${realOrders ? 'YES (ARMED)' : 'NO'}`,
-      `<b>Symbols:</b> ${symbols.join(', ')}`,
+      `<b>Symbols:</b> ${esc(symbols.join(', '))}`,
       `<b>Status:</b> Ready & Active`,
     ].join('\n');
     return this.send(text);
@@ -134,15 +150,15 @@ export class TelegramNotifier {
   public async notifyTrade(trade: TradeNotification): Promise<boolean> {
     const icon = trade.side.includes('BUY') || trade.side.includes('LONG') ? '🟢' : '🔴';
     const lines = [
-      `<b>${icon} ${trade.mode.toUpperCase()} ORDER FILLED</b>`,
-      `<b>Symbol:</b> ${trade.symbol}`,
-      `<b>Side:</b> ${trade.side}`,
+      `<b>${icon} ${esc(trade.mode.toUpperCase())} ORDER FILLED</b>`,
+      `<b>Symbol:</b> ${esc(trade.symbol)}`,
+      `<b>Side:</b> ${esc(trade.side)}`,
       `<b>Price:</b> $${trade.price}`,
       `<b>Qty:</b> ${trade.quantity}`,
     ];
     if (trade.stopLoss) lines.push(`<b>SL:</b> $${trade.stopLoss}`);
     if (trade.takeProfit) lines.push(`<b>TP:</b> $${trade.takeProfit}`);
-    if (trade.strategyId) lines.push(`<b>Strategy:</b> ${trade.strategyId}`);
+    if (trade.strategyId) lines.push(`<b>Strategy:</b> ${esc(trade.strategyId)}`);
     return this.send(lines.join('\n'));
   }
 
@@ -150,12 +166,12 @@ export class TelegramNotifier {
     const isProfit = update.pnlPct >= 0;
     const icon = isProfit ? '📈' : '📉';
     const lines = [
-      `<b>${icon} POSITION UPDATE: ${update.status}</b>`,
-      `<b>Symbol:</b> ${update.symbol} (${update.side})`,
+      `<b>${icon} POSITION UPDATE: ${esc(update.status)}</b>`,
+      `<b>Symbol:</b> ${esc(update.symbol)} (${esc(update.side)})`,
       `<b>Entry:</b> $${update.entryPrice} | <b>Current:</b> $${update.currentPrice}`,
       `<b>PnL:</b> ${isProfit ? '+' : ''}${update.pnlPct.toFixed(2)}%`,
     ];
-    if (update.reason) lines.push(`<b>Note:</b> ${update.reason}`);
+    if (update.reason) lines.push(`<b>Note:</b> ${esc(update.reason)}`);
     return this.send(lines.join('\n'));
   }
 
@@ -163,18 +179,18 @@ export class TelegramNotifier {
     const isHealthy = health.status === 'HEALTHY' || health.status === 'RECOVERED';
     const icon = isHealthy ? '🟢' : '⚠️';
     const lines = [
-      `<b>${icon} MARKET DATA: ${health.provider}</b>`,
-      `<b>Status:</b> ${health.status}`,
+      `<b>${icon} MARKET DATA: ${esc(health.provider)}</b>`,
+      `<b>Status:</b> ${esc(health.status)}`,
     ];
-    if (health.reason) lines.push(`<b>Reason:</b> ${health.reason}`);
-    if (health.actionTaken) lines.push(`<b>Action:</b> ${health.actionTaken}`);
+    if (health.reason) lines.push(`<b>Reason:</b> ${esc(health.reason)}`);
+    if (health.actionTaken) lines.push(`<b>Action:</b> ${esc(health.actionTaken)}`);
     return this.send(lines.join('\n'));
   }
 
   public async notifyEmergency(title: string, message: string): Promise<boolean> {
     const lines = [
-      `<b>🚨 CRITICAL ALERT: ${title}</b>`,
-      `<b>Message:</b> ${message}`,
+      `<b>🚨 CRITICAL ALERT: ${esc(title)}</b>`,
+      `<b>Message:</b> ${esc(message)}`,
       `<b>Time:</b> ${new Date().toISOString()}`,
     ];
     return this.send(lines.join('\n'));
@@ -192,13 +208,13 @@ export class TelegramNotifier {
   }): Promise<boolean> {
     const icon = incident.severity === 'FATAL' || incident.severity === 'CRITICAL' ? '🔴' : '🟠';
     const lines = [
-      `<b>${icon} ${incident.severity} — ${incident.component}</b>`,
-      `<b>Error:</b> ${incident.message.slice(0, 200)}`,
+      `<b>${icon} ${esc(incident.severity)} — ${esc(incident.component)}</b>`,
+      `<b>Error:</b> ${esc(incident.message.slice(0, 200))}`,
     ];
-    if (incident.provider) lines.push(`<b>Provider:</b> ${incident.provider}`);
-    if (incident.symbol) lines.push(`<b>Symbol:</b> ${incident.symbol}`);
-    if (incident.actionTaken) lines.push(`<b>Action:</b> ${incident.actionTaken}`);
-    lines.push(`<b>Incident ID:</b> <code>${incident.incidentId}</code>`);
+    if (incident.provider) lines.push(`<b>Provider:</b> ${esc(incident.provider)}`);
+    if (incident.symbol) lines.push(`<b>Symbol:</b> ${esc(incident.symbol)}`);
+    if (incident.actionTaken) lines.push(`<b>Action:</b> ${esc(incident.actionTaken)}`);
+    lines.push(`<b>Incident ID:</b> <code>${esc(incident.incidentId)}</code>`);
     return this.send(lines.join('\n'));
   }
 
@@ -209,10 +225,10 @@ export class TelegramNotifier {
     message: string;
   }): Promise<boolean> {
     const lines = [
-      `<b>🟢 RECOVERED — ${recovery.component}</b>`,
-      `<b>Status:</b> ${recovery.message}`,
+      `<b>🟢 RECOVERED — ${esc(recovery.component)}</b>`,
+      `<b>Status:</b> ${esc(recovery.message)}`,
     ];
-    if (recovery.provider) lines.push(`<b>Provider:</b> ${recovery.provider}`);
+    if (recovery.provider) lines.push(`<b>Provider:</b> ${esc(recovery.provider)}`);
     if (recovery.downtimeMs) {
       lines.push(`<b>Downtime:</b> ${(recovery.downtimeMs / 1000).toFixed(1)}s`);
     }
@@ -229,7 +245,7 @@ export class TelegramNotifier {
   }): Promise<boolean> {
     const lines = [
       `<b>💚 SYSTEM HEARTBEAT</b>`,
-      `<b>Mode:</b> ${heartbeat.mode.toUpperCase()} (${heartbeat.armed ? 'ARMED' : 'SIMULATED'})`,
+      `<b>Mode:</b> ${esc(heartbeat.mode.toUpperCase())} (${heartbeat.armed ? 'ARMED' : 'SIMULATED'})`,
       `<b>Open Positions:</b> ${heartbeat.positionsCount}`,
       `<b>Open Orders:</b> ${heartbeat.openOrdersCount}`,
       `<b>Equity:</b> $${heartbeat.equity.toFixed(2)}`,
