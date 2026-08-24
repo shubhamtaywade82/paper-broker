@@ -108,4 +108,38 @@ describe('ExecutionRouter', () => {
     expect(mockCoinDCXBroker.submitOrder).toHaveBeenCalledWith(sampleCommand);
     expect(res.status).toBe('FILLED');
   });
+
+  it('does not route reads/cancels to coindcxBroker when liveArmed but realOrders is false', async () => {
+    const mockCoinDCXBroker: ExecutionBroker = {
+      submitOrder: vi.fn(),
+      cancelOrder: vi.fn(),
+      cancelAllOrders: vi.fn(),
+      getOpenOrders: vi.fn(),
+      getPositions: vi.fn(),
+      getPosition: vi.fn(),
+      getAccount: vi.fn(),
+    };
+    const mockPaperBroker: ExecutionBroker = {
+      submitOrder: vi.fn(),
+      cancelOrder: vi.fn(),
+      cancelAllOrders: vi.fn(),
+      getOpenOrders: vi.fn(),
+      getPositions: vi.fn().mockResolvedValue([]),
+      getPosition: vi.fn(),
+      getAccount: vi.fn(),
+    };
+
+    const profile = resolveRuntimeProfile({ TRADING_MODE: 'live', LIVE_TRADING_ARMED: false });
+    profile.liveArmed = true; // e.g. a stale/desynced runtime arm flag
+
+    const router = new ExecutionRouter({
+      profile,
+      paperBroker: mockPaperBroker,
+      coindcxBroker: mockCoinDCXBroker,
+    });
+
+    await router.getPositions();
+    expect(mockPaperBroker.getPositions).toHaveBeenCalled();
+    expect(mockCoinDCXBroker.getPositions).not.toHaveBeenCalled();
+  });
 });

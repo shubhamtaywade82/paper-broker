@@ -30,7 +30,12 @@ export class ExecutionRouter implements ExecutionBroker {
   }
 
   public getActiveBroker(): ExecutionBroker {
-    if (this.profile.executionVenue === 'COINDCX' && this.coindcxBroker && this.profile.liveArmed) {
+    if (
+      this.profile.executionVenue === 'COINDCX' &&
+      this.coindcxBroker &&
+      this.profile.liveArmed &&
+      this.profile.realOrders
+    ) {
       return this.coindcxBroker;
     }
     return this.paperBroker;

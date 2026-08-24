@@ -174,7 +174,7 @@ export function useCycles(symbol?: string) {
         completedAt: c.completed_at != null ? Number(c.completed_at) : undefined,
         executed: Boolean(c.executed),
         action: String((c.verdict as Record<string, unknown>)?.prevailingSide ?? c.action ?? 'UNKNOWN'),
-        confidence: Number(c.confidence ?? 0),
+        confidence: Number((c.trader_decision as Record<string, unknown>)?.confidence ?? c.confidence ?? 0),
         verdict: typeof c.verdict === 'object' ? String((c.verdict as Record<string, unknown>)?.prevailingSide ?? '') : String(c.verdict ?? ''),
         rationale: String((c.verdict as Record<string, unknown>)?.rationale ?? c.rationale ?? ''),
       }));
@@ -200,7 +200,7 @@ export function useCycleDetail(cycleId: string | null) {
         completedAt: raw.completed_at != null ? Number(raw.completed_at) : undefined,
         executed: Boolean(raw.executed),
         action: String((raw.verdict as Record<string, unknown>)?.prevailingSide ?? ''),
-        confidence: Number(raw.confidence ?? 0),
+        confidence: Number((raw.trader_decision as Record<string, unknown>)?.confidence ?? raw.confidence ?? 0),
         verdict: String((raw.verdict as Record<string, unknown>)?.prevailingSide ?? ''),
         rationale: String(raw.rationale ?? ''),
         analystReports: Array.isArray(raw.analyst_reports)

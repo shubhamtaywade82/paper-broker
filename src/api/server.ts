@@ -308,23 +308,12 @@ export class ApiServer {
       const fills = this.events.getEvents({ type: 'FILL_CREATED', limit: 500 });
       let wins = 0;
       let losses = 0;
-      const tradePnl = new Map<string, number>();
 
       for (const fill of fills) {
         const p = fill.payload as Record<string, unknown>;
-        const orderId = String(p['orderId'] || '');
-        const side = String(p['side'] || '');
-        const qty = Number(p['quantity'] || p['qty'] || 0);
-        const price = Number(p['price'] || 0);
-        if (!orderId || !price) continue;
-
-        const current = tradePnl.get(orderId) ?? 0;
-        tradePnl.set(orderId, current + (side === 'BUY' ? -price * qty : price * qty));
-      }
-
-      for (const [, pnl] of tradePnl) {
-        if (pnl > 0) wins++;
-        else if (pnl < 0) losses++;
+        const realizedPnl = Number(p['realizedPnl'] || 0);
+        if (realizedPnl > 0) wins++;
+        else if (realizedPnl < 0) losses++;
       }
 
       const total = wins + losses;
@@ -619,9 +608,10 @@ export class ApiServer {
       if (!parsed.success) {
         return reply.code(400).send({ error: 'INVALID_REQUEST' });
       }
-      if (this.profile) {
-        this.profile.liveArmed = true;
+      if (this.profile?.mode !== 'live') {
+        return reply.code(409).send({ error: 'NOT_LIVE_MODE', message: 'Arming requires TRADING_MODE=live' });
       }
+      this.profile.liveArmed = true;
       this.wsGateway.broadcast('mode.changed', { mode: this.profile?.mode, liveArmed: true });
       return reply.send({ armed: true });
     });
