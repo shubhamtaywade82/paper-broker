@@ -131,3 +131,39 @@ describe('event-driven market-state pipeline', () => {
     expect(position.getState('SOLUSDT')).toBe('LONG');
   });
 });
+
+describe('TradingEventBus.publish concurrency (C-07)', () => {
+  it('runs handlers concurrently instead of serially, so a slow handler does not delay others', async () => {
+    const bus = new TradingEventBus();
+    const order: string[] = [];
+    bus.subscribeAll(async () => {
+      order.push('slow-start');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      order.push('slow-end');
+    });
+    bus.subscribeAll(() => {
+      order.push('fast');
+    });
+
+    await bus.publish(candleClosedEvent(bus, candle(0, 1, 1, 1, 1)));
+
+    // Sequential execution would produce ['slow-start', 'slow-end', 'fast'] —
+    // the fast handler only proves concurrency by finishing before the slow
+    // one's timer fires.
+    expect(order).toEqual(['slow-start', 'fast', 'slow-end']);
+  });
+
+  it('isolates a throwing handler so it does not block or abort the other handlers', async () => {
+    const bus = new TradingEventBus();
+    const ran: string[] = [];
+    bus.subscribeAll(() => {
+      throw new Error('boom');
+    });
+    bus.subscribeAll(() => {
+      ran.push('second handler ran');
+    });
+
+    await expect(bus.publish(candleClosedEvent(bus, candle(0, 1, 1, 1, 1)))).resolves.toBeUndefined();
+    expect(ran).toEqual(['second handler ran']);
+  });
+});

@@ -26,9 +26,25 @@ export class TradingEventBus {
     return () => this.allHandlers.delete(handler);
   }
 
+  // C-07: previously awaited each handler sequentially in a for-loop, so a
+  // slow handler (e.g. an LLM-backed subscriber via subscribeAll) blocked
+  // every handler registered after it for this event, and a throwing handler
+  // aborted the remaining handlers entirely (no isolation). Handlers now run
+  // concurrently and are isolated from each other's failures/latency via
+  // Promise.allSettled; publish() still resolves only once all handlers have
+  // settled, preserving "await publish() to know this event was fully
+  // dispatched" for callers like EventDrivenMarketStateEngine.
   async publish(event: TradingEvent): Promise<void> {
     const handlers = [...(this.handlers.get(event.type) ?? []), ...this.allHandlers];
-    for (const handler of handlers) await handler(event);
+    // Wrapped in an async IIFE so a handler that throws synchronously (not
+    // just one that returns a rejected promise) is also isolated by
+    // allSettled rather than escaping the .map() call and aborting publish().
+    const results = await Promise.allSettled(handlers.map((handler) => (async () => handler(event))()));
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error(`[TradingEventBus] handler failed for event ${event.type}:`, result.reason);
+      }
+    }
   }
 }
 
