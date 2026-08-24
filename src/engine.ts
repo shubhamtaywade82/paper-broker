@@ -22,6 +22,7 @@ import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
+import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
 import { ApiServer } from './api/server.js';
 import { WebSocketGateway } from './api/websocket/WebSocketGateway.js';
 import type { WebSocketEventType } from './api/websocket/types.js';
@@ -184,7 +185,41 @@ export async function startEngine(): Promise<EngineHandle> {
     })
   );
 
+  strategyEngine.register(
+    createAdaptiveSupertrendStrategy({
+      getInstrument: (symbol) => broker.getInstrument(symbol),
+      symbols,
+      intervals: timeframes,
+      persistencePath: `${dataDir}/adaptive_supertrend_qtable.json`,
+      onSignalGenerated: (signal, sym) => {
+        logger.info({ sym, action: signal.action, conf: signal.confidence }, 'Adaptive Supertrend signal generated');
+        wsGateway.broadcast('agent.step', {
+          cycleId: `ast_${Date.now()}`,
+          symbol: sym,
+          stage: 'trader_decision',
+          status: 'completed',
+          detail: signal.reasoning,
+          timestamp: Date.now(),
+        });
+      },
+    })
+  );
+
   await strategyEngine.start();
+
+  // Trigger initial candle evaluation across preloaded historical bars so the engine
+  // immediately evaluates trading opportunities upon startup rather than waiting 5-15m
+  for (const symbol of symbols) {
+    for (const interval of timeframes) {
+      const recent = klines.getCandles(symbol, interval, 2);
+      if (recent.length > 0) {
+        const latestClosed = recent[recent.length - 1]!;
+        strategyEngine.onCandleClose(latestClosed).catch((err) => {
+          logger.warn({ err, symbol, interval }, 'Startup candle evaluation notice');
+        });
+      }
+    }
+  }
 
   const api = new ApiServer({
     broker,
