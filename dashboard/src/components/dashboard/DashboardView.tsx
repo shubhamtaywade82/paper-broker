@@ -227,8 +227,12 @@ export function DashboardView() {
                     const lev = pos.leverage ?? 5;
                     const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
                     const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
-                    const slOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'STOP_MARKET' && o.reduceOnly);
-                    const tpOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'TAKE_PROFIT_MARKET' && o.reduceOnly);
+                    // A reduce-only bracket only actually protects this position if its side
+                    // can fill against it (SELL reduces LONG, BUY reduces SHORT) — a stale
+                    // order left over from a prior direction on this symbol can never fire.
+                    const protectiveSide = side === 'LONG' ? 'SELL' : 'BUY';
+                    const slOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'STOP_MARKET' && o.reduceOnly && o.side === protectiveSide);
+                    const tpOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'TAKE_PROFIT_MARKET' && o.reduceOnly && o.side === protectiveSide);
 
                     return (
                       <tr key={pos.symbol} className="hover:bg-[#141d2e] transition">
