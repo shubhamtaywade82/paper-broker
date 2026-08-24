@@ -1,4 +1,4 @@
-import { useStore } from '../../store/useStore';
+import { useStore, SUPPORTED_SYMBOLS } from '../../store/useStore';
 import {
   useTickers,
   useOrderbook,
@@ -14,15 +14,13 @@ import {
   Activity,
 } from 'lucide-react';
 
-const SUPPORTED_SYMBOLS = ['SOLUSDT', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
-
 export function MarketsView() {
   const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers } = useStore();
 
   useTickers();
   const { data: orderbook } = useOrderbook(selectedSymbol);
   const { data: trades = [] } = useTrades(selectedSymbol);
-  const { data: klines = [] } = useKlines(selectedSymbol, timeframe, 100);
+  const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 100);
 
   const activeTicker = tickers[selectedSymbol];
 
@@ -106,6 +104,7 @@ export function MarketsView() {
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
             height={420}
+            loading={klinesLoading && klines.length === 0}
           />
         </div>
 

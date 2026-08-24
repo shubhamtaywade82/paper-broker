@@ -20,10 +20,11 @@ import { SmcLocationEngine } from './market/smc/SmcLocationEngine.js';
 import { SetupEngine } from './market/setup/SetupEngine.js';
 import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
-import { TradingAgentsPipeline } from './ai/tradingAgents.js';
+import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { ApiServer } from './api/server.js';
 import { WebSocketGateway } from './api/websocket/WebSocketGateway.js';
+import type { WebSocketEventType } from './api/websocket/types.js';
 import { Scheduler } from './scheduler/jobs.js';
 import { TelegramNotifier } from './notifications/TelegramNotifier.js';
 import { logger } from './telemetry/logger.js';
@@ -177,6 +178,9 @@ export async function startEngine(): Promise<EngineHandle> {
         events.logAgentCycle(cycle);
         wsGateway.broadcast('agent.cycle', cycle);
       },
+      onCycleStep: (step: AgentCycleStep) => {
+        wsGateway.broadcast('agent.step', step);
+      },
     })
   );
 
@@ -198,6 +202,23 @@ export async function startEngine(): Promise<EngineHandle> {
 
   await api.start();
 
+  // Binance pushes book/trade/kline ticks far faster than any UI needs to render
+  // (thousands/sec across symbols) — broadcasting each one to WS clients floods
+  // the browser's event buffer and starves low-frequency, high-priority events
+  // (agent steps, order/position updates) out of the ring buffer within
+  // milliseconds. Throttle the WS *notification* per symbol+type; the underlying
+  // candle/market-state stores below are still updated on every tick, so no
+  // price data is lost — only how often the dashboard is told about it.
+  const MARKET_BROADCAST_THROTTLE_MS = 200;
+  const lastBroadcastAt = new Map<string, number>();
+  function throttledBroadcast<T>(type: WebSocketEventType, key: string, payload: T): void {
+    const now = Date.now();
+    const last = lastBroadcastAt.get(key) ?? 0;
+    if (now - last < MARKET_BROADCAST_THROTTLE_MS) return;
+    lastBroadcastAt.set(key, now);
+    api.wsGateway.broadcast(type, payload);
+  }
+
   const streams = new BinanceStreamHandler(client, {
     symbols,
     timeframes,
@@ -214,7 +235,7 @@ export async function startEngine(): Promise<EngineHandle> {
         volume: kline.volume,
       };
       klines.upsertCandle(candle);
-      api.wsGateway.broadcast('market.tick', {
+      throttledBroadcast('market.tick', `tick:${kline.symbol}`, {
         symbol: kline.symbol,
         price: kline.close,
         candle,
@@ -248,7 +269,7 @@ export async function startEngine(): Promise<EngineHandle> {
       });
     },
     onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
-      api.wsGateway.broadcast('book.update', { symbol, bid, ask, bidQty, askQty });
+      throttledBroadcast('book.update', `book:${symbol}`, { symbol, bid, ask, bidQty, askQty });
     },
     onAggTrade: (symbol, price, qty, isBuyerMaker, eventTime) => {
       const ts = eventTime || Date.now();
@@ -258,14 +279,14 @@ export async function startEngine(): Promise<EngineHandle> {
           interval as KlineInterval
         );
         if (candle) {
-          api.wsGateway.broadcast('market.tick', {
+          throttledBroadcast('market.tick', `tick:${symbol}`, {
             symbol,
             price,
             candle,
           });
         }
       }
-      api.wsGateway.broadcast('trade.stream', {
+      throttledBroadcast('trade.stream', `trade:${symbol}`, {
         symbol,
         price,
         qty,

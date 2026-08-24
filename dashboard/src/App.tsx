@@ -8,6 +8,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { MarketsView } from './components/markets/MarketsView';
 import { TradingView } from './components/trading/TradingView';
 import { AgentControlCenterView } from './components/agent/AgentControlCenterView';
+import { AgentActivityToasts } from './components/agent/AgentActivityToasts';
 import { ResearchView } from './components/research/ResearchView';
 import { RiskView } from './components/risk/RiskView';
 import { ActivityView } from './components/activity/ActivityView';
@@ -29,7 +30,6 @@ function AppContent() {
   // Keyboard navigation shortcuts: 1-8 for workspace switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input or textarea
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
         return;
       }
@@ -58,6 +58,33 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setActiveTab]);
 
+  // Sync with browser back/forward and initial URL hash
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+      const validTabs: WorkspaceTab[] = [
+        'dashboard',
+        'markets',
+        'trading',
+        'agent',
+        'research',
+        'risk',
+        'activity',
+        'system',
+      ];
+      if (validTabs.includes(hash as WorkspaceTab) && hash !== activeTab) {
+        setActiveTab(hash as WorkspaceTab);
+      }
+    };
+
+    if (!window.location.hash) {
+      window.location.hash = `#${activeTab}`;
+    }
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [activeTab, setActiveTab]);
+
   return (
     <div className="min-h-screen bg-[#080c14] text-[#f8fafc]">
       <Header />
@@ -74,6 +101,7 @@ function AppContent() {
           {activeTab === 'system' && <SystemSettingsView />}
         </main>
       </div>
+      <AgentActivityToasts />
     </div>
   );
 }

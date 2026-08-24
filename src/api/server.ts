@@ -17,6 +17,7 @@ import type { WebSocket } from 'ws';
 import { DASHBOARD_HTML } from './dashboardHtml.js';
 import { WebSocketGateway } from './websocket/WebSocketGateway.js';
 import { TradingAgentsPipeline } from '../ai/tradingAgents.js';
+import { env } from '../config/env.js';
 import { metrics } from '../telemetry/metrics.js';
 import { logger } from '../telemetry/logger.js';
 import { ReplayEngine } from '../research/replay/ReplayEngine.js';
@@ -93,7 +94,7 @@ export class ApiServer {
     this.errorNormalizer = options.errorNormalizer;
     this.marketState = options.marketState;
     this.wsGateway = options.wsGateway ?? new WebSocketGateway();
-    this.host = options.host ?? '0.0.0.0';
+    this.host = options.host ?? '127.0.0.1';
     this.port = options.port ?? 8080;
 
     this.app = Fastify({ logger: false });
@@ -219,14 +220,18 @@ export class ApiServer {
       const exposurePct = equity > 0 ? (totalNotional / equity) * 100 : 0;
       const marginUsagePct = equity > 0 ? (totalMarginUsed / equity) * 100 : 0;
 
+      const dailyLossLimitPct = 5.0;
+      const dailyLossPct = equity > 0 ? Math.max(0, -(account?.dailyRealizedPnl ?? 0)) / equity * 100 : 0;
+      const dailyLossRemainingPct = Math.max(0, dailyLossLimitPct - dailyLossPct);
+
       return {
         riskRating: exposurePct > 75 ? 'HIGH' : exposurePct > 40 ? 'MEDIUM' : 'LOW',
         exposurePct: Number(exposurePct.toFixed(2)),
         marginUsagePct: Number(marginUsagePct.toFixed(2)),
         openPositionsCount: positions.length,
         maxOpenPositions: 3,
-        dailyLossLimitPct: 5.0,
-        dailyLossRemainingPct: 4.8,
+        dailyLossLimitPct,
+        dailyLossRemainingPct: Number(dailyLossRemainingPct.toFixed(2)),
         safeMode: false,
         liveArmed: this.profile?.liveArmed ?? false,
         mode: this.profile?.mode ?? 'paper',
@@ -250,6 +255,7 @@ export class ApiServer {
         mode: this.profile?.mode ?? 'paper',
         liveArmed: this.profile?.liveArmed ?? false,
         realOrders: this.profile?.realOrders ?? false,
+        engineRunning: this.engine.isRunning(),
         account,
         positions,
         signals: recentSignals,
@@ -646,18 +652,24 @@ export class ApiServer {
       const ask = state?.ask ?? lastPrice + 0.02;
       const spread = state?.spread ?? Math.max(0.01, ask - bid);
 
-      const pipeline = new TradingAgentsPipeline({ model: body.model ?? 'llama3.1:8b' });
+      const pipeline = new TradingAgentsPipeline({
+        model: body.model || env.OLLAMA_MODEL,
+        baseUrl: env.OLLAMA_BASE_URL,
+      });
       try {
-        const cycle = await pipeline.runCycle({
-          symbol,
-          lastPrice,
-          bid,
-          ask,
-          spread,
-          mark,
-          fundingRate: 0.0001,
-          openInterest: 50000,
-        });
+        const cycle = await pipeline.runCycle(
+          {
+            symbol,
+            lastPrice,
+            bid,
+            ask,
+            spread,
+            mark,
+            fundingRate: 0.0001,
+            openInterest: 50000,
+          },
+          (step) => this.wsGateway.broadcast('agent.step', step)
+        );
 
         this.events.logAgentCycle(cycle);
         this.wsGateway.broadcast('agent.cycle', cycle);
@@ -674,8 +686,12 @@ export class ApiServer {
 
   async start(): Promise<void> {
     await this.init();
-    await this.app.listen({ host: this.host, port: this.port });
-    logger.info(`API server listening on http://${this.host}:${this.port}`);
+    if (this.port === 0) {
+      await this.app.ready();
+    } else {
+      await this.app.listen({ host: this.host, port: this.port });
+      logger.info(`API server listening on http://${this.host}:${this.port}`);
+    }
   }
 
   async stop(): Promise<void> {

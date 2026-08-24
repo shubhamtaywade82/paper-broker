@@ -35,6 +35,7 @@ export interface TradingChartProps {
   timeframe?: string;
   onTimeframeChange?: (tf: string) => void;
   showVolume?: boolean;
+  loading?: boolean;
 }
 
 export function TradingChart({
@@ -45,6 +46,7 @@ export function TradingChart({
   timeframe = '15m',
   onTimeframeChange,
   showVolume = true,
+  loading = false,
 }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -229,7 +231,16 @@ export function TradingChart({
           </div>
         )}
       </div>
-      <div ref={chartContainerRef} className="w-full" style={{ height }} />
+      <div className="relative w-full" style={{ height }}>
+        <div ref={chartContainerRef} className="w-full h-full" />
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0b101b]/80 pointer-events-none">
+            <span className="text-gray-500 text-xs font-mono animate-pulse">
+              Loading {symbol} candles…
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

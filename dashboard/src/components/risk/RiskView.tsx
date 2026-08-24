@@ -1,17 +1,22 @@
 import { useStore } from '../../store/useStore';
-import { useRiskSummary, useDashboard } from '../../hooks/useApi';
+import { useRiskSummary, useDashboard, useActivity } from '../../hooks/useApi';
 import {
   Shield,
   AlertTriangle,
   Lock,
   Percent,
-  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 
 export function RiskView() {
   const { riskSummary } = useStore();
   useRiskSummary();
   useDashboard();
+  const { data: activity = [] } = useActivity(100);
+
+  const rejections = activity
+    .filter((e) => e.type === 'ORDER_REJECTED')
+    .slice(0, 10);
 
   const exposure = riskSummary?.exposurePct || 0;
   const marginUsage = riskSummary?.marginUsagePct || 0;
@@ -148,33 +153,28 @@ export function RiskView() {
 
       {/* Audit Log */}
       <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-3">
-        <h3 className="font-bold text-white uppercase text-xs">Recent Risk Gate Audits</h3>
+        <h3 className="font-bold text-white uppercase text-xs">Recent Order Rejections</h3>
         <div className="space-y-2">
-          <div className="bg-[#080c14] border border-[#1b2537] p-3 rounded-lg flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <div>
-                <span className="font-bold text-white">SOLUSDT LONG (Qty: 5)</span>
-                <p className="text-gray-500 text-[10px]">Exposure check: 14.2% &le; 60% • Margin validated</p>
+          {rejections.length === 0 ? (
+            <p className="text-gray-500 text-[11px] py-4 text-center">
+              No order rejections in the last 100 events.
+            </p>
+          ) : (
+            rejections.map((e) => (
+              <div key={e.id} className="bg-[#080c14] border border-[#1b2537] p-3 rounded-lg flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <XCircle className="w-4 h-4 text-red-400" />
+                  <div>
+                    <span className="font-bold text-white">{String(e.payload['symbol'] ?? 'UNKNOWN')}</span>
+                    <p className="text-gray-500 text-[10px]">{String(e.payload['reason'] ?? 'No reason recorded')}</p>
+                  </div>
+                </div>
+                <span className="text-gray-500 text-[10px]">
+                  {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
               </div>
-            </div>
-            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
-              PASSED
-            </span>
-          </div>
-
-          <div className="bg-[#080c14] border border-[#1b2537] p-3 rounded-lg flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <div>
-                <span className="font-bold text-white">BTCUSDT LONG (Qty: 0.05)</span>
-                <p className="text-gray-500 text-[10px]">Risk per trade: 1.8% &le; 2.0% • Stop Loss verified</p>
-              </div>
-            </div>
-            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
-              PASSED
-            </span>
-          </div>
+            ))
+          )}
         </div>
       </div>
     </div>

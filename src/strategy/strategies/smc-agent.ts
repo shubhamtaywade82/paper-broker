@@ -7,13 +7,13 @@ import type { MarketStructureEngine } from '../../market/structure/MarketStructu
 import type { SmcLocationEngine } from '../../market/smc/SmcLocationEngine.js';
 import type { ExecutionPlanEngine } from '../../market/execution/ExecutionPlanEngine.js';
 import type { TradeIntentEngine } from '../../trading/TradeIntentEngine.js';
-import type { MarketFactContext } from '../../ai/tradingAgents.js';
+import type { AgentCycleStepListener, MarketFactContext } from '../../ai/tradingAgents.js';
 import type { CycleRecord } from '../../ai/schemas.js';
 import type { AccountState, Instrument, Order, Position } from '../../broker/types.js';
 import { toRiskAccountState, toPortfolioPositions } from '../../trading/risk/adapters.js';
 
 export interface AgentDebatePipeline {
-  runCycle(ctx: MarketFactContext): Promise<CycleRecord>;
+  runCycle(ctx: MarketFactContext, onStep?: AgentCycleStepListener): Promise<CycleRecord>;
 }
 
 export function tradeSignalToSignalInput(
@@ -54,6 +54,7 @@ export interface SmcAgentStrategyDeps {
   getAllPositions?: () => Position[];
   getAllOpenOrders?: () => Order[];
   onCycleCompleted?: (cycle: CycleRecord) => void;
+  onCycleStep?: AgentCycleStepListener;
 }
 
 export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
@@ -89,7 +90,7 @@ async function evaluateCandle(
   const marketFacts = buildMarketFacts(ctx, symbol, account);
   if (!marketFacts) return null;
 
-  const cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts);
+  const cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts, deps.onCycleStep);
   deps.onCycleCompleted?.(cycle);
   if (!cycle.fundManagerApproval.approved) return null;
   const agentDirection = cycle.fundManagerApproval.finalDecision.action;

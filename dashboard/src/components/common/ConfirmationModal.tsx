@@ -7,6 +7,7 @@ export interface ConfirmationModalProps {
   confirmLabel?: string;
   confirmVariant?: 'danger' | 'warning' | 'primary';
   isLoading?: boolean;
+  error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -18,6 +19,7 @@ export function ConfirmationModal({
   confirmLabel = 'Confirm',
   confirmVariant = 'danger',
   isLoading = false,
+  error = null,
   onConfirm,
   onCancel,
 }: ConfirmationModalProps) {
@@ -48,6 +50,12 @@ export function ConfirmationModal({
         </div>
 
         <p className="text-xs text-gray-300 leading-relaxed">{message}</p>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-[11px]">
+            {error}
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-3 pt-2">
           <button

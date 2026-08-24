@@ -215,9 +215,53 @@ interface StoreState {
   setOrderbook: (orderbook: OrderbookDepth | null) => void;
 }
 
+export const SUPPORTED_SYMBOLS = [
+  'SOLUSDT',
+  'BTCUSDT',
+  'ETHUSDT',
+  'BNBUSDT',
+  'XRPUSDT',
+  'DOGEUSDT',
+];
+
+const VALID_TABS: WorkspaceTab[] = [
+  'dashboard',
+  'markets',
+  'trading',
+  'agent',
+  'research',
+  'risk',
+  'activity',
+  'system',
+];
+
+function getInitialTab(): WorkspaceTab {
+  if (typeof window !== 'undefined') {
+    const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+    if (VALID_TABS.includes(hash as WorkspaceTab)) {
+      return hash as WorkspaceTab;
+    }
+    const saved = localStorage.getItem('nemesis_active_tab');
+    if (saved && VALID_TABS.includes(saved as WorkspaceTab)) {
+      return saved as WorkspaceTab;
+    }
+  }
+  return 'dashboard';
+}
+
+function getInitialSymbol(): string {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('nemesis_selected_symbol');
+    if (saved && typeof saved === 'string') {
+      return saved;
+    }
+  }
+  return 'SOLUSDT';
+}
+
 export const useStore = create<StoreState>((set) => ({
-  activeTab: 'dashboard',
-  selectedSymbol: 'SOLUSDT',
+  activeTab: getInitialTab(),
+  selectedSymbol: getInitialSymbol(),
   timeframe: '15m',
   account: null,
   positions: [],
@@ -237,8 +281,19 @@ export const useStore = create<StoreState>((set) => ({
   tickers: {},
   orderbook: null,
 
-  setActiveTab: (tab) => set({ activeTab: tab }),
-  setSelectedSymbol: (selectedSymbol) => set({ selectedSymbol }),
+  setActiveTab: (tab) => {
+    if (typeof window !== 'undefined') {
+      window.location.hash = `#${tab}`;
+      localStorage.setItem('nemesis_active_tab', tab);
+    }
+    set({ activeTab: tab });
+  },
+  setSelectedSymbol: (selectedSymbol) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nemesis_selected_symbol', selectedSymbol);
+    }
+    set({ selectedSymbol });
+  },
   setTimeframe: (timeframe) => set({ timeframe }),
   setAccount: (account) => set({ account }),
   setPositions: (positions) => set({ positions }),

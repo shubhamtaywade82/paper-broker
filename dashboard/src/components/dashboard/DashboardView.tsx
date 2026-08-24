@@ -38,7 +38,7 @@ export function DashboardView() {
   useRiskSummary();
   usePerformance('30d');
 
-  const { data: klines = [] } = useKlines(selectedSymbol, timeframe, 80);
+  const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
   const triggerCycle = useTriggerCycle();
 
   const latestCycle = cycles.length > 0 ? cycles[0] : null;
@@ -84,15 +84,15 @@ export function DashboardView() {
           icon={<Shield className="w-4 h-4 text-purple-400" />}
         />
         <MetricCard
-          label="Active Agents"
-          value="8 / 8 Active"
+          label="Decisions Today"
+          value={String(cycles.length)}
           subtitle="SMC + Debate Pipeline"
           icon={<Bot className="w-4 h-4 text-emerald-400" />}
         />
         <MetricCard
           label="Latest Conviction"
-          value={`${((latestCycle?.confidence || 0.8) * 100).toFixed(0)}%`}
-          subtitle={latestCycle?.action || 'NEUTRAL'}
+          value={latestCycle ? `${(latestCycle.confidence * 100).toFixed(0)}%` : '—'}
+          subtitle={latestCycle?.action || 'No cycles yet'}
           icon={<Zap className="w-4 h-4 text-blue-400" />}
         />
       </div>
@@ -108,6 +108,7 @@ export function DashboardView() {
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
             height={360}
+            loading={klinesLoading && klines.length === 0}
           />
         </div>
 
@@ -119,8 +120,18 @@ export function DashboardView() {
                 <Bot className="w-4 h-4 text-blue-400" />
                 <h3 className="font-bold text-white uppercase text-xs">AI Brain • Active Bias</h3>
               </div>
-              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                BULLISH TREND
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                latestCycle?.action === 'LONG'
+                  ? 'bg-emerald-500/20 text-emerald-400'
+                  : latestCycle?.action === 'SHORT'
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-gray-500/20 text-gray-400'
+              }`}>
+                {latestCycle?.action === 'LONG'
+                  ? 'BULLISH TREND'
+                  : latestCycle?.action === 'SHORT'
+                  ? 'BEARISH TREND'
+                  : 'NEUTRAL'}
               </span>
             </div>
 

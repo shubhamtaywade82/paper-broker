@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStore } from '../store/useStore';
+import { useStore, SUPPORTED_SYMBOLS } from '../store/useStore';
 import { useTriggerCycle, useEngineControl } from '../hooks/useApi';
 import { ConfirmationModal } from './common/ConfirmationModal';
 import { OrderModal } from './common/OrderModal';
@@ -21,6 +21,7 @@ export function Header() {
     operatingMode,
     liveArmed,
     selectedSymbol,
+    setSelectedSymbol,
   } = useStore();
 
   const [isKillSwitchOpen, setIsKillSwitchOpen] = useState(false);
@@ -28,9 +29,6 @@ export function Header() {
 
   const triggerCycle = useTriggerCycle();
   const engineControl = useEngineControl();
-
-  const prices = Object.entries(livePrice);
-  const topPrices = prices.slice(0, 3);
 
   return (
     <>
@@ -74,19 +72,67 @@ export function Header() {
               {liveArmed ? 'ARMED' : 'DISARMED'}
             </span>
           </div>
+
+          {/* Compact Mobile Symbol Selector */}
+          <div className="flex lg:hidden items-center gap-1 bg-[#080c14] border border-[#1b2537] rounded-lg px-2 py-1">
+            <select
+              value={selectedSymbol}
+              onChange={(e) => setSelectedSymbol(e.target.value)}
+              className="bg-transparent text-white font-bold text-[11px] cursor-pointer focus:outline-none"
+            >
+              {SUPPORTED_SYMBOLS.map((sym) => (
+                <option key={sym} value={sym} className="bg-[#0f1623] text-white">
+                  {sym}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Live Prices Ticker */}
-        <div className="hidden lg:flex items-center gap-5 text-[11px]">
-          {topPrices.map(([sym, price]) => (
-            <div key={sym} className="flex items-center gap-2">
-              <span className="text-gray-400">{sym}:</span>
-              <span className="text-amber-400 font-bold">
-                ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+        {/* Universal Symbol Switcher & Live Price Ticker */}
+        <div className="hidden lg:flex items-center gap-3">
+          {/* Pair Selector Dropdown */}
+          <div className="flex items-center gap-2 bg-[#080c14] border border-[#1b2537] rounded-xl px-3 py-1.5 shadow-inner">
+            <span className="text-[10px] text-gray-500 font-bold uppercase">PAIR</span>
+            <select
+              value={selectedSymbol}
+              onChange={(e) => setSelectedSymbol(e.target.value)}
+              className="bg-transparent text-white font-bold text-xs cursor-pointer focus:outline-none pr-1"
+            >
+              {SUPPORTED_SYMBOLS.map((sym) => (
+                <option key={sym} value={sym} className="bg-[#0f1623] text-white font-mono">
+                  {sym}
+                </option>
+              ))}
+            </select>
+            {livePrice[selectedSymbol] && (
+              <span className="text-amber-400 font-bold text-xs border-l border-[#1b2537] pl-2">
+                ${livePrice[selectedSymbol].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
               </span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            </div>
-          ))}
+            )}
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          </div>
+
+          {/* Quick-Switch Symbol Pills */}
+          <div className="flex items-center gap-1 bg-[#080c14] border border-[#1b2537] p-1 rounded-xl">
+            {SUPPORTED_SYMBOLS.map((sym) => {
+              const isSelected = selectedSymbol === sym;
+              const shortName = sym.replace('USDT', '');
+              return (
+                <button
+                  key={sym}
+                  onClick={() => setSelectedSymbol(sym)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                      : 'text-gray-400 hover:text-white hover:bg-[#141d2e]'
+                  }`}
+                >
+                  {shortName}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Quick Actions & Account Metrics */}

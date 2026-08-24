@@ -40,6 +40,7 @@ export function useDashboard() {
       const data = await fetchJson<{
         mode?: 'paper' | 'shadow' | 'live';
         liveArmed?: boolean;
+        engineRunning?: boolean;
         account: AccountInfo;
         positions: Position[];
         health: Record<string, unknown>;
@@ -65,6 +66,28 @@ export function useRiskSummary() {
       setRiskSummary(data);
       return data;
     },
+    refetchInterval: 5000,
+  });
+}
+
+export interface ProviderHealthState {
+  provider: string;
+  status: 'HEALTHY' | 'DEGRADED' | 'STALE' | 'DISCONNECTED' | 'RECOVERING';
+  lastTickTimeMs: number;
+  latencyMs: number;
+  stale: boolean;
+  consecutiveMisses: number;
+}
+
+export function useProviderHealth() {
+  return useQuery({
+    queryKey: ['provider-health'],
+    queryFn: () =>
+      fetchJson<{
+        activeProvider: string;
+        binance?: ProviderHealthState;
+        coindcx?: ProviderHealthState;
+      }>('/api/v1/health/providers'),
     refetchInterval: 5000,
   });
 }

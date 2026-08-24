@@ -70,6 +70,9 @@ export function useWebSocket() {
                 queryClient.invalidateQueries({ queryKey: ['cycles'] });
                 queryClient.invalidateQueries({ queryKey: ['dashboard'] });
                 break;
+              case 'agent.step':
+                addLiveEvent({ type: 'agent_step', stream: 'agent', payload: data.payload });
+                break;
               case 'risk.alert':
               case 'incident.reported':
                 addLiveEvent({ type: 'risk', stream: 'risk', payload: data.payload });

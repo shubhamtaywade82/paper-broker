@@ -102,6 +102,10 @@ export class StrategyEngine {
     return Array.from(this.strategies.values());
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   async start(): Promise<void> {
     this.running = true;
 

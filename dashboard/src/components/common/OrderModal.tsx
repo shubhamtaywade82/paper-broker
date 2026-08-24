@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useCreateOrder } from '../../hooks/useApi';
+import { SUPPORTED_SYMBOLS } from '../../store/useStore';
 import { X, Send } from 'lucide-react';
 
 export interface OrderModalProps {
@@ -96,13 +97,13 @@ export function OrderModal({ isOpen, defaultSymbol = 'SOLUSDT', onClose }: Order
               <select
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
-                className="w-full bg-[#1a2332] border border-[#2d3a4f] rounded-lg px-3 py-2 text-white"
+                className="w-full bg-[#1a2332] border border-[#2d3a4f] rounded-lg px-3 py-2 text-white font-mono"
               >
-                <option value="SOLUSDT">SOLUSDT</option>
-                <option value="BTCUSDT">BTCUSDT</option>
-                <option value="ETHUSDT">ETHUSDT</option>
-                <option value="BNBUSDT">BNBUSDT</option>
-                <option value="XRPUSDT">XRPUSDT</option>
+                {SUPPORTED_SYMBOLS.map((sym) => (
+                  <option key={sym} value={sym}>
+                    {sym}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore, type LiveEventItem } from '../../store/useStore';
-import { useActivity } from '../../hooks/useApi';
+import { useActivity, useCycles } from '../../hooks/useApi';
 import {
   Search,
   Code,
@@ -13,28 +13,107 @@ import {
   BookOpen,
 } from 'lucide-react';
 
+function formatEventSummary(evt: LiveEventItem): string {
+  const p = evt.payload;
+  if (!p || Object.keys(p).length === 0) return 'No payload';
+
+  if (evt.type === 'agent.cycle' || evt.type === 'cycle') {
+    return `[${p.symbol || 'MARKET'}] ${p.action || 'NEUTRAL'} • ${p.rationale || 'Autonomous cycle completed'}`;
+  }
+  if (evt.type === 'agent_step') {
+    return `[${p.symbol || 'MARKET'}] ${p.stage || 'step'} (${p.status}): ${p.detail || ''}`;
+  }
+  if (evt.type === 'position' || evt.type === 'position.updated') {
+    return `${p.symbol} ${p.side} qty=${p.quantity} entry=${p.entryPrice} mark=${p.markPrice}`;
+  }
+  if (evt.type === 'order' || evt.type === 'order.updated' || evt.type === 'order.filled') {
+    return `${p.symbol} ${p.side} ${p.type} qty=${p.quantity} price=${p.price || 'MKT'} status=${p.status || 'OPEN'}`;
+  }
+  if (evt.type === 'trade') {
+    return `${p.symbol} price=${p.price} qty=${p.qty}`;
+  }
+  if (evt.type === 'risk' || evt.type === 'risk.alert') {
+    return `${p.symbol || 'GLOBAL'} ${p.rule || 'ALERT'}: ${p.message || p.action || ''}`;
+  }
+  return JSON.stringify(p);
+}
+
+function classifyStream(type: string, explicitStream?: string): string {
+  if (explicitStream && ['market', 'agent', 'trading', 'risk', 'system'].includes(explicitStream)) {
+    return explicitStream;
+  }
+  const t = type.toLowerCase();
+  if (t.includes('agent') || t.includes('cycle') || t.includes('signal') || t.includes('debate') || t.includes('analyst')) {
+    return 'agent';
+  }
+  if (t.includes('order') || t.includes('position') || t.includes('fill') || t.includes('trade_intent')) {
+    return 'trading';
+  }
+  if (t.includes('market') || t.includes('tick') || t.includes('book') || t.includes('kline') || t.includes('trade')) {
+    return 'market';
+  }
+  if (t.includes('risk') || t.includes('incident') || t.includes('guard') || t.includes('divergence')) {
+    return 'risk';
+  }
+  return 'system';
+}
+
 export function ActivityView() {
-  const { liveEvents } = useStore();
-  const { data: dbEvents = [] } = useActivity(50);
+  const { liveEvents, cycles: storeCycles } = useStore();
+  const { data: fetchedCycles = [] } = useCycles();
+  const { data: dbEvents = [] } = useActivity(100);
+
+  const cycles = fetchedCycles.length > 0 ? fetchedCycles : storeCycles;
 
   const [selectedStream, setSelectedStream] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEvent, setSelectedEvent] = useState<LiveEventItem | null>(null);
 
-  // Combine live WebSocket events and fetched DB events
-  const allEvents: LiveEventItem[] = [
-    ...liveEvents,
-    ...dbEvents.map((e) => ({
-      id: e.id,
-      type: e.type,
-      stream: e.type.split('.')[0] || 'system',
-      payload: e.payload || {},
-      timestamp: new Date(e.ts).getTime(),
-    })),
-  ];
+  // Combine live WebSocket events, agent cycles, and fetched DB events
+  const cycleEvents: LiveEventItem[] = cycles.map((c) => ({
+    id: `cycle_${c.cycleId}`,
+    type: 'agent.cycle',
+    stream: 'agent',
+    payload: {
+      cycleId: c.cycleId,
+      symbol: c.symbol,
+      action: c.action,
+      confidence: c.confidence,
+      verdict: c.verdict,
+      rationale: c.rationale,
+      executed: c.executed,
+    },
+    timestamp: c.startedAt,
+  }));
+
+  const rawDbEvents: LiveEventItem[] = dbEvents.map((e) => ({
+    id: e.id,
+    type: e.type,
+    stream: classifyStream(e.type),
+    payload: e.payload || {},
+    timestamp: new Date(e.ts).getTime(),
+  }));
+
+  // Deduplicate and classify streams
+  const seenIds = new Set<string>();
+  const allEvents: LiveEventItem[] = [];
+
+  for (const item of [...liveEvents, ...cycleEvents, ...rawDbEvents]) {
+    const key = item.id || `${item.type}_${item.timestamp}`;
+    if (!seenIds.has(key)) {
+      seenIds.add(key);
+      allEvents.push({
+        ...item,
+        stream: classifyStream(item.type, item.stream),
+      });
+    }
+  }
+
+  // Sort descending by timestamp
+  allEvents.sort((a, b) => b.timestamp - a.timestamp);
 
   const filteredEvents = allEvents.filter((e) => {
-    if (selectedStream !== 'all' && e.stream !== selectedStream && e.type !== selectedStream) {
+    if (selectedStream !== 'all' && e.stream !== selectedStream) {
       return false;
     }
     if (searchQuery) {
@@ -128,7 +207,7 @@ export function ActivityView() {
                       </span>
                     </div>
                     <p className="text-gray-400 text-[11px] mt-0.5 line-clamp-1">
-                      {JSON.stringify(evt.payload)}
+                      {formatEventSummary(evt)}
                     </p>
                   </div>
                 </div>
