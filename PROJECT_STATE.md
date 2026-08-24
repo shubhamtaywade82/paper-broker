@@ -26,7 +26,7 @@ This project is a paper trading engine with real Binance market data and simulat
 | Component       | Status      | Notes                                    |
 |-----------------|-------------|------------------------------------------|
 | Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`                |
-| Agent loop      | implemented | `TradingAgentsPipeline` multi-agent debate drives every live signal via `createSmcAgentStrategy` (registered in `engine.ts`); also reachable manually via `/api/v1/agents/cycle` |
+| Agent loop      | implemented | `TradingAgentsPipeline` multi-agent debate drives every live signal via `createSmcAgentStrategy` (registered in `engine.ts`); also reachable manually via `/api/v1/agents/cycle`. LLM-backed stages: analyst team, bull/bear debate (rounds configurable via `debateRounds`, default 2), trader decision. The risk team and fund-manager approval stages are deterministic rule-based code, not LLM calls — intentionally, per AGENTS.md's "LLM must never be an authority over risk" mandate, not a gap |
 | Ollama reachability | hard runtime dependency | If Ollama is unreachable, the agent debate always resolves to NEUTRAL and no trades occur (safe by design); `engine.ts` logs a startup warning if unreachable, but does not gate startup |
 | MCP             | planned     | Planned for tool orchestration           |
 | Trading supervision | implemented | LiveTradingGuard, DivergenceGuard, Risk check |

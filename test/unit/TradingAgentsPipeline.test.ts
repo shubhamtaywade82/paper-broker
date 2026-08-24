@@ -154,9 +154,28 @@ describe('TradingAgents Multi-Agent Schemas & Pipeline', () => {
 
     expect(cycle.symbol).toBe('SOLUSDT');
     expect(cycle.analystReports.length).toBeGreaterThan(0);
-    expect(cycle.debate.length).toBe(2);
+    // H-17: debateRounds defaults to 2, and now actually drives the number of
+    // rounds run (previously always exactly 1 round / 2 entries regardless of
+    // config) — 2 rounds x (BULL + BEAR) = 4 entries.
+    expect(cycle.debate.length).toBe(4);
     expect(cycle.verdict).toBeDefined();
     expect(cycle.fundManagerApproval).toBeDefined();
     expect(CycleRecordSchema.safeParse(cycle).success).toBe(true);
-  });
+  }, 30_000);
+
+  it('H-17: debateRounds actually controls the number of debate rounds run', async () => {
+    const pipeline = new TradingAgentsPipeline({ model: 'llama3.1:8b', debateRounds: 1 });
+
+    const cycle = await pipeline.runCycle({
+      symbol: 'SOLUSDT',
+      lastPrice: 142.5,
+      bid: 142.48,
+      ask: 142.52,
+      spread: 0.04,
+      mark: 142.5,
+    });
+
+    expect(cycle.debate.length).toBe(2); // 1 round x (BULL + BEAR)
+    expect(cycle.debate.filter((d) => d.round === 1).length).toBe(2);
+  }, 10_000);
 });
