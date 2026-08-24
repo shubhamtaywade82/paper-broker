@@ -10,6 +10,7 @@ import type {
   OrderEventType,
   SystemEventType,
 } from '../broker/types.js';
+import { logger } from '../telemetry/logger.js';
 
 export interface EventEnvelope {
   id: string;
@@ -55,6 +56,20 @@ export class EventLog {
     this.jsonlFile = jsonlFile;
     this.db = db;
     this.initSchema();
+    this.seq = this.recoverSequence();
+  }
+
+  /**
+   * H-08: `seq` used to always start at 0, regardless of what was already
+   * persisted. On restart with a non-empty `events` table, new events would
+   * restart numbering from 1 — colliding with (and sorting before) existing
+   * rows' seq values, breaking the total ordering `getEvents()`'s
+   * `ORDER BY seq DESC` depends on. Recover the high-water mark from the
+   * table (the durable side of the dual-write) instead.
+   */
+  private recoverSequence(): number {
+    const row = this.db.prepare('SELECT MAX(seq) as maxSeq FROM events').get() as { maxSeq: number | null };
+    return row.maxSeq ?? 0;
   }
 
   private initSchema(): void {
@@ -118,9 +133,15 @@ export class EventLog {
       payload,
     };
 
-    const jsonLine = JSON.stringify(event);
-    fs.appendFileSync(this.jsonlFile, `${jsonLine}\n`);
-
+    // H-07: SQLite first, JSONL best-effort second. SQLite is the queryable,
+    // transactional, WAL-durable store getEvents()/getAgentCycles() and every
+    // API endpoint actually read from; the JSONL stream is a supplementary
+    // append-only log for external tailing/audit. Writing JSONL first (the
+    // old order) meant a crash between the two writes left an event in the
+    // JSONL stream that SQLite never saw — silently missing from every query
+    // path. Writing SQLite first and catching a JSONL failure means a crash
+    // or disk error on the JSONL side can never cause data SQLite has to
+    // "disappear" from the system's actual source of truth.
     this.db.prepare(`
       INSERT INTO events (id, seq, event_type, aggregate_type, aggregate_id, account_id, symbol, correlation_id, causation_id, payload, created_at_utc)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -137,6 +158,13 @@ export class EventLog {
       JSON.stringify(payload),
       new Date(now).toISOString()
     );
+
+    try {
+      const jsonLine = JSON.stringify(event);
+      fs.appendFileSync(this.jsonlFile, `${jsonLine}\n`);
+    } catch (err) {
+      logger.error({ err, eventId: event.id, seq: event.seq }, '[EventLog] failed to append to JSONL stream (SQLite write already succeeded)');
+    }
   }
 
   appendOrderEvent(event: OrderEventType): void {

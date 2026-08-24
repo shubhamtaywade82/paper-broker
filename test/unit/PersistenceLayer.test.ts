@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DatabaseManager } from '../../src/persistence/db.js';
 import { EventLog } from '../../src/persistence/EventLog.js';
 import { SnapshotStore } from '../../src/persistence/SnapshotStore.js';
@@ -72,6 +72,49 @@ describe('Persistence layer: shared SQLite connection (C-03)', () => {
     expect(limited).toHaveLength(2);
     const all = events.getEvents({});
     expect(all).toHaveLength(5);
+
+    db.close();
+  });
+
+  it('H-08: recovers the sequence counter from the DB on restart instead of restarting at 0', () => {
+    const db = new DatabaseManager(dataDir);
+    const events = new EventLog(`${dataDir}/events.jsonl`, db.raw);
+    for (let i = 0; i < 5; i++) {
+      events.append('SYSTEM_EVENT', { i }, { aggregateType: 'system', aggregateId: 'engine' });
+    }
+    const seqsBeforeRestart = events.getEvents({}).map((e) => e.seq).sort((a, b) => a - b);
+    expect(seqsBeforeRestart).toEqual([1, 2, 3, 4, 5]);
+
+    // Simulate a process restart: a fresh EventLog instance against the same
+    // (still-populated) shared connection. Without H-08's fix this would
+    // start seq back at 1, colliding with the rows already written above.
+    const restarted = new EventLog(`${dataDir}/events-2.jsonl`, db.raw);
+    restarted.append('SYSTEM_EVENT', { restarted: true }, { aggregateType: 'system', aggregateId: 'engine' });
+
+    const allSeqs = restarted.getEvents({}).map((e) => e.seq).sort((a, b) => a - b);
+    expect(allSeqs).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(new Set(allSeqs).size).toBe(allSeqs.length); // no duplicate/colliding seq
+
+    db.close();
+  });
+
+  it('H-07: writes to SQLite even when the JSONL append fails, and does not throw', () => {
+    const db = new DatabaseManager(dataDir);
+    const events = new EventLog(`${dataDir}/events.jsonl`, db.raw);
+
+    const appendFileSyncSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+
+    expect(() => events.append('SYSTEM_EVENT', { ok: true }, { aggregateType: 'system', aggregateId: 'engine' })).not.toThrow();
+
+    appendFileSyncSpy.mockRestore();
+
+    // The SQLite row must exist even though the JSONL side failed — SQLite
+    // is the side every read path (getEvents, the API) actually queries.
+    const rows = events.getEvents({});
+    expect(rows).toHaveLength(1);
+    expect((rows[0]!.payload as { ok: boolean }).ok).toBe(true);
 
     db.close();
   });
