@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createSmcAgentStrategy, type AgentDebatePipeline } from '../../src/strategy/strategies/smc-agent.js';
 import { SetupEngine } from '../../src/market/setup/SetupEngine.js';
 import { MtfStateEngine } from '../../src/market/MtfStateEngine.js';
@@ -193,11 +193,13 @@ describe('SMC agent strategy — structure to agents to risk gate', () => {
   it('does not produce a signal when the risk engine rejects due to insufficient equity', async () => {
     const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
     const tradeIntentEngine = new TradeIntentEngine();
+    const onCycleCompleted = vi.fn();
 
     const strategy = createSmcAgentStrategy({
       setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
       tradingAgentsPipeline: makeApprovingAgentPipeline('LONG'),
       getInstrument: () => FAKE_INSTRUMENT,
+      onCycleCompleted,
     });
 
     const candles5m = build5mCandles();
@@ -208,6 +210,11 @@ describe('SMC agent strategy — structure to agents to risk gate', () => {
     const result = await strategy.onCandleClose!(makeContext(1), currentCandle);
 
     expect(result).toBeNull();
+    // The agent still ran and reasoned about this candle even though the
+    // downstream risk gate vetoed it — that cycle must still surface on the
+    // dashboard (agent_cycles + WS broadcast), not disappear silently.
+    expect(onCycleCompleted).toHaveBeenCalledTimes(1);
+    expect(onCycleCompleted.mock.calls[0]![0].cycleId).toBe('test-cycle-BTCUSDT');
   });
 
   it('produces a signal when structure, agents, and risk all agree the trade is sound', async () => {

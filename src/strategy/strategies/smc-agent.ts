@@ -53,6 +53,7 @@ export interface SmcAgentStrategyDeps {
   symbols?: string[];
   getAllPositions?: () => Position[];
   getAllOpenOrders?: () => Order[];
+  onCycleCompleted?: (cycle: CycleRecord) => void;
 }
 
 export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
@@ -89,6 +90,7 @@ async function evaluateCandle(
   if (!marketFacts) return null;
 
   const cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts);
+  deps.onCycleCompleted?.(cycle);
   if (!cycle.fundManagerApproval.approved) return null;
   const agentDirection = cycle.fundManagerApproval.finalDecision.action;
   if (agentDirection === 'NEUTRAL' || agentDirection !== candidate.direction) return null;

@@ -23,6 +23,7 @@ import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
 import { TradingAgentsPipeline } from './ai/tradingAgents.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { ApiServer } from './api/server.js';
+import { WebSocketGateway } from './api/websocket/WebSocketGateway.js';
 import { Scheduler } from './scheduler/jobs.js';
 import { TelegramNotifier } from './notifications/TelegramNotifier.js';
 import { logger } from './telemetry/logger.js';
@@ -158,6 +159,8 @@ export async function startEngine(): Promise<EngineHandle> {
     }
   });
 
+  const wsGateway = new WebSocketGateway();
+
   strategyEngine.register(
     createSmcAgentStrategy({
       setupEngine,
@@ -170,6 +173,10 @@ export async function startEngine(): Promise<EngineHandle> {
       symbols,
       getAllPositions: () => broker.getPositions(),
       getAllOpenOrders: () => broker.getOpenOrders(),
+      onCycleCompleted: (cycle) => {
+        events.logAgentCycle(cycle);
+        wsGateway.broadcast('agent.cycle', cycle);
+      },
     })
   );
 
@@ -184,6 +191,7 @@ export async function startEngine(): Promise<EngineHandle> {
     snapshots,
     profile: runtimeProfile,
     marketState,
+    wsGateway,
     host: '0.0.0.0',
     port: env.PORT,
   });
