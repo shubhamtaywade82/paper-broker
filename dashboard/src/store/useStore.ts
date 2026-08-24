@@ -1,5 +1,15 @@
 import { create } from 'zustand';
 
+export type WorkspaceTab =
+  | 'dashboard'
+  | 'markets'
+  | 'trading'
+  | 'agent'
+  | 'research'
+  | 'risk'
+  | 'activity'
+  | 'system';
+
 export interface Position {
   symbol: string;
   side: 'LONG' | 'SHORT';
@@ -10,6 +20,27 @@ export interface Position {
   leverage: number;
   liquidationPrice?: number;
   margin?: number;
+  roe?: number;
+  slPrice?: number;
+  tpPrice?: number;
+}
+
+export interface Order {
+  id: string;
+  clientOrderId?: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  type: 'MARKET' | 'LIMIT' | 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
+  quantity: number;
+  price?: number;
+  stopPrice?: number;
+  status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'REJECTED' | 'EXPIRED';
+  leverage?: number;
+  reduceOnly?: boolean;
+  postOnly?: boolean;
+  filledQty?: number;
+  avgFillPrice?: number;
+  submittedAtUtc?: string;
 }
 
 export interface AgentCycle {
@@ -25,11 +56,12 @@ export interface AgentCycle {
 }
 
 export interface AccountInfo {
-  balance: number;
+  balance?: number;
+  walletBalance?: number;
   equity: number;
   unrealizedPnl: number;
-  marginUsed: number;
-  freeMargin: number;
+  marginUsed?: number;
+  freeMargin?: number;
 }
 
 export interface PerformanceMetrics {
@@ -56,6 +88,14 @@ export interface RiskOpinion {
   rationale: string;
 }
 
+export interface ToolCallTrace {
+  tool: string;
+  input: Record<string, unknown>;
+  outputSummary: Record<string, unknown>;
+  durationMs: number;
+  status: 'SUCCESS' | 'FAILED';
+}
+
 export interface CycleDetail extends AgentCycle {
   analystReports: Array<{
     agent: string;
@@ -66,6 +106,7 @@ export interface CycleDetail extends AgentCycle {
   }>;
   debate: DebateEntry[];
   riskOpinions: RiskOpinion[];
+  toolCalls?: ToolCallTrace[];
   fundManagerApproval: {
     approved: boolean;
     rationale: string;
@@ -80,54 +121,154 @@ export interface CycleDetail extends AgentCycle {
 }
 
 export interface LiveEventItem {
+  id?: string;
   type: string;
+  stream?: string;
   payload: Record<string, unknown>;
   timestamp: number;
+  traceId?: string;
+}
+
+export interface TickerData {
+  symbol: string;
+  price: number;
+  change24h: number;
+  high24h: number;
+  low24h: number;
+  volume24h: number;
+  fundingRate?: number;
+  markPrice?: number;
+}
+
+export interface OrderbookDepth {
+  symbol: string;
+  bid: number;
+  ask: number;
+  bidQty: number;
+  askQty: number;
+  spread: number;
+  last: number;
+  mark: number;
+  bids: Array<[number, number]>;
+  asks: Array<[number, number]>;
+}
+
+export interface RiskSummary {
+  riskRating: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  exposurePct: number;
+  marginUsagePct: number;
+  openPositionsCount: number;
+  maxOpenPositions: number;
+  dailyLossLimitPct: number;
+  dailyLossRemainingPct: number;
+  safeMode: boolean;
+  liveArmed: boolean;
+  mode: string;
+  limits: {
+    maxLeverage: number;
+    maxRiskPerTradePct: number;
+    maxDrawdownPct: number;
+    divergenceLimitPct: number;
+  };
 }
 
 interface StoreState {
+  activeTab: WorkspaceTab;
+  selectedSymbol: string;
+  timeframe: string;
   account: AccountInfo | null;
   positions: Position[];
+  openOrders: Order[];
+  selectedPosition: Position | null;
   cycles: AgentCycle[];
   selectedCycle: CycleDetail | null;
+  agentTab: 'overview' | 'pipeline' | 'runs' | 'fleet';
+  tradingTab: 'positions' | 'orders' | 'form' | 'fills' | 'journal';
+  riskSummary: RiskSummary | null;
   performance: PerformanceMetrics | null;
   wsConnected: boolean;
+  operatingMode: 'paper' | 'shadow' | 'live';
+  liveArmed: boolean;
   liveEvents: LiveEventItem[];
   livePrice: Record<string, number>;
+  tickers: Record<string, TickerData>;
+  orderbook: OrderbookDepth | null;
 
+  setActiveTab: (tab: WorkspaceTab) => void;
+  setSelectedSymbol: (symbol: string) => void;
+  setTimeframe: (tf: string) => void;
   setAccount: (account: AccountInfo) => void;
   setPositions: (positions: Position[]) => void;
+  setOpenOrders: (orders: Order[]) => void;
+  setSelectedPosition: (pos: Position | null) => void;
   setCycles: (cycles: AgentCycle[]) => void;
   setSelectedCycle: (cycle: CycleDetail | null) => void;
+  setAgentTab: (tab: 'overview' | 'pipeline' | 'runs' | 'fleet') => void;
+  setTradingTab: (tab: 'positions' | 'orders' | 'form' | 'fills' | 'journal') => void;
+  setRiskSummary: (risk: RiskSummary) => void;
   setPerformance: (perf: PerformanceMetrics) => void;
   setWsConnected: (connected: boolean) => void;
-  addLiveEvent: (event: { type: string; payload: Record<string, unknown> }) => void;
+  setOperatingMode: (mode: 'paper' | 'shadow' | 'live', armed?: boolean) => void;
+  addLiveEvent: (event: { type: string; payload: Record<string, unknown>; stream?: string; id?: string }) => void;
   setLivePrice: (symbol: string, price: number) => void;
+  setTickers: (tickers: Record<string, TickerData>) => void;
+  setOrderbook: (orderbook: OrderbookDepth | null) => void;
 }
 
 export const useStore = create<StoreState>((set) => ({
+  activeTab: 'dashboard',
+  selectedSymbol: 'SOLUSDT',
+  timeframe: '15m',
   account: null,
   positions: [],
+  openOrders: [],
+  selectedPosition: null,
   cycles: [],
   selectedCycle: null,
+  agentTab: 'overview',
+  tradingTab: 'positions',
+  riskSummary: null,
   performance: null,
   wsConnected: false,
+  operatingMode: 'paper',
+  liveArmed: false,
   liveEvents: [],
   livePrice: {},
+  tickers: {},
+  orderbook: null,
 
+  setActiveTab: (tab) => set({ activeTab: tab }),
+  setSelectedSymbol: (selectedSymbol) => set({ selectedSymbol }),
+  setTimeframe: (timeframe) => set({ timeframe }),
   setAccount: (account) => set({ account }),
   setPositions: (positions) => set({ positions }),
+  setOpenOrders: (openOrders) => set({ openOrders }),
+  setSelectedPosition: (selectedPosition) => set({ selectedPosition }),
   setCycles: (cycles) => set({ cycles }),
   setSelectedCycle: (cycle) => set({ selectedCycle: cycle }),
+  setAgentTab: (agentTab) => set({ agentTab }),
+  setTradingTab: (tradingTab) => set({ tradingTab }),
+  setRiskSummary: (riskSummary) => set({ riskSummary }),
   setPerformance: (perf) => set({ performance: perf }),
-  setWsConnected: (connected) => set({ wsConnected: connected }),
+  setWsConnected: (wsConnected) => set({ wsConnected }),
+  setOperatingMode: (operatingMode, armed) =>
+    set((state) => ({
+      operatingMode,
+      liveArmed: armed !== undefined ? armed : state.liveArmed,
+    })),
   addLiveEvent: (event) =>
     set((state) => ({
       liveEvents: [
-        { ...event, timestamp: Date.now() },
-        ...state.liveEvents.slice(0, 99),
+        {
+          ...event,
+          id: event.id || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: Date.now(),
+        },
+        ...state.liveEvents.slice(0, 199),
       ],
     })),
   setLivePrice: (symbol, price) =>
     set((state) => ({ livePrice: { ...state.livePrice, [symbol]: price } })),
+  setTickers: (tickers) => set({ tickers }),
+  setOrderbook: (orderbook) => set({ orderbook }),
 }));

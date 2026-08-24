@@ -10,71 +10,123 @@ export function useWebSocket() {
     addLiveEvent,
     setAccount,
     setLivePrice,
+    setOperatingMode,
   } = useStore();
 
   useEffect(() => {
+    let reconnectTimeout: NodeJS.Timeout;
+    let isMounted = true;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/ws`;
 
     const connect = () => {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      if (!isMounted) return;
+      try {
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
 
-      ws.onopen = () => setWsConnected(true);
+        ws.onopen = () => {
+          if (isMounted) setWsConnected(true);
+        };
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data as string) as {
-            type: string;
-            payload: Record<string, unknown>;
-          };
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data as string) as {
+              type: string;
+              payload: Record<string, unknown>;
+              timestampUtc?: string;
+            };
 
-          switch (data.type) {
-            case 'market.tick':
-              if (data.payload.symbol && data.payload.price) {
-                setLivePrice(String(data.payload.symbol), Number(data.payload.price));
-              }
-              break;
-            case 'trade.stream':
-              addLiveEvent({ type: 'trade', payload: data.payload });
-              break;
-            case 'book.update':
-              addLiveEvent({ type: 'book', payload: data.payload });
-              break;
-            case 'account.updated':
-              if (data.payload) setAccount(data.payload as never);
-              break;
-            case 'position.updated':
-              // Refresh positions via REST to get authoritative state
-              queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-              addLiveEvent({ type: 'position', payload: data.payload });
-              break;
-            case 'agent.cycle':
-              addLiveEvent({ type: 'cycle', payload: data.payload });
-              queryClient.invalidateQueries({ queryKey: ['cycles'] });
-              break;
-            case 'risk.alert':
-              addLiveEvent({ type: 'risk', payload: data.payload });
-              break;
+            switch (data.type) {
+              case 'market.tick':
+                if (data.payload.symbol && data.payload.price) {
+                  setLivePrice(String(data.payload.symbol), Number(data.payload.price));
+                }
+                break;
+              case 'trade.stream':
+                addLiveEvent({ type: 'trade', stream: 'market', payload: data.payload });
+                break;
+              case 'book.update':
+                addLiveEvent({ type: 'book', stream: 'market', payload: data.payload });
+                break;
+              case 'account.updated':
+                if (data.payload) setAccount(data.payload as never);
+                break;
+              case 'order.updated':
+              case 'order.filled':
+                queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                addLiveEvent({ type: 'order', stream: 'trading', payload: data.payload });
+                break;
+              case 'position.updated':
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
+                addLiveEvent({ type: 'position', stream: 'trading', payload: data.payload });
+                break;
+              case 'agent.cycle':
+                addLiveEvent({ type: 'cycle', stream: 'agent', payload: data.payload });
+                queryClient.invalidateQueries({ queryKey: ['cycles'] });
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                break;
+              case 'risk.alert':
+              case 'incident.reported':
+                addLiveEvent({ type: 'risk', stream: 'risk', payload: data.payload });
+                queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
+                break;
+              case 'mode.changed':
+                if (data.payload.mode) {
+                  setOperatingMode(
+                    data.payload.mode as 'paper' | 'shadow' | 'live',
+                    Boolean(data.payload.liveArmed)
+                  );
+                }
+                addLiveEvent({ type: 'system', stream: 'system', payload: data.payload });
+                break;
+              case 'kill_switch.activated':
+                addLiveEvent({ type: 'system', stream: 'system', payload: data.payload });
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+                break;
+              default:
+                addLiveEvent({ type: data.type, stream: 'system', payload: data.payload });
+            }
+          } catch (err) {
+            console.error('[WS] Parse error:', err);
           }
-        } catch (err) {
-          console.error('[WS] Parse error:', err);
-        }
-      };
+        };
 
-      ws.onclose = () => {
-        setWsConnected(false);
-        setTimeout(connect, 3000);
-      };
+        ws.onclose = () => {
+          if (isMounted) {
+            setWsConnected(false);
+            reconnectTimeout = setTimeout(connect, 3000);
+          }
+        };
 
-      ws.onerror = () => ws.close();
+        ws.onerror = () => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        };
+      } catch {
+        if (isMounted) reconnectTimeout = setTimeout(connect, 4000);
+      }
     };
 
     connect();
 
     return () => {
-      wsRef.current?.close();
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
+      const ws = wsRef.current;
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => ws.close();
+        }
+      }
     };
-  }, [addLiveEvent, queryClient, setAccount, setLivePrice, setWsConnected]);
+  }, [addLiveEvent, queryClient, setAccount, setLivePrice, setOperatingMode, setWsConnected]);
 }

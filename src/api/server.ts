@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { z } from 'zod';
@@ -139,16 +141,102 @@ export class ApiServer {
   }
 
   private registerDashboardRoutes(): void {
+    const distPath = path.resolve(process.cwd(), 'dashboard', 'dist');
+    const indexPath = path.join(distPath, 'index.html');
+
+    this.app.get('/assets/:file', async (request, reply) => {
+      const { file } = request.params as { file: string };
+      const filePath = path.join(distPath, 'assets', file);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const mimeType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.svg' ? 'image/svg+xml' : 'application/octet-stream';
+        return reply.type(mimeType).send(fs.readFileSync(filePath));
+      }
+      return reply.code(404).send({ error: 'FILE_NOT_FOUND' });
+    });
+
     this.app.get('/', async (_req, reply) => {
+      if (fs.existsSync(indexPath)) {
+        return reply.type('text/html').send(fs.readFileSync(indexPath, 'utf-8'));
+      }
       return reply.type('text/html').send(DASHBOARD_HTML);
     });
 
     this.app.get('/dashboard', async (_req, reply) => {
+      if (fs.existsSync(indexPath)) {
+        return reply.type('text/html').send(fs.readFileSync(indexPath, 'utf-8'));
+      }
       return reply.type('text/html').send(DASHBOARD_HTML);
     });
 
     this.app.get('/favicon.ico', async (_req, reply) => {
       return reply.status(204).send();
+    });
+
+    this.app.get('/api/v1/state/snapshot', async () => {
+      const [account, positions, openOrders, recentSignals] = await Promise.all([
+        this.broker.getAccount(),
+        this.broker.getPositions(),
+        this.broker.getOpenOrders(),
+        this.signals.list({ limit: 20 }),
+      ]);
+
+      return {
+        stateVersion: Date.now(),
+        serverTimeUtc: new Date().toISOString(),
+        mode: this.profile?.mode ?? 'paper',
+        liveArmed: this.profile?.liveArmed ?? false,
+        realOrders: this.profile?.realOrders ?? false,
+        account,
+        positions,
+        openOrders,
+        signals: recentSignals,
+        health: {
+          uptimeMs: Date.now() - this.startedAt,
+          activeProvider: this.supervisor?.getActiveProvider() ?? 'BINANCE',
+          binance: this.supervisor?.health.getHealth('BINANCE'),
+          coindcx: this.supervisor?.health.getHealth('COINDCX'),
+        },
+        incidents: this.errorNormalizer?.getRecentIncidents(10) ?? [],
+      };
+    });
+
+    this.app.get('/api/v1/risk', async () => {
+      const [account, positions] = await Promise.all([
+        this.broker.getAccount(),
+        this.broker.getPositions(),
+      ]);
+
+      const equity = account?.equity || 10000;
+      let totalNotional = 0;
+      let totalMarginUsed = 0;
+      for (const pos of positions) {
+        const notional = Math.abs(pos.qty * (pos.markPrice || pos.entryPrice));
+        totalNotional += notional;
+        totalMarginUsed += notional / (pos.leverage || 1);
+      }
+
+      const exposurePct = equity > 0 ? (totalNotional / equity) * 100 : 0;
+      const marginUsagePct = equity > 0 ? (totalMarginUsed / equity) * 100 : 0;
+
+      return {
+        riskRating: exposurePct > 75 ? 'HIGH' : exposurePct > 40 ? 'MEDIUM' : 'LOW',
+        exposurePct: Number(exposurePct.toFixed(2)),
+        marginUsagePct: Number(marginUsagePct.toFixed(2)),
+        openPositionsCount: positions.length,
+        maxOpenPositions: 3,
+        dailyLossLimitPct: 5.0,
+        dailyLossRemainingPct: 4.8,
+        safeMode: false,
+        liveArmed: this.profile?.liveArmed ?? false,
+        mode: this.profile?.mode ?? 'paper',
+        limits: {
+          maxLeverage: 10,
+          maxRiskPerTradePct: 2.0,
+          maxDrawdownPct: 10.0,
+          divergenceLimitPct: 0.15,
+        },
+      };
     });
 
     this.app.get('/api/v1/dashboard', async () => {

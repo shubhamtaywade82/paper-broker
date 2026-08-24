@@ -1,8 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useStore, type AgentCycle, type CycleDetail, type PerformanceMetrics, type AccountInfo, type Position } from '../store/useStore';
+import {
+  useStore,
+  type AgentCycle,
+  type CycleDetail,
+  type PerformanceMetrics,
+  type AccountInfo,
+  type Position,
+  type Order,
+  type RiskSummary,
+  type OrderbookDepth,
+  type TickerData,
+} from '../store/useStore';
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -10,20 +21,128 @@ async function fetchJson<T>(url: string): Promise<T> {
 export function useDashboard() {
   const setAccount = useStore((s) => s.setAccount);
   const setPositions = useStore((s) => s.setPositions);
+  const setOperatingMode = useStore((s) => s.setOperatingMode);
 
   return useQuery({
     queryKey: ['dashboard'],
     queryFn: async () => {
       const data = await fetchJson<{
+        mode?: 'paper' | 'shadow' | 'live';
+        liveArmed?: boolean;
         account: AccountInfo;
         positions: Position[];
+        health: Record<string, unknown>;
+        incidents: Array<Record<string, unknown>>;
       }>('/api/v1/dashboard');
 
       if (data.account) setAccount(data.account);
       if (data.positions) setPositions(data.positions);
+      if (data.mode) setOperatingMode(data.mode, data.liveArmed);
       return data;
     },
     refetchInterval: 5000,
+  });
+}
+
+export function useRiskSummary() {
+  const setRiskSummary = useStore((s) => s.setRiskSummary);
+
+  return useQuery({
+    queryKey: ['risk-summary'],
+    queryFn: async () => {
+      const data = await fetchJson<RiskSummary>('/api/v1/risk');
+      setRiskSummary(data);
+      return data;
+    },
+    refetchInterval: 5000,
+  });
+}
+
+export function useOpenOrders(symbol?: string) {
+  const setOpenOrders = useStore((s) => s.setOpenOrders);
+
+  return useQuery({
+    queryKey: ['open-orders', symbol],
+    queryFn: async () => {
+      const url = symbol ? `/orders?symbol=${symbol}` : '/orders';
+      const data = await fetchJson<Order[]>(url);
+      setOpenOrders(data || []);
+      return data || [];
+    },
+    refetchInterval: 4000,
+  });
+}
+
+export function useTickers() {
+  const setTickers = useStore((s) => s.setTickers);
+
+  return useQuery({
+    queryKey: ['tickers'],
+    queryFn: async () => {
+      const raw = await fetchJson<Array<Record<string, unknown>>>('/api/v1/tickers');
+      const tickersMap: Record<string, TickerData> = {};
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          const sym = String(item.symbol || '');
+          if (!sym) continue;
+          tickersMap[sym] = {
+            symbol: sym,
+            price: parseFloat(String(item.lastPrice || item.price || 0)),
+            change24h: parseFloat(String(item.priceChangePercent || 0)),
+            high24h: parseFloat(String(item.highPrice || 0)),
+            low24h: parseFloat(String(item.lowPrice || 0)),
+            volume24h: parseFloat(String(item.volume || item.quoteVolume || 0)),
+            fundingRate: item.lastFundingRate ? parseFloat(String(item.lastFundingRate)) : undefined,
+            markPrice: item.markPrice ? parseFloat(String(item.markPrice)) : undefined,
+          };
+        }
+      }
+      setTickers(tickersMap);
+      return tickersMap;
+    },
+    refetchInterval: 8000,
+  });
+}
+
+export function useOrderbook(symbol: string) {
+  const setOrderbook = useStore((s) => s.setOrderbook);
+
+  return useQuery({
+    queryKey: ['orderbook', symbol],
+    queryFn: async () => {
+      const data = await fetchJson<OrderbookDepth>(`/api/v1/orderbook?symbol=${symbol}&limit=12`);
+      if (data) setOrderbook(data);
+      return data;
+    },
+    refetchInterval: 2500,
+  });
+}
+
+export function useTrades(symbol: string) {
+  return useQuery({
+    queryKey: ['trades', symbol],
+    queryFn: () =>
+      fetchJson<Array<{ price: number; qty: number; ts: number; isBuyerMaker: boolean }>>(
+        `/api/v1/trades?symbol=${symbol}&limit=20`
+      ),
+    refetchInterval: 3000,
+  });
+}
+
+export function useKlines(symbol: string, interval = '15m', limit = 100) {
+  return useQuery({
+    queryKey: ['klines', symbol, interval, limit],
+    queryFn: () =>
+      fetchJson<Array<{
+        openTime: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        closeTime: number;
+      }>>(`/api/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`),
+    refetchInterval: 15000,
   });
 }
 
@@ -162,18 +281,124 @@ export function usePerformance(period = '30d') {
   });
 }
 
+export function useActivity(limit = 50) {
+  return useQuery({
+    queryKey: ['activity', limit],
+    queryFn: () =>
+      fetchJson<Array<{
+        id: string;
+        type: string;
+        ts: string;
+        payload: Record<string, unknown>;
+      }>>(`/api/v1/activity?limit=${limit}`),
+    refetchInterval: 5000,
+  });
+}
+
+export function useCreateOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: {
+      symbol: string;
+      side: 'BUY' | 'SELL';
+      type: 'MARKET' | 'LIMIT' | 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
+      quantity: number;
+      price?: number;
+      stopPrice?: number;
+      leverage?: number;
+      reduceOnly?: boolean;
+      postOnly?: boolean;
+    }) =>
+      fetchJson<Order>('/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useCancelOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (orderId: string) =>
+      fetchJson<Order>('/orders/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useCancelAllOrders() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (symbol?: string) =>
+      fetchJson<{ canceled: boolean; symbol: string }>('/orders/cancel-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useArmMode() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (passcode?: string) =>
+      fetchJson<{ armed: boolean }>('/api/v1/mode/arm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
+    },
+  });
+}
+
+export function useEngineControl() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (action: 'start' | 'stop' | 'kill-switch') =>
+      fetchJson<Record<string, unknown>>(`/engine/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+    },
+  });
+}
 
 export function useTriggerCycle() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (symbol: string) => {
-      const res = await fetch('/api/v1/agents/cycle', {
+    mutationFn: async ({ symbol, model }: { symbol: string; model?: string }) => {
+      return fetchJson('/api/v1/agents/cycle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({ symbol, model }),
       });
-      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cycles'] });

@@ -101,6 +101,26 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     expect(body.health.activeProvider).toBe('BINANCE');
     expect(body.incidents.length).toBe(1);
     expect(body.incidents[0].component).toBe('BinanceWs');
+
+    const riskRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/risk',
+    });
+    expect(riskRes.statusCode).toBe(200);
+    const riskBody = JSON.parse(riskRes.body);
+    expect(riskBody.riskRating).toBeDefined();
+    expect(riskBody.exposurePct).toBeDefined();
+    expect(riskBody.limits.maxLeverage).toBe(10);
+
+    const snapshotRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/state/snapshot',
+    });
+    expect(snapshotRes.statusCode).toBe(200);
+    const snapBody = JSON.parse(snapshotRes.body);
+    expect(snapBody.stateVersion).toBeDefined();
+    expect(snapBody.account.walletBalance).toBe(10000);
+
     await server.stop();
   });
 

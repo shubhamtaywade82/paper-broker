@@ -29,7 +29,7 @@ export function CyclesPanel({ onSelectCycle }: { onSelectCycle: (id: string) => 
             <option value="BNBUSDT">BNBUSDT</option>
           </select>
           <button
-            onClick={() => triggerCycle.mutate(triggerSymbol)}
+            onClick={() => triggerCycle.mutate({ symbol: triggerSymbol })}
             disabled={triggerCycle.isPending}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold font-mono transition-colors disabled:opacity-50"
           >
