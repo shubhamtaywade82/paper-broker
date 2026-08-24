@@ -148,6 +148,82 @@ describe('PaperBroker', () => {
     expect(position?.status).toBe('CLOSED');
   });
 
+  it('never blocks a reduce-only order with an exposure cap, even once the position already exceeds it', () => {
+    const tightBroker = new PaperBroker({
+      dataDir: '/tmp/paper-broker-test',
+      accountId: 'test-account',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      risk: { maxOrderNotional: 1000, maxPositionNotional: 1000 },
+    });
+
+    // Open within the cap: 5 BTC @ ~$100 = $500 notional, under the $1000 max.
+    tightBroker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+    const open = tightBroker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 5, leverage: 1 });
+    expect(open.status).toBe('FILLED');
+
+    // Price moves against the position enough that its notional now exceeds
+    // the cap purely from mark-to-market movement (5 BTC @ $250 = $1250) —
+    // simulating a position that grew past its risk limit without any new
+    // order ever being submitted, exactly like the live account that got
+    // stuck here.
+    tightBroker.onMarket({
+      symbol: 'BTCUSDT', bid: 250, ask: 250.1, last: 250.05, mark: 250,
+      localTsUtc: Date.now(), stale: false,
+    });
+
+    // A reduce-only close on a position already past maxPositionNotional must
+    // still be accepted — a risk cap must never block the only order that
+    // shrinks risk.
+    const close = tightBroker.submitOrder({
+      symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 5, reduceOnly: true, leverage: 1,
+    });
+    expect(close.status).toBe('FILLED');
+    expect(close.rejectReason).toBeUndefined();
+  });
+
+  it('cancels stale reduce-only brackets when a position fully closes', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    const stop = broker.submitOrder({
+      symbol: 'BTCUSDT', side: 'SELL', type: 'STOP_MARKET', quantity: 0.1, stopPrice: 95, reduceOnly: true, leverage: 5,
+    });
+    expect(stop.status).toBe('NEW');
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 0.1, reduceOnly: true, leverage: 5 });
+
+    const staleStop = broker.getOpenOrders().find((o) => o.id === stop.id);
+    expect(staleStop).toBeUndefined(); // canceled, no longer open
+  });
+
+  it('cancels stale reduce-only brackets when a position flips direction', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    const staleLongStop = broker.submitOrder({
+      symbol: 'BTCUSDT', side: 'SELL', type: 'STOP_MARKET', quantity: 0.1, stopPrice: 95, reduceOnly: true, leverage: 5,
+    });
+
+    // A large opposite-side non-reduceOnly order flips LONG 0.1 straight to SHORT 0.1
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 0.2, leverage: 5 });
+
+    const position = broker.getPosition('BTCUSDT');
+    expect(position?.qty).toBeCloseTo(-0.1);
+
+    const survivingOrder = broker.getOpenOrders().find((o) => o.id === staleLongStop.id);
+    expect(survivingOrder).toBeUndefined(); // the old SELL-side stop can never fire against a SHORT
+  });
+
   it('accumulates position qty without floating-point drift across repeated fills', () => {
     broker.onMarket({
       symbol: 'BTCUSDT',

@@ -92,12 +92,36 @@ async function evaluateCandle(
 
   const cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts, deps.onCycleStep);
   deps.onCycleCompleted?.(cycle);
-  if (!cycle.fundManagerApproval.approved) return null;
+
+  const currentPosition = ctx.getPosition(symbol);
   const agentDirection = cycle.fundManagerApproval.finalDecision.action;
+
+  // A confident, approved reversal against an existing position should close
+  // it even when it doesn't match today's specific technical setup — this
+  // pipeline otherwise only ever considers opening, and would silently do
+  // nothing while a debate-confirmed reversal sits unacted on.
+  if (cycle.fundManagerApproval.approved && currentPosition && currentPosition.qty !== 0) {
+    const positionSide: 'LONG' | 'SHORT' = currentPosition.qty > 0 ? 'LONG' : 'SHORT';
+    const reversedAgainstPosition =
+      (positionSide === 'LONG' && agentDirection === 'SHORT') ||
+      (positionSide === 'SHORT' && agentDirection === 'LONG');
+
+    if (reversedAgainstPosition) {
+      return parseSignalInput({
+        strategyId: STRATEGY_ID,
+        symbol,
+        action: positionSide === 'LONG' ? 'CLOSE_LONG' : 'CLOSE_SHORT',
+        confidence: cycle.traderDecision.confidence,
+        reasoning: `Agent debate approved ${agentDirection} against open ${positionSide} — closing.`,
+        ttlMs: 300_000,
+      });
+    }
+  }
+
+  if (!cycle.fundManagerApproval.approved) return null;
   if (agentDirection === 'NEUTRAL' || agentDirection !== candidate.direction) return null;
 
   const riskAccount = toRiskAccountState(account);
-  const currentPosition = ctx.getPosition(symbol);
   // Whole-account risk checks (e.g. maxOpenPositions) need positions/orders across ALL
   // symbols, not just this candle's symbol — falls back to single-symbol view when the
   // multi-symbol callbacks aren't wired (keeps existing callers/tests working unchanged).

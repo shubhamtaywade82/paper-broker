@@ -597,6 +597,7 @@ export class PaperBroker implements ExecutionBroker {
       position.closedAtUtc = nowIso;
       position.updatedAtUtc = nowIso;
       this.emitPositionEvent('CLOSE', position, oldQty, 0, price);
+      this.cancelStaleBracketOrders(symbol, nowIso);
 
       return realized;
     }
@@ -638,8 +639,26 @@ export class PaperBroker implements ExecutionBroker {
     position.realizedPnl = D(position.realizedPnl).add(realized).toNumber();
     position.updatedAtUtc = nowIso;
     this.emitPositionEvent('FLIP', position, oldQty, newQty, price);
+    // Brackets placed for the old direction (e.g. a SELL stop protecting a LONG)
+    // can never fill against the new opposite-side position — cancel them so
+    // they don't sit in the book looking like protection that doesn't exist.
+    this.cancelStaleBracketOrders(symbol, nowIso);
 
     return realized;
+  }
+
+  /** Cancels a symbol's outstanding reduce-only SL/TP orders — used when a
+   * position closes or flips direction, since those brackets can never fill
+   * against the position's new state (or lack of one) and would otherwise
+   * sit in the order book indefinitely, misrepresenting real protection. */
+  private cancelStaleBracketOrders(symbol: string, nowIso: string): void {
+    for (const order of this.orders.values()) {
+      if (order.symbol !== symbol) continue;
+      if (order.status !== 'NEW' && order.status !== 'PARTIALLY_FILLED') continue;
+      if (!order.reduceOnly) continue;
+      if (order.type !== 'STOP_MARKET' && order.type !== 'TAKE_PROFIT_MARKET') continue;
+      this.cancelOrder(order.id, 'STALE_BRACKET_POSITION_CHANGED', nowIso);
+    }
   }
 
   // --------------------------------------------------
@@ -740,7 +759,15 @@ export class PaperBroker implements ExecutionBroker {
 
     const notional = D(order.quantity).mul(estimatedPrice);
     if (notional.lt(D(instrument.minNotional))) return { ok: false, reason: 'MIN_NOTIONAL_NOT_MET' };
-    if (notional.gt(this.risk.maxOrderNotional)) return { ok: false, reason: 'MAX_ORDER_NOTIONAL_EXCEEDED' };
+    // A reduce-only order can only ever shrink exposure, never grow it — the
+    // per-order and per-position notional caps below exist to stop exposure
+    // from growing, so they must never apply here. Without this exemption, a
+    // position that's already over the cap (from earlier fills) permanently
+    // blocks every future order on that symbol, including the reduce-only
+    // closes that would fix it — a deadlock the system can never recover from.
+    if (!order.reduceOnly && notional.gt(this.risk.maxOrderNotional)) {
+      return { ok: false, reason: 'MAX_ORDER_NOTIONAL_EXCEEDED' };
+    }
 
     const currentPosition = this.positions.get(order.symbol);
     const currentQty = currentPosition?.qty ?? 0;
@@ -752,13 +779,15 @@ export class PaperBroker implements ExecutionBroker {
       return { ok: false, reason: 'REDUCE_ONLY_WOULD_INCREASE' };
     }
 
-    const currentNotional = D(Math.abs(currentQty)).mul(estimatedPrice);
-    const addedNotional = increasesPosition
-      ? D(Math.abs(newQty) - Math.abs(currentQty)).mul(estimatedPrice)
-      : D(0);
+    if (!order.reduceOnly) {
+      const currentNotional = D(Math.abs(currentQty)).mul(estimatedPrice);
+      const addedNotional = increasesPosition
+        ? D(Math.abs(newQty) - Math.abs(currentQty)).mul(estimatedPrice)
+        : D(0);
 
-    if (currentNotional.add(addedNotional).gt(this.risk.maxPositionNotional)) {
-      return { ok: false, reason: 'MAX_POSITION_NOTIONAL_EXCEEDED' };
+      if (currentNotional.add(addedNotional).gt(this.risk.maxPositionNotional)) {
+        return { ok: false, reason: 'MAX_POSITION_NOTIONAL_EXCEEDED' };
+      }
     }
 
     const openOrders = this.getOpenOrders().length;

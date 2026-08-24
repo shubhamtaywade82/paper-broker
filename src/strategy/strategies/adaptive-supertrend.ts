@@ -85,6 +85,31 @@ function evaluateCandle(
   deps.onSignalGenerated?.(signal, candle.symbol);
   paramAI.learn(state, actionIndex, 0.5);
 
+  // This strategy otherwise only ever tries to OPEN a position — it never
+  // looks at what it's already holding. If the trend has reversed against an
+  // existing position, close it outright rather than betting on the
+  // higher-confidence-gated flip path (StrategyEngine.checkConflicts) firing
+  // in the same candle. A flat position gets a fresh entry decision next
+  // candle once real, not a same-tick gamble on reversing.
+  const existingPosition = ctx.getPosition(candle.symbol);
+  if (existingPosition && existingPosition.qty !== 0) {
+    const positionSide: 'LONG' | 'SHORT' = existingPosition.qty > 0 ? 'LONG' : 'SHORT';
+    const reversedAgainstPosition =
+      (positionSide === 'LONG' && signal.action === 'OPEN_SHORT') ||
+      (positionSide === 'SHORT' && signal.action === 'OPEN_LONG');
+
+    if (reversedAgainstPosition) {
+      return parseSignalInput({
+        strategyId: ADAPTIVE_SUPERTREND_STRATEGY_ID,
+        symbol: candle.symbol,
+        action: positionSide === 'LONG' ? 'CLOSE_LONG' : 'CLOSE_SHORT',
+        confidence: signal.confidence,
+        reasoning: `Trend reversed against open ${positionSide} (${signal.reasoning}) — closing.`,
+        ttlMs: 300_000,
+      });
+    }
+  }
+
   return buildSignalInput(deps, ctx, candle.symbol, signal);
 }
 
