@@ -8,6 +8,7 @@ import {
   useEngineControl,
   useFills,
   useJournal,
+  useCreateOrder,
 } from '../../hooks/useApi';
 import { OrderModal } from '../common/OrderModal';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -43,6 +44,8 @@ export function TradingView() {
   const cancelOrder = useCancelOrder();
   const cancelAllOrders = useCancelAllOrders();
   const engineControl = useEngineControl();
+  const createOrder = useCreateOrder();
+  const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
 
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isCancelAllModalOpen, setIsCancelAllModalOpen] = useState(false);
@@ -182,15 +185,34 @@ export function TradingView() {
                         );
                       })()}
                       <td className="px-5 py-4 text-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedPosition(pos);
-                          }}
-                          className="text-blue-400 hover:text-blue-300 font-bold px-2 py-1 bg-blue-500/10 rounded"
-                        >
-                          Inspect
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedPosition(pos);
+                            }}
+                            className="text-blue-400 hover:text-blue-300 font-bold px-2 py-1 bg-blue-500/10 rounded cursor-pointer"
+                          >
+                            Inspect
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const closeQty = pos.quantity ?? 0;
+                              const closeSide = (pos.side ?? 'LONG') === 'LONG' ? 'SELL' : 'BUY';
+                              if (closeQty <= 0) return;
+                              setClosingSymbol(pos.symbol);
+                              createOrder.mutate(
+                                { symbol: pos.symbol, side: closeSide, type: 'MARKET', quantity: closeQty, reduceOnly: true, leverage: pos.leverage },
+                                { onSettled: () => setClosingSymbol(null) }
+                              );
+                            }}
+                            disabled={closingSymbol === pos.symbol}
+                            className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-500/10 rounded cursor-pointer disabled:opacity-50"
+                          >
+                            {closingSymbol === pos.symbol ? 'Closing...' : 'Close'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
