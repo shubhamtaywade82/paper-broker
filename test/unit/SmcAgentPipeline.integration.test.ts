@@ -236,4 +236,56 @@ describe('SMC agent strategy — structure to agents to risk gate', () => {
     expect(['OPEN_LONG', 'OPEN_SHORT']).toContain(result!.action);
     expect(Number(result!.features.quantity)).toBeGreaterThan(0);
   });
+
+  describe('LLM pipeline failure handling (C-06)', () => {
+    function makeFailingAgentPipeline() {
+      return { runCycle: vi.fn().mockRejectedValue(new Error('Ollama unreachable')) };
+    }
+
+    it('returns null instead of throwing when tradingAgentsPipeline.runCycle rejects', async () => {
+      const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
+      const tradeIntentEngine = new TradeIntentEngine();
+      const failingPipeline = makeFailingAgentPipeline();
+
+      const strategy = createSmcAgentStrategy({
+        setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
+        tradingAgentsPipeline: failingPipeline,
+        getInstrument: () => FAKE_INSTRUMENT,
+      });
+
+      const candles5m = build5mCandles();
+      const currentCandle = candles5m[candles5m.length - 1]!;
+
+      await expect(strategy.onCandleClose!(makeContext(10000), currentCandle)).resolves.toBeNull();
+      expect(failingPipeline.runCycle).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the circuit breaker after repeated failures and stops calling the pipeline until it cools down', async () => {
+      const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
+      const tradeIntentEngine = new TradeIntentEngine();
+      const failingPipeline = makeFailingAgentPipeline();
+
+      const strategy = createSmcAgentStrategy({
+        setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
+        tradingAgentsPipeline: failingPipeline,
+        getInstrument: () => FAKE_INSTRUMENT,
+      });
+
+      const candles5m = build5mCandles();
+      const currentCandle = candles5m[candles5m.length - 1]!;
+      const ctx = makeContext(10000);
+
+      // MAX_CONSECUTIVE_LLM_FAILURES (5) failing calls trip the breaker.
+      for (let i = 0; i < 5; i++) {
+        await strategy.onCandleClose!(ctx, currentCandle);
+      }
+      expect(failingPipeline.runCycle).toHaveBeenCalledTimes(5);
+
+      // The breaker is now open: further candle closes must not call the
+      // (still-down) pipeline again until the cooldown elapses.
+      const result = await strategy.onCandleClose!(ctx, currentCandle);
+      expect(result).toBeNull();
+      expect(failingPipeline.runCycle).toHaveBeenCalledTimes(5);
+    });
+  });
 });
