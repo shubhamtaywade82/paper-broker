@@ -138,6 +138,123 @@ Work required (if this strategy is ever wired into the live engine):
 
 ---
 
+## API Server Design Debt (Medium findings, not fixed this pass)
+
+Several Medium-severity findings from the code review describe design debt
+in `src/api/server.ts` and `src/api/websocket/WebSocketGateway.ts` that
+would require materially changing the API's shape or adding new
+architecture (a repository layer, a pub/sub subscription model) rather than
+a contained bug fix. Documented here instead of attempted piecemeal, per
+AGENTS.md Section 20 (stop and document rather than make a silent
+architecture change):
+
+- **Inconsistent REST path structure**: some endpoints are at the root
+  (`/orders`, `/engine/start`) and others under `/api/v1/` (most dashboard
+  endpoints). A consistent scheme would mean either versioning everything or
+  nothing — a breaking change for whatever currently calls the root-level
+  routes.
+- **Raw DB access from the API layer**: `/api/v1/journal`,
+  `/api/v1/backtest/history`, `/api/v1/backtest/:id`, and
+  `/api/v1/backtest/run` all call `this.events.raw.prepare(...)` directly
+  instead of going through a repository. Fixing this properly means adding
+  a `BacktestRepository`/`JournalRepository` (matching the existing
+  `SignalRepository` pattern) — a real but non-trivial addition, not a
+  one-line fix.
+- **N+1-shaped query in `/api/v1/journal`**: builds a `stopPriceBySignal`
+  map from one query, then does the entries computation in JS rather than
+  a single joined query — works correctly today, but doesn't scale past the
+  1000-row `FILL_CREATED` fetch it's already capped at.
+- **Hardcoded risk parameters in `/api/v1/risk`** (`maxOpenPositions: 3`,
+  `maxLeverage: 10`, `dailyLossLimitPct: 5.0`, etc.): these are display-only
+  values in the API response, not read from `RiskLimits`
+  (`PaperBroker`'s actual configured risk config) — the dashboard could show
+  numbers that don't match what the broker will actually enforce if
+  `PaperBrokerConfig.risk` is ever overridden from its defaults.
+- **Silent error swallowing on external Binance proxy calls**
+  (`/api/v1/orderbook`, `/api/v1/trades`, `/api/v1/tickers`): `catch { ... }`
+  blocks with no logging fall back to market-state data or an empty array.
+  Reasonable as a fallback, but failures are invisible to operators.
+- **Missing explicit Content-Type validation on POST endpoints**: Fastify's
+  default JSON body parser already only engages for
+  `Content-Type: application/json` (a non-JSON POST reaches route handlers
+  with an unparsed/empty body, which Zod validation then rejects) — but
+  there's no explicit, friendly `415`-style check or error message for a
+  wrong Content-Type.
+- **WebSocketGateway**: no backpressure handling on `broadcast()` (a slow
+  client's `ws.send()` buffer can grow unbounded — `bufferedAmount` is never
+  checked), and no subscription/topic model (every event type goes to every
+  connected client regardless of what the dashboard view actually needs).
+  H-05/H-06 (heartbeat + connection/rate limits) were fixed this pass;
+  backpressure and subscriptions are a larger client-facing protocol change.
+
+## Persistence & Observability Design Debt (Medium findings, not fixed this pass)
+
+- **`db.ts` stores monetary/decimal fields as TEXT**: this is not a bug —
+  it's what CONTRACTS.md's Monetary Precision Contract (Section 14)
+  requires ("Database: decimal strings... Never: float comparison for
+  monetary values"), avoiding SQLite's REAL-type floating-point precision
+  loss. The real cost the review's finding points at is genuine, though:
+  TEXT columns sort/compare lexicographically, not numerically, so a range
+  query (`WHERE quantity > ?`) can't use a normal index efficiently. A fix
+  (generated numeric shadow columns with their own indexes for the specific
+  range-queried fields) is schema work, not a one-line index addition — not
+  attempted this pass.
+- **`Metrics` (in-memory counters/gauges) and `ErrorNormalizer` (in-memory
+  incident history, capped at 200) both lose their state on restart.**
+  HELP annotations and naming-convention warnings were added to `Metrics`
+  this pass (see commit history), but persisting either to SQLite is a
+  real feature (schema + load-on-construct + write-through) beyond a
+  contained bug fix.
+- **`docs/api.md` (or equivalent) is missing coverage for 15+ endpoints**
+  that exist in `server.ts` — not verified/updated this pass; treat the
+  source (`server.ts`'s route registrations) as authoritative over any
+  existing API documentation until it's reconciled.
+
+## Known Performance Characteristics (not fixed this pass)
+
+- **`PaperBroker.onMarket()` recalculates full account state on every
+  market tick** (`recalculateAccount()` iterates every open position;
+  `checkLiquidation()` does too) rather than incrementally updating only
+  the ticked symbol's position and the account-level aggregates. Correct
+  today, but means account-state computation cost scales with total open
+  position count on every single tick, not just ticks that affect a
+  multi-position account. An incremental-update rewrite touches core P&L/
+  margin calculation logic in a financial-correctness-critical file —
+  deliberately not attempted in this pass (AGENTS.md: prefer small verified
+  changes over large speculative refactors in code this sensitive).
+- **`StructureClassifier`'s break detection is O(n²)** over the candle/swing
+  history for the timeframes it processes. Not verified against real
+  production candle-history sizes to confirm this is an actual bottleneck
+  (vs. a correct-but-unoptimized algorithm operating on small windows) —
+  flagging for future profiling rather than assuming it needs fixing.
+
+## Financial Modeling Simplifications (not fixed this pass)
+
+- **`PaperLiquidation.calculateLiquidationPrice()` uses a flat-rate,
+  fee-and-funding-free formula** (`entryPrice * (1 - 1/leverage +
+  maintenanceMarginRate)` for longs). Real exchanges use tiered maintenance
+  margin rates that increase with position size, and a real liquidation
+  also incurs the closing taker fee — both make actual liquidation happen
+  earlier (a less favorable price) than this formula predicts, i.e. it is
+  optimistic versus a real exchange. Implementing tiered margin schedules
+  is exchange-specific data modeling, not a formula tweak.
+- **The `SmcPaperBroker` subsystem (`src/broker/paper/*.ts`, used by
+  `ReplayEngine`/backtesting) computes money with native JS floating-point
+  arithmetic plus `.toFixed(4)` rounding, not `decimal.js`** — a direct
+  instance of the same "dual broker architecture" split already documented
+  above (H-11): `PaperBroker.ts` (the live path) correctly uses `decimal.js`
+  per CONTRACTS.md Section 14 ("Money uses decimal arithmetic... Never:
+  float comparison for monetary values"); the entire `SmcPaperBroker`
+  subsystem (`PaperAccount`, `PaperFeeModel`, `PaperFundingModel`,
+  `PaperLedger`, `PaperLiquidation`, `PaperMetrics`, `PaperPositionManager`,
+  `PaperSlippageModel`) does not. This is a real CONTRACTS.md violation in
+  the backtest path, not a narrow "balance rounding" nit — migrating 8
+  files' arithmetic to `decimal.js` with full behavioral-parity retesting
+  is a substantial project of its own, tracked here rather than attempted
+  as part of this review pass.
+
+---
+
 ## Dashboard & Control
 
 ### ❌ Dashboard Frontend Not Implemented
@@ -343,14 +460,24 @@ When you complete work that addresses a limitation:
 
 ## Recently Resolved
 
-*(Add entries here when limitations are addressed)*
-
 | Date | Limitation | Resolution |
 |------|------------|------------|
-| - | - | - |
+| 2026-08-24 | API endpoints fully unauthenticated | Optional API_KEY bearer/x-api-key auth + LIVE_ARM_PASSCODE on order/engine/mode-control endpoints (C-01) |
+| 2026-08-24 | Path traversal in `/assets/:file` | `path.basename()` + reject any non-bare-filename value (C-02) |
+| 2026-08-24 | Triple-opened SQLite connections with inconsistent pragmas | EventLog/SnapshotStore now share DatabaseManager's connection (C-03) |
+| 2026-08-24 | Liquidation bypassed the Fill/audit-trail pipeline | Routed through executeFill() via a synthetic LIQUIDATION order (C-04) |
+| 2026-08-24 | Unbounded SmcLocationEngine cache growth | FIFO-capped at 2000 entries (C-05) |
+| 2026-08-24 | Unguarded LLM pipeline call in smc-agent strategy | try/catch + 5-failure circuit breaker (C-06) |
+| 2026-08-24 | TradingEventBus.publish serialized/unisolated handlers | Concurrent dispatch via Promise.allSettled (C-07) |
+| 2026-08-24 | Q-learning Bellman update bootstrapped off the wrong state; hardcoded reward | Bootstraps off real next-state; reward now derived from realized trade outcome (C-08) |
+| 2026-08-24 | grid-15m bypassed the signal pipeline with no risk limits | Kept as a documented exception, added its own notional/equity-fraction caps (C-09) |
+| 2026-08-24 | 20 High findings (H-01 through H-20: DoS/SSRF/blocking-I/O limits, WS heartbeat/connection limits, EventLog dual-write ordering, Telegram token/rate-limiting, dual-broker fee/peak-equity issues, shutdown races, `as any` cast, debate rounds/risk-team documentation, SignalExecutor false-success, MACD/Supertrend warm-up) | See git history on `claude/paper-broker-code-review-wp6pkg` for the individual commits |
+| 2026-08-24 | Dead code: `signalAdapter.ts`, `agentRuntime.ts` | Removed (zero production importers confirmed) |
+| 2026-08-24 | Several Medium findings (funding double-apply, wrong `applyIntent` event type, VOLATILITY slippage silently zero, ErrorNormalizer dedup collisions, Telegram HTML injection, missing `orders.signal_id` index, cli.ts shutdown/--help, Metrics HELP annotations) | See git history on `claude/paper-broker-code-review-wp6pkg` |
+| 2026-08-24 | Remaining Medium findings (API layer design debt, WebSocket backpressure/subscriptions, TEXT-column range queries, in-memory metrics/incident persistence, api.md coverage, PaperBroker/StructureClassifier performance characteristics, PaperLiquidation formula simplification, SmcPaperBroker decimal.js migration) | Investigated and documented above (not fixed — each requires its own larger, separately-scoped change) rather than left unrecorded |
 
 ---
 
-**Last Updated**: 2025-01-XX
+**Last Updated**: 2026-08-24
 
 **Agent Reminder**: If you discover a capability claimed in documentation that doesn't match implementation, add it here before proceeding.
