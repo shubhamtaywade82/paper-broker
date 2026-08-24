@@ -3,12 +3,19 @@ import type {
   PositionUpdateNotification,
   HealthNotification,
 } from './types.js';
+import { logger } from '../telemetry/logger.js';
 
 export interface TelegramConfig {
   enabled: boolean;
   botToken?: string;
   chatId?: string;
   timeoutMs?: number;
+  /** Minimum gap enforced between outbound sends (H-10). Default 1100ms, just over Telegram's documented ~1 msg/sec/chat guidance. */
+  minSendIntervalMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class TelegramNotifier {
@@ -16,12 +23,22 @@ export class TelegramNotifier {
   private botToken?: string;
   private chatId?: string;
   private timeoutMs: number;
+  private readonly minSendIntervalMs: number;
+  // H-10: Telegram documents ~1 msg/sec/chat and will 429 above that,
+  // especially likely during volatile markets when several notifyX() calls
+  // (trade fills, position updates, incidents) can fire back-to-back without
+  // being awaited by callers. Every send() is chained onto this queue so
+  // concurrent, unawaited callers still get serialized with a minimum gap,
+  // rather than all racing to fetch() simultaneously.
+  private sendQueue: Promise<void> = Promise.resolve();
+  private lastSendAt = 0;
 
   constructor(config: TelegramConfig) {
     this.enabled = config.enabled && Boolean(config.botToken && config.chatId);
     this.botToken = config.botToken;
     this.chatId = config.chatId;
     this.timeoutMs = config.timeoutMs || 5000;
+    this.minSendIntervalMs = config.minSendIntervalMs ?? 1100;
   }
 
   public isEnabled(): boolean {
@@ -33,7 +50,29 @@ export class TelegramNotifier {
       return false;
     }
 
+    let result = false;
+    // Chain onto the shared queue rather than racing the fetch directly, so
+    // this call waits for prior in-flight/queued sends and then respects
+    // minSendIntervalMs relative to the last one that actually went out.
+    const task = this.sendQueue.then(async () => {
+      const waitMs = this.lastSendAt + this.minSendIntervalMs - Date.now();
+      if (waitMs > 0) await sleep(waitMs);
+      this.lastSendAt = Date.now();
+      result = await this.doSend(text);
+    });
+    // Keep the queue alive even if this send failed — a caught, logged
+    // failure here must not permanently wedge every future notification.
+    this.sendQueue = task.catch(() => undefined);
+    await this.sendQueue;
+    return result;
+  }
+
+  private async doSend(text: string): Promise<boolean> {
     try {
+      // H-09: the bot token must live in the URL path — that's Telegram Bot
+      // API's request format, not something we can avoid — but the URL
+      // itself (and therefore the token) must never be logged. Only
+      // chatId/status/error are logged below, never `url`.
       const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
       const response = await fetch(url, {
         method: 'POST',
@@ -46,9 +85,35 @@ export class TelegramNotifier {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
-      return response.ok;
-    } catch {
-      // Non-blocking: fail quietly without crashing trading runtime
+      if (!response.ok) {
+        let retryAfterSec: number | undefined;
+        try {
+          const body = (await response.json()) as { parameters?: { retry_after?: number }; description?: string };
+          retryAfterSec = body.parameters?.retry_after;
+          logger.warn(
+            { status: response.status, chatId: this.chatId, description: body.description, retryAfterSec },
+            '[TelegramNotifier] send failed'
+          );
+        } catch {
+          logger.warn({ status: response.status, chatId: this.chatId }, '[TelegramNotifier] send failed');
+        }
+        if (response.status === 429 && retryAfterSec) {
+          // Respect Telegram's own backpressure signal for the *next* send.
+          this.lastSendAt = Date.now() + retryAfterSec * 1000 - this.minSendIntervalMs;
+        }
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      // Non-blocking: fail quietly without crashing trading runtime, but
+      // surface it in logs (previously fully silent — see the "silent
+      // notification failures" finding) without ever logging `err` raw,
+      // since some network error messages/causes can embed the request URL.
+      logger.warn(
+        { chatId: this.chatId, error: err instanceof Error ? err.message.replace(this.botToken ?? '', '***') : 'unknown error' },
+        '[TelegramNotifier] send threw'
+      );
       return false;
     }
   }
