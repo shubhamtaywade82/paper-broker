@@ -97,8 +97,8 @@ export class BacktestRunner {
     this.config = config;
     this.db = new DatabaseManager(config.dataDir);
     this.signalRepo = new SignalRepository(this.db.raw);
-    this.eventLog = new EventLog(path.join(config.dataDir, 'events.jsonl'));
-    this.snapshotStore = new SnapshotStore(config.dataDir);
+    this.eventLog = new EventLog(path.join(config.dataDir, 'events.jsonl'), this.db.raw);
+    this.snapshotStore = new SnapshotStore(config.dataDir, this.db.raw);
 
     this.broker = new PaperBroker({
       dataDir: config.dataDir,

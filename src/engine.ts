@@ -59,8 +59,8 @@ export async function startEngine(): Promise<EngineHandle> {
   const dataDir = env.DB_FILE.replace(/\/[^/]+$/, '');
 
   const db = new DatabaseManager(dataDir);
-  const events = new EventLog(env.EVENT_LOG_FILE);
-  const snapshots = new SnapshotStore(env.SNAPSHOT_DIR);
+  const events = new EventLog(env.EVENT_LOG_FILE, db.raw);
+  const snapshots = new SnapshotStore(env.SNAPSHOT_DIR, db.raw);
 
   const client = new BinanceClient({
     testnet: env.BINANCE_ENV === 'testnet',

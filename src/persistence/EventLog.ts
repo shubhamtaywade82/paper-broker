@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import type {
   Fill,
@@ -40,15 +40,20 @@ export class EventLog {
   private jsonlFile: string;
   private db: Database.Database;
 
-  constructor(jsonlFile: string) {
+  /**
+   * `db` must be a shared connection to the same `paper.sqlite3` file owned by
+   * `DatabaseManager` (see C-03 in the code review) rather than a connection
+   * EventLog opens itself — three independent connections to one SQLite file
+   * with inconsistent pragmas risked corruption under concurrent writes.
+   */
+  constructor(jsonlFile: string, db: Database.Database) {
     const dataDir = path.dirname(jsonlFile);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
     this.jsonlFile = jsonlFile;
-    this.db = new Database(path.join(dataDir, 'paper.sqlite3'));
-    this.db.pragma('journal_mode = WAL');
+    this.db = db;
     this.initSchema();
   }
 
@@ -243,7 +248,8 @@ export class EventLog {
 
     sql += ' ORDER BY seq DESC';
     if (options?.limit) {
-      sql += ` LIMIT ${options.limit}`;
+      sql += ' LIMIT ?';
+      params.push(options.limit);
     }
 
     const rows = this.db.prepare(sql).all(...params) as Array<{
@@ -382,7 +388,8 @@ export class EventLog {
     return this.db;
   }
 
+  /** No-op: the underlying connection is shared and owned/closed by DatabaseManager. */
   close(): void {
-    this.db.close();
+    // intentionally does not close `this.db` — see constructor doc.
   }
 }

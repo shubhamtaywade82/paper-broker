@@ -1,20 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import type { AccountState, MarketState } from '../broker/types.js';
 
 export class SnapshotStore {
   private db: Database.Database;
   private snapshotDir: string;
 
-  constructor(snapshotDir: string) {
+  /**
+   * `db` must be a shared connection to the same `paper.sqlite3` file owned by
+   * `DatabaseManager` (see C-03 in the code review) rather than a connection
+   * SnapshotStore opens itself — three independent connections to one SQLite
+   * file with inconsistent pragmas risked corruption under concurrent writes.
+   */
+  constructor(snapshotDir: string, db: Database.Database) {
     this.snapshotDir = snapshotDir;
-    const dataDir = path.dirname(snapshotDir);
     if (!fs.existsSync(snapshotDir)) {
       fs.mkdirSync(snapshotDir, { recursive: true });
     }
 
-    this.db = new Database(path.join(dataDir, 'paper.sqlite3'));
+    this.db = db;
     this.initSchema();
   }
 
@@ -245,7 +250,8 @@ export class SnapshotStore {
     }));
   }
 
+  /** No-op: the underlying connection is shared and owned/closed by DatabaseManager. */
   close(): void {
-    this.db.close();
+    // intentionally does not close `this.db` — see constructor doc.
   }
 }
