@@ -185,6 +185,43 @@ describe('PaperBroker', () => {
     expect(close.rejectReason).toBeUndefined();
   });
 
+  it('never blocks a reduce-only order with the daily-loss circuit breaker', () => {
+    const lossyBroker = new PaperBroker({
+      dataDir: '/tmp/paper-broker-test',
+      accountId: 'test-account',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      risk: { maxDailyLoss: 100 },
+    });
+
+    lossyBroker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+    lossyBroker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 5, leverage: 5 });
+
+    // Price craters (5 BTC * $50 drop = $250 loss), blowing well past the
+    // $100 daily loss limit while the position is still open.
+    lossyBroker.onMarket({
+      symbol: 'BTCUSDT', bid: 50, ask: 50.1, last: 50.05, mark: 50,
+      localTsUtc: Date.now(), stale: false,
+    });
+    expect(lossyBroker.getAccount().equity).toBeLessThan(9900);
+
+    // A fresh non-reduceOnly order should still be blocked (the breaker is
+    // doing its job)...
+    const newRisk = lossyBroker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    expect(newRisk.status).toBe('REJECTED');
+    expect(newRisk.rejectReason).toBe('MAX_DAILY_LOSS_EXCEEDED');
+
+    // ...but closing out must never be blocked by the same breaker, or the
+    // account is stuck losing money with no way to stop.
+    const close = lossyBroker.submitOrder({
+      symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 5, reduceOnly: true, leverage: 5,
+    });
+    expect(close.status).toBe('FILLED');
+  });
+
   it('cancels stale reduce-only brackets when a position fully closes', () => {
     broker.onMarket({
       symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,

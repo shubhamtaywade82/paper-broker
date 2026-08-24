@@ -394,10 +394,16 @@ export class ApiServer {
     this.app.get('/api/v1/orderbook', async (request) => {
       const query = request.query as { symbol?: string; limit?: string };
       const symbol = query.symbol || 'SOLUSDT';
-      const limit = query.limit ? parseInt(query.limit, 10) : 12;
+      let binanceLimit = 50;
+      const requested = query.limit ? parseInt(query.limit, 10) : 50;
+      if (requested <= 5) binanceLimit = 5;
+      else if (requested <= 10) binanceLimit = 10;
+      else if (requested <= 20) binanceLimit = 20;
+      else if (requested <= 50) binanceLimit = 50;
+      else if (requested <= 100) binanceLimit = 100;
       const state = this.marketState?.getState(symbol);
       try {
-        const res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${limit}`);
+        const res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${binanceLimit}`);
         if (res.ok) {
           const depth = (await res.json()) as { bids?: Array<[string, string]>; asks?: Array<[string, string]> };
           if (Array.isArray(depth.bids) && Array.isArray(depth.asks)) {

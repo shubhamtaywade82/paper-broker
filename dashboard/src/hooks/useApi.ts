@@ -186,17 +186,17 @@ export function useTickers() {
   });
 }
 
-export function useOrderbook(symbol: string) {
+export function useOrderbook(symbol: string, limit = 50) {
   const setOrderbook = useStore((s) => s.setOrderbook);
 
   return useQuery({
-    queryKey: ['orderbook', symbol],
+    queryKey: ['orderbook', symbol, limit],
     queryFn: async () => {
-      const data = await fetchJson<OrderbookDepth>(`/api/v1/orderbook?symbol=${symbol}&limit=12`);
+      const data = await fetchJson<OrderbookDepth>(`/api/v1/orderbook?symbol=${symbol}&limit=${limit}`);
       if (data) setOrderbook(data);
       return data;
     },
-    refetchInterval: 2500,
+    refetchInterval: 1500,
   });
 }
 

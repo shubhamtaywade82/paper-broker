@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStore, SUPPORTED_SYMBOLS, formatPrice, formatCurrency } from '../../store/useStore';
 import {
   useTickers,
@@ -16,9 +17,10 @@ import {
 
 export function MarketsView() {
   const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers } = useStore();
+  const [depthLimit, setDepthLimit] = useState<number>(10);
 
   useTickers();
-  const { data: orderbook } = useOrderbook(selectedSymbol);
+  const { data: orderbook } = useOrderbook(selectedSymbol, depthLimit);
   const { data: trades = [] } = useTrades(selectedSymbol);
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 100);
 
@@ -112,49 +114,82 @@ export function MarketsView() {
         <div className="space-y-4">
           {/* Order Book Depth Visualizer */}
           <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-4 flex flex-col justify-between">
-            <div className="flex items-center justify-between border-b border-[#1b2537] pb-2.5 mb-3">
+            <div className="flex items-center justify-between border-b border-[#1b2537] pb-2.5 mb-2">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-400" />
                 <h3 className="font-bold text-white uppercase text-xs">Order Book Depth</h3>
               </div>
-              <span className="text-[10px] text-gray-500">
-                Spread: {formatCurrency(orderbook?.spread, selectedSymbol)}
-              </span>
+              {/* Depth Selector */}
+              <div className="flex items-center gap-1">
+                {[5, 10, 20].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDepthLimit(d)}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
+                      depthLimit === d
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#141d2e] text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Asks (Sells) */}
-            <div className="space-y-1 text-[10px] mb-2">
-              {(orderbook?.asks || []).slice(0, 5).reverse().map(([p, q], idx) => (
-                <div key={idx} className="flex justify-between relative py-0.5 px-1">
-                  <div
-                    className="absolute right-0 top-0 bottom-0 bg-red-500/10 rounded"
-                    style={{ width: `${Math.min(100, (q / 50) * 100)}%` }}
-                  />
-                  <span className="text-red-400 font-bold relative z-10">${formatPrice(p, selectedSymbol)}</span>
-                  <span className="text-gray-400 relative z-10">{q.toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
+            {(() => {
+              const asks = (orderbook?.asks || []).slice(0, depthLimit);
+              const bids = (orderbook?.bids || []).slice(0, depthLimit);
+              const maxQty = Math.max(...asks.map(([_, q]) => q), ...bids.map(([_, q]) => q), 0.001);
 
-            {/* Mid Price Spread Bar */}
-            <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold my-1">
-              <span className="text-white">{formatCurrency(activeTicker?.price || orderbook?.last, selectedSymbol)}</span>
-              <span className="text-emerald-400 text-[10px]">MID PRICE</span>
-            </div>
+              return (
+                <>
+                  <div className="flex items-center justify-between text-[9px] text-gray-500 pb-1 px-1 font-semibold">
+                    <span>PRICE ({selectedSymbol.replace('USDT', '')}/USDT)</span>
+                    <span>SIZE ({selectedSymbol.replace('USDT', '')})</span>
+                  </div>
 
-            {/* Bids (Buys) */}
-            <div className="space-y-1 text-[10px] mt-2">
-              {(orderbook?.bids || []).slice(0, 5).map(([p, q], idx) => (
-                <div key={idx} className="flex justify-between relative py-0.5 px-1">
-                  <div
-                    className="absolute right-0 top-0 bottom-0 bg-emerald-500/10 rounded"
-                    style={{ width: `${Math.min(100, (q / 50) * 100)}%` }}
-                  />
-                  <span className="text-emerald-400 font-bold relative z-10">${formatPrice(p, selectedSymbol)}</span>
-                  <span className="text-gray-400 relative z-10">{q.toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
+                  {/* Asks (Sells) */}
+                  <div className="space-y-0.5 text-[10px] mb-1.5 max-h-48 overflow-y-auto">
+                    {asks.slice().reverse().map(([p, q], idx) => (
+                      <div key={idx} className="flex justify-between relative py-0.5 px-1 hover:bg-[#141d2e] rounded">
+                        <div
+                          className="absolute right-0 top-0 bottom-0 bg-red-500/15 rounded"
+                          style={{ width: `${Math.min(100, (q / maxQty) * 100)}%` }}
+                        />
+                        <span className="text-red-400 font-bold relative z-10">{formatPrice(p, selectedSymbol)}</span>
+                        <span className="text-gray-300 relative z-10">{q.toLocaleString('en-US', { maximumFractionDigits: 3 })}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Mid Price Spread Bar */}
+                  <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold my-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white">{formatCurrency(activeTicker?.price || orderbook?.last, selectedSymbol)}</span>
+                      <span className="text-[9px] text-gray-500">
+                        Spread: {formatCurrency(orderbook?.spread, selectedSymbol)}
+                      </span>
+                    </div>
+                    <span className="text-emerald-400 text-[9px] font-bold">MID PRICE</span>
+                  </div>
+
+                  {/* Bids (Buys) */}
+                  <div className="space-y-0.5 text-[10px] mt-1.5 max-h-48 overflow-y-auto">
+                    {bids.map(([p, q], idx) => (
+                      <div key={idx} className="flex justify-between relative py-0.5 px-1 hover:bg-[#141d2e] rounded">
+                        <div
+                          className="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded"
+                          style={{ width: `${Math.min(100, (q / maxQty) * 100)}%` }}
+                        />
+                        <span className="text-emerald-400 font-bold relative z-10">{formatPrice(p, selectedSymbol)}</span>
+                        <span className="text-gray-300 relative z-10">{q.toLocaleString('en-US', { maximumFractionDigits: 3 })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           {/* Recent Trades Stream */}

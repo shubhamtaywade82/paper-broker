@@ -790,13 +790,18 @@ export class PaperBroker implements ExecutionBroker {
       }
     }
 
-    const openOrders = this.getOpenOrders().length;
-    if (openOrders >= this.risk.maxOpenOrders) {
-      return { ok: false, reason: 'MAX_OPEN_ORDERS_EXCEEDED' };
+    // Circuit breakers exist to stop new risk-taking, not to trap the account
+    // in existing losing positions forever — a reduce-only order must always
+    // be able to get out, even (especially) when these limits are breached.
+    if (!order.reduceOnly) {
+      const openOrders = this.getOpenOrders().length;
+      if (openOrders >= this.risk.maxOpenOrders) {
+        return { ok: false, reason: 'MAX_OPEN_ORDERS_EXCEEDED' };
+      }
     }
 
     const account = this.calculateAccountState();
-    if (account.equity < this.dayStartEquity - this.risk.maxDailyLoss) {
+    if (!order.reduceOnly && account.equity < this.dayStartEquity - this.risk.maxDailyLoss) {
       return { ok: false, reason: 'MAX_DAILY_LOSS_EXCEEDED' };
     }
 
