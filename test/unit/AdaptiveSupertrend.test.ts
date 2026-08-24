@@ -69,6 +69,23 @@ describe('Technical Indicators Suite', () => {
     expect(res.histogram.length).toBe(closes.length);
     const lastIdx = closes.length - 1;
     expect(typeof res.histogram[lastIdx]).toBe('number');
+    expect(Number.isNaN(res.histogram[lastIdx])).toBe(false);
+  });
+
+  it('H-19: masks MACD warm-up bars with NaN instead of returning misleading seeded values', () => {
+    const res = macd(closes, 12, 26, 9); // slowPeriod=26, signalPeriod=9
+
+    // macdLine needs slowPeriod bars before it's not dominated by ema()'s
+    // seed-from-values[0] behavior.
+    expect(Number.isNaN(res.macd[0])).toBe(true);
+    expect(Number.isNaN(res.macd[24])).toBe(true); // index slowPeriod-2
+    expect(Number.isNaN(res.macd[25])).toBe(false); // index slowPeriod-1: valid
+
+    // signal/histogram need signalPeriod MORE bars on top of that.
+    expect(Number.isNaN(res.signal[32])).toBe(true); // index slowPeriod-1+signalPeriod-2
+    expect(Number.isNaN(res.signal[33])).toBe(false); // index slowPeriod-1+signalPeriod-1: valid
+    expect(Number.isNaN(res.histogram[32])).toBe(true);
+    expect(Number.isNaN(res.histogram[33])).toBe(false);
   });
 
   it('calculates ADX correctly', () => {
@@ -86,6 +103,55 @@ describe('Technical Indicators Suite', () => {
     expect(res.direction.length).toBe(candles.length);
     const lastIdx = candles.length - 1;
     expect([1, -1]).toContain(res.direction[lastIdx]);
+  });
+
+  it('H-20: Supertrend direction is NaN (not a placeholder 1) during warm-up', () => {
+    const res = supertrend(candles, 10, 3);
+    // Indices before atrPeriod are never computed by the loop — they must
+    // read as "not yet valid", not as a placeholder "uptrend" that a
+    // crossover check could compare against as if it were real.
+    for (let i = 0; i < 10; i++) {
+      expect(Number.isNaN(res.direction[i])).toBe(true);
+    }
+    expect(Number.isNaN(res.direction[10])).toBe(false);
+  });
+
+  it('H-20: calculateAdaptiveSupertrend does not report a false crossover on the very first computed bar', () => {
+    const atrPeriod = 5;
+    // atrPeriod + 1 candles -> exactly one bar (index atrPeriod) is ever
+    // actually computed by the loop; index atrPeriod-1 is still warm-up.
+    const candles: Candle[] = Array.from({ length: atrPeriod + 1 }, (_, i) => ({
+      symbol: 'BTCUSDT', interval: '15m', openTime: i * 900_000,
+      open: 100, high: 101, low: 99, close: 100, volume: 100,
+    }));
+
+    const result = calculateAdaptiveSupertrend(candles, { atrPeriod, multiplier: 3 });
+
+    // With only one real bar there is nothing to compare against — this
+    // must never report a crossover, regardless of which direction that
+    // one bar resolves to (previously: comparing it against the
+    // uninitialized placeholder default of 1 could false-positive).
+    expect(result.isCrossover).toBe(false);
+  });
+
+  it('H-20: calculateAdaptiveSupertrend still detects a genuine crossover once two real bars exist', () => {
+    const atrPeriod = 5;
+    const candles: Candle[] = Array.from({ length: atrPeriod + 1 }, (_, i) => ({
+      symbol: 'BTCUSDT', interval: '15m', openTime: i * 900_000,
+      open: 100, high: 101, low: 99, close: 100, volume: 100,
+    }));
+    // A sharp crash flips direction bullish -> bearish on the second
+    // computed bar.
+    candles.push({
+      symbol: 'BTCUSDT', interval: '15m', openTime: (atrPeriod + 1) * 900_000,
+      open: 100, high: 101, low: 40, close: 42, volume: 100,
+    });
+
+    const result = calculateAdaptiveSupertrend(candles, { atrPeriod, multiplier: 3 });
+
+    expect(result.direction[atrPeriod]).toBe(1);
+    expect(result.direction[atrPeriod + 1]).toBe(-1);
+    expect(result.isCrossover).toBe(true);
   });
 });
 

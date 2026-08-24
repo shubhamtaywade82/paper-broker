@@ -18,7 +18,13 @@ export function calculateAdaptiveSupertrend(
   const len = candles.length;
 
   const st: number[] = candles.map(() => NaN);
-  const dir: number[] = candles.map(() => 1);
+  // H-20: previously defaulted to 1 (not NaN, unlike the other three arrays
+  // here) for the warm-up region before the loop below ever runs. That made
+  // the first actually-computed direction look like it was being compared
+  // against a real "uptrend" bar instead of an uninitialized placeholder —
+  // see the isCrossover guard below, which is the actual fix for the false
+  // first-bar crossover this caused.
+  const dir: number[] = candles.map(() => NaN);
   const upperBand: number[] = candles.map(() => NaN);
   const lowerBand: number[] = candles.map(() => NaN);
 
@@ -58,7 +64,13 @@ export function calculateAdaptiveSupertrend(
     prevSt = currentSt;
   }
 
-  const isCrossover = len >= 2 && dir[len - 1] !== dir[len - 2];
+  // H-20: only a genuine trend flip counts as a crossover — both bars being
+  // compared must actually have been computed by the loop above (index
+  // >= atrPeriod). Comparing the first computed bar (index === atrPeriod)
+  // against index atrPeriod - 1, which is still inside the warm-up region,
+  // used to report a crossover purely from the array-initialization
+  // artifact whenever that first real direction happened to be -1.
+  const isCrossover = len >= 2 && len - 2 >= atrPeriod && dir[len - 1] !== dir[len - 2];
 
   return {
     supertrend: st,
