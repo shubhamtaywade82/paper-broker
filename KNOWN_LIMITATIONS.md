@@ -66,6 +66,44 @@ Work required:
 
 ---
 
+## Strategy Layer
+
+### ⚠️ grid-15m Documented Exception to the Execution Contract
+
+`createGridStrategy` (`src/strategy/strategies/grid-15m.ts`) calls
+`ctx.submitOrder()` directly instead of emitting a `SignalInput`, which is a
+deliberate, documented exception to CONTRACTS.md Section 1 ("strategies never
+place orders directly"), not an oversight.
+
+Why: a grid ladder is N resting BUY limits and N resting SELL limits placed
+atomically as one unit. `SignalInput`/`Signal` model exactly one directional
+trade decision (one action, one quantity, one stop/TP), so there is no way to
+express "place a full ladder this candle" through the standard pipeline
+without either changing what grid trading means (spreading the ladder across
+N candles) or extending the Signal schema to support order batches — either
+is a materially different architecture change than a docs/safeguards fix
+warrants, per AGENTS.md Section 20.
+
+Current status:
+- Not wired into the live engine (`engine.ts` does not register it) — only
+  reachable via `BacktestRunner`'s already-retired `--engine=indicators` CLI
+  path.
+- Bypasses `SignalExecutor`'s sizing/risk pipeline and the `SignalRepository`,
+  so ladder orders are not tracked as signals.
+- Fixed as of the C-08/C-09 review pass: the strategy now enforces its own
+  position limit (`maxTotalGridNotional`, `maxEquityFraction` options) while
+  placing the ladder, stopping and logging a warning rather than silently
+  exceeding it. It still does not get the standard pipeline's cooldown/
+  conflict/exposure checks.
+
+Work required (if this strategy is ever wired into the live engine):
+- Extend the Signal schema to support an order-batch action, or
+- Accept that grid trading needs its own execution path with its own risk
+  gate wired explicitly (not the single-Signal SignalExecutor path), and
+  document that as an ADR before wiring it live.
+
+---
+
 ## Dashboard & Control
 
 ### ❌ Dashboard Frontend Not Implemented
