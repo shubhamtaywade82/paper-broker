@@ -98,6 +98,14 @@ export class PaperBroker implements ExecutionBroker {
     if (this.persister?.loadOpenPositions) {
       const persistedPositions = this.persister.loadOpenPositions(config.accountId);
       for (const pos of persistedPositions) {
+        // Self-heal any qty/entryPrice float drift baked into older persisted
+        // rows (from before qty accumulation was made Decimal-safe) — re-round
+        // to this instrument's own precision on every load.
+        const instrument = this.instruments.get(pos.symbol);
+        if (instrument) {
+          pos.qty = Number(D(pos.qty).toFixed(instrument.quantityPrecision));
+          pos.entryPrice = Number(D(pos.entryPrice).toFixed(instrument.pricePrecision));
+        }
         this.positions.set(pos.symbol, pos);
       }
     }
@@ -557,7 +565,10 @@ export class PaperBroker implements ExecutionBroker {
 
     const signedQty = side === 'BUY' ? quantity : -quantity;
     const oldQty = position.qty;
-    const newQty = oldQty + signedQty;
+    // Decimal-safe accumulation, rounded to the instrument's own precision — plain
+    // JS float addition across many fills drifts (e.g. 221.53000000000003) even
+    // when each individual fill quantity was already step-rounded at submission.
+    const newQty = Number(D(oldQty).add(signedQty).toFixed(instrument.quantityPrecision));
     let realized = 0;
 
     if (oldQty === 0) {
@@ -606,7 +617,9 @@ export class PaperBroker implements ExecutionBroker {
     if (Math.sign(oldQty) === Math.sign(newQty) && Math.abs(newQty) > Math.abs(oldQty)) {
       const oldNotional = D(Math.abs(oldQty)).mul(position.entryPrice);
       const addedNotional = D(Math.abs(signedQty)).mul(price);
-      position.entryPrice = oldNotional.add(addedNotional).div(Math.abs(newQty)).toNumber();
+      position.entryPrice = Number(
+        oldNotional.add(addedNotional).div(Math.abs(newQty)).toFixed(instrument.pricePrecision)
+      );
       position.qty = newQty;
       position.leverage = leverage;
       position.updatedAtUtc = nowIso;

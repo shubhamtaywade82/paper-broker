@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useStore, type Order } from '../../store/useStore';
+import { useStore, formatCurrency, type Order } from '../../store/useStore';
 import {
   useDashboard,
   useOpenOrders,
   useCancelOrder,
   useCancelAllOrders,
   useEngineControl,
+  useFills,
 } from '../../hooks/useApi';
 import { OrderModal } from '../common/OrderModal';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -35,6 +36,7 @@ export function TradingView() {
 
   useDashboard();
   useOpenOrders();
+  const { data: fills = [] } = useFills();
 
   const cancelOrder = useCancelOrder();
   const cancelAllOrders = useCancelAllOrders();
@@ -59,7 +61,7 @@ export function TradingView() {
                   : 'bg-[#080c14] text-gray-400 hover:text-white border border-[#1b2537]'
               }`}
             >
-              {tab} {tab === 'positions' && `(${positions.length})`} {tab === 'orders' && `(${openOrders.length})`}
+              {tab} {tab === 'positions' && `(${positions.length})`} {tab === 'orders' && `(${openOrders.length})`} {tab === 'fills' && `(${fills.length})`}
             </button>
           ))}
         </div>
@@ -112,6 +114,8 @@ export function TradingView() {
                     <th className="px-5 py-3 text-right">Entry Price</th>
                     <th className="px-5 py-3 text-right">Mark Price</th>
                     <th className="px-5 py-3 text-right">Liq Price</th>
+                    <th className="px-5 py-3 text-right">SL</th>
+                    <th className="px-5 py-3 text-right">TP</th>
                     <th className="px-5 py-3 text-right">Unrealized PnL</th>
                     <th className="px-5 py-3 text-center">Actions</th>
                   </tr>
@@ -144,14 +148,22 @@ export function TradingView() {
                         const side = pos.side ?? 'LONG';
                         const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
                         const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+                        const slOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'STOP_MARKET' && o.reduceOnly);
+                        const tpOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'TAKE_PROFIT_MARKET' && o.reduceOnly);
 
                         return (
                           <>
                             <td className="px-5 py-4 text-right text-gray-300">{qty}</td>
-                            <td className="px-5 py-4 text-right text-gray-400">${entry.toFixed(2)}</td>
-                            <td className="px-5 py-4 text-right text-white font-semibold">${mark.toFixed(2)}</td>
+                            <td className="px-5 py-4 text-right text-gray-400">{formatCurrency(entry, pos.symbol)}</td>
+                            <td className="px-5 py-4 text-right text-white font-semibold">{formatCurrency(mark, pos.symbol)}</td>
                             <td className="px-5 py-4 text-right text-amber-400">
-                              {pos.liquidationPrice ? `$${pos.liquidationPrice.toFixed(2)}` : '—'}
+                              {pos.liquidationPrice ? formatCurrency(pos.liquidationPrice, pos.symbol) : '—'}
+                            </td>
+                            <td className="px-5 py-4 text-right text-red-400">
+                              {slOrder?.stopPrice ? formatCurrency(slOrder.stopPrice, pos.symbol) : '—'}
+                            </td>
+                            <td className="px-5 py-4 text-right text-emerald-400">
+                              {tpOrder?.stopPrice ? formatCurrency(tpOrder.stopPrice, pos.symbol) : '—'}
                             </td>
                             <td
                               className={`px-5 py-4 text-right font-bold ${
@@ -244,15 +256,62 @@ export function TradingView() {
 
       {/* Tab 3: Fills History */}
       {tradingTab === 'fills' && (
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-8 text-center text-gray-400">
-          <p>Order fill logs are recorded to the append-only SQLite journal.</p>
+        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl overflow-hidden">
+          {fills.length === 0 ? (
+            <div className="p-8 text-center text-gray-400">
+              <p>No fills recorded yet. Fills appear here as soon as an order executes.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-[#080c14] text-gray-400 uppercase text-[10px] border-b border-[#1b2537]">
+                  <tr>
+                    <th className="px-4 py-2.5">Time</th>
+                    <th className="px-4 py-2.5">Symbol</th>
+                    <th className="px-4 py-2.5">Side</th>
+                    <th className="px-4 py-2.5 text-right">Qty</th>
+                    <th className="px-4 py-2.5 text-right">Price</th>
+                    <th className="px-4 py-2.5 text-right">Fee</th>
+                    <th className="px-4 py-2.5 text-right">Realized PnL</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1b2537]">
+                  {fills.map((f) => (
+                    <tr key={f.id} className="hover:bg-[#141d2e] transition">
+                      <td className="px-4 py-3 text-gray-500">
+                        {new Date(f.fillTsUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </td>
+                      <td className="px-4 py-3 font-bold text-white">{f.symbol}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          f.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {f.side}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-300">{f.quantity}</td>
+                      <td className="px-4 py-3 text-right text-gray-400">${f.price.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-gray-500">${f.fee.toFixed(4)}</td>
+                      <td className={`px-4 py-3 text-right font-bold ${
+                        f.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+                      }`}>
+                        {f.realizedPnl !== 0 ? `${f.realizedPnl >= 0 ? '+' : ''}$${f.realizedPnl.toFixed(2)}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
       {/* Tab 4: Trade Journal */}
       {tradingTab === 'journal' && (
         <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-8 text-center text-gray-400">
-          <p>Forensic trade journal records every closed position and R-multiple outcome.</p>
+          <p>Not yet implemented. A forensic journal needs R-multiple (risk-normalized outcome per trade), which
+            requires linking each closed position back to the stop-loss distance at entry — that link doesn't
+            exist in persisted data yet. See the Fills tab for real per-fill history in the meantime.</p>
         </div>
       )}
 
@@ -288,7 +347,7 @@ export function TradingView() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Entry Price</span>
-                <span className="font-bold text-white">${(selectedPosition.entryPrice ?? 0).toFixed(2)}</span>
+                <span className="font-bold text-white">{formatCurrency(selectedPosition.entryPrice, selectedPosition.symbol)}</span>
               </div>
               {(() => {
                 const entry = selectedPosition.entryPrice ?? 0;
@@ -301,7 +360,7 @@ export function TradingView() {
                   <>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Mark Price</span>
-                      <span className="font-bold text-white">${mark.toFixed(2)}</span>
+                      <span className="font-bold text-white">{formatCurrency(mark, selectedPosition.symbol)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Unrealized PnL</span>

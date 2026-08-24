@@ -1,5 +1,5 @@
 import React from 'react';
-import { useStore } from '../../store/useStore';
+import { useStore, formatCurrency } from '../../store/useStore';
 import {
   useDashboard,
   useCycles,
@@ -7,6 +7,7 @@ import {
   useKlines,
   usePerformance,
   useTriggerCycle,
+  useOpenOrders,
 } from '../../hooks/useApi';
 import { TradingChart, type ChartMarker } from '../charts/TradingChart';
 import {
@@ -31,12 +32,14 @@ export function DashboardView() {
     setTimeframe,
     liveEvents,
     livePrice,
+    openOrders,
   } = useStore();
 
   useDashboard();
   useCycles();
   useRiskSummary();
   usePerformance('30d');
+  useOpenOrders();
 
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
   const triggerCycle = useTriggerCycle();
@@ -211,6 +214,8 @@ export function DashboardView() {
                     <th className="px-4 py-2.5 text-right">Size</th>
                     <th className="px-4 py-2.5 text-right">Entry</th>
                     <th className="px-4 py-2.5 text-right">Mark</th>
+                    <th className="px-4 py-2.5 text-right">SL</th>
+                    <th className="px-4 py-2.5 text-right">TP</th>
                     <th className="px-4 py-2.5 text-right">PnL ($)</th>
                   </tr>
                 </thead>
@@ -222,6 +227,8 @@ export function DashboardView() {
                     const lev = pos.leverage ?? 5;
                     const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
                     const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+                    const slOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'STOP_MARKET' && o.reduceOnly);
+                    const tpOrder = openOrders.find((o) => o.symbol === pos.symbol && o.type === 'TAKE_PROFIT_MARKET' && o.reduceOnly);
 
                     return (
                       <tr key={pos.symbol} className="hover:bg-[#141d2e] transition">
@@ -238,8 +245,14 @@ export function DashboardView() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right text-gray-300">{qty}</td>
-                        <td className="px-4 py-3 text-right text-gray-400">${entry.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right text-white font-semibold">${mark.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right text-gray-400">{formatCurrency(entry, pos.symbol)}</td>
+                        <td className="px-4 py-3 text-right text-white font-semibold">{formatCurrency(mark, pos.symbol)}</td>
+                        <td className="px-4 py-3 text-right text-red-400">
+                          {slOrder?.stopPrice ? formatCurrency(slOrder.stopPrice, pos.symbol) : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-right text-emerald-400">
+                          {tpOrder?.stopPrice ? formatCurrency(tpOrder.stopPrice, pos.symbol) : '—'}
+                        </td>
                         <td
                           className={`px-4 py-3 text-right font-bold ${
                             pnl >= 0 ? 'text-emerald-400' : 'text-red-400'

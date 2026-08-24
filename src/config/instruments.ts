@@ -1,21 +1,33 @@
 import type { Instrument } from '../broker/types.js';
 import { symbols } from './env.js';
 
+function getDefaultPrecision(symbol: string): { pricePrecision: number; quantityPrecision: number; tickSize: string; stepSize: string } {
+  if (symbol === 'BTCUSDT') return { pricePrecision: 2, quantityPrecision: 3, tickSize: '0.1', stepSize: '0.001' };
+  if (symbol === 'ETHUSDT') return { pricePrecision: 2, quantityPrecision: 3, tickSize: '0.01', stepSize: '0.001' };
+  if (symbol === 'SOLUSDT') return { pricePrecision: 2, quantityPrecision: 2, tickSize: '0.01', stepSize: '0.01' };
+  if (symbol === 'BNBUSDT') return { pricePrecision: 2, quantityPrecision: 2, tickSize: '0.01', stepSize: '0.01' };
+  if (symbol === 'XRPUSDT') return { pricePrecision: 4, quantityPrecision: 1, tickSize: '0.0001', stepSize: '0.1' };
+  if (symbol === 'DOGEUSDT') return { pricePrecision: 5, quantityPrecision: 0, tickSize: '0.00001', stepSize: '1' };
+  if (symbol.includes('PEPE') || symbol.includes('SHIB')) return { pricePrecision: 8, quantityPrecision: 0, tickSize: '0.00000001', stepSize: '1' };
+  return { pricePrecision: 2, quantityPrecision: 3, tickSize: '0.01', stepSize: '0.001' };
+}
+
 export const defaultInstruments: Instrument[] = symbols.map((symbol) => {
   const baseAsset = symbol.replace('USDT', '');
+  const prec = getDefaultPrecision(symbol);
   return {
     symbol,
     baseAsset,
     quoteAsset: 'USDT',
     contractType: 'PERPETUAL',
     status: 'TRADING',
-    tickSize: '0.01',
-    stepSize: '0.001',
-    minQty: '0.001',
-    maxQty: '10000',
+    tickSize: prec.tickSize,
+    stepSize: prec.stepSize,
+    minQty: prec.stepSize,
+    maxQty: '1000000',
     minNotional: '5',
-    pricePrecision: 2,
-    quantityPrecision: 3,
+    pricePrecision: prec.pricePrecision,
+    quantityPrecision: prec.quantityPrecision,
     maintenanceMarginRate: '0.005',
     canonical: `${baseAsset}/USDT`,
     venues: {
@@ -32,19 +44,20 @@ export function getInstrumentConfig(symbol: string): Instrument {
   if (existing) return existing;
 
   const baseAsset = symbol.replace('USDT', '');
+  const prec = getDefaultPrecision(symbol);
   return {
     symbol,
     baseAsset,
     quoteAsset: 'USDT',
     contractType: 'PERPETUAL',
     status: 'TRADING',
-    tickSize: '0.01',
-    stepSize: '0.001',
-    minQty: '0.001',
-    maxQty: '10000',
+    tickSize: prec.tickSize,
+    stepSize: prec.stepSize,
+    minQty: prec.stepSize,
+    maxQty: '1000000',
     minNotional: '5',
-    pricePrecision: 2,
-    quantityPrecision: 3,
+    pricePrecision: prec.pricePrecision,
+    quantityPrecision: prec.quantityPrecision,
     maintenanceMarginRate: '0.005',
     canonical: `${baseAsset}/USDT`,
     venues: {

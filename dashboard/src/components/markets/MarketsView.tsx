@@ -1,4 +1,4 @@
-import { useStore, SUPPORTED_SYMBOLS } from '../../store/useStore';
+import { useStore, SUPPORTED_SYMBOLS, formatPrice, formatCurrency } from '../../store/useStore';
 import {
   useTickers,
   useOrderbook,
@@ -118,7 +118,7 @@ export function MarketsView() {
                 <h3 className="font-bold text-white uppercase text-xs">Order Book Depth</h3>
               </div>
               <span className="text-[10px] text-gray-500">
-                Spread: ${((orderbook?.spread || 0.02)).toFixed(2)}
+                Spread: {formatCurrency(orderbook?.spread, selectedSymbol)}
               </span>
             </div>
 
@@ -130,7 +130,7 @@ export function MarketsView() {
                     className="absolute right-0 top-0 bottom-0 bg-red-500/10 rounded"
                     style={{ width: `${Math.min(100, (q / 50) * 100)}%` }}
                   />
-                  <span className="text-red-400 font-bold relative z-10">${p.toFixed(2)}</span>
+                  <span className="text-red-400 font-bold relative z-10">${formatPrice(p, selectedSymbol)}</span>
                   <span className="text-gray-400 relative z-10">{q.toFixed(2)}</span>
                 </div>
               ))}
@@ -138,7 +138,7 @@ export function MarketsView() {
 
             {/* Mid Price Spread Bar */}
             <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold my-1">
-              <span className="text-white">${activeTicker?.price || orderbook?.last || 0}</span>
+              <span className="text-white">{formatCurrency(activeTicker?.price || orderbook?.last, selectedSymbol)}</span>
               <span className="text-emerald-400 text-[10px]">MID PRICE</span>
             </div>
 
@@ -150,7 +150,7 @@ export function MarketsView() {
                     className="absolute right-0 top-0 bottom-0 bg-emerald-500/10 rounded"
                     style={{ width: `${Math.min(100, (q / 50) * 100)}%` }}
                   />
-                  <span className="text-emerald-400 font-bold relative z-10">${p.toFixed(2)}</span>
+                  <span className="text-emerald-400 font-bold relative z-10">${formatPrice(p, selectedSymbol)}</span>
                   <span className="text-gray-400 relative z-10">{q.toFixed(2)}</span>
                 </div>
               ))}
@@ -171,7 +171,7 @@ export function MarketsView() {
               {trades.slice(0, 8).map((t, idx) => (
                 <div key={idx} className="flex items-center justify-between py-0.5 text-gray-300">
                   <span className={t.isBuyerMaker ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
-                    ${t.price.toFixed(2)}
+                    ${formatPrice(t.price, selectedSymbol)}
                   </span>
                   <span>{t.qty.toFixed(2)}</span>
                   <span className="text-gray-500">

@@ -148,6 +148,29 @@ describe('PaperBroker', () => {
     expect(position?.status).toBe('CLOSED');
   });
 
+  it('accumulates position qty without floating-point drift across repeated fills', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 100,
+      ask: 100.1,
+      last: 100.05,
+      mark: 100,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    // 0.1 + 0.2 + 0.1 !== 0.4 in plain JS float math (0.30000000000000004 style
+    // drift) — three increasing fills on the same side should still land exactly
+    // on a clean, instrument-precision quantity.
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.2, leverage: 5 });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+
+    const position = broker.getPosition('BTCUSDT');
+    expect(position?.qty).toBe(0.4);
+    expect(String(position?.qty)).toBe('0.4'); // not "0.4000000000000001" or similar
+  });
+
   it('reopening a closed position resets status to OPEN, not stuck at CLOSED', () => {
     broker.onMarket({
       symbol: 'BTCUSDT',

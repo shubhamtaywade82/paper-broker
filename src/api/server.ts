@@ -309,6 +309,15 @@ export class ApiServer {
       }));
     });
 
+    this.app.get('/api/v1/fills', async (request) => {
+      const query = request.query as { symbol?: string; limit?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+      const events = this.events.getEvents({ type: 'FILL_CREATED', limit });
+      return events
+        .map((e) => e.payload as Record<string, unknown>)
+        .filter((f) => !query.symbol || f['symbol'] === query.symbol);
+    });
+
     this.app.get('/api/v1/equity-curve', async (request) => {
       const query = request.query as { limit?: string };
       const limit = query.limit ? parseInt(query.limit, 10) : 100;

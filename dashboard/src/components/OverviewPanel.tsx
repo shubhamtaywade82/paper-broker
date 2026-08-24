@@ -1,5 +1,5 @@
 import React from 'react';
-import { useStore } from '../store/useStore';
+import { useStore, formatCurrency } from '../store/useStore';
 import { useDashboard, useCycles, usePerformance } from '../hooks/useApi';
 import {
   DollarSign, TrendingUp, Target,
@@ -88,8 +88,8 @@ export function OverviewPanel() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right text-gray-300">{pos.quantity ?? 0}</td>
-                    <td className="px-6 py-4 text-right text-gray-300">${(pos.entryPrice ?? 0).toFixed(2)}</td>
-                    <td className="px-6 py-4 text-right text-white font-semibold">${(pos.markPrice ?? pos.entryPrice ?? 0).toFixed(2)}</td>
+                    <td className="px-6 py-4 text-right text-gray-300">{formatCurrency(pos.entryPrice, pos.symbol)}</td>
+                    <td className="px-6 py-4 text-right text-white font-semibold">{formatCurrency(pos.markPrice ?? pos.entryPrice, pos.symbol)}</td>
                     <td className="px-6 py-4 text-right text-amber-400">{pos.leverage ?? 5}x</td>
                     <td
                       className={`px-6 py-4 text-right font-semibold ${

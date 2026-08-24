@@ -363,6 +363,32 @@ export function usePerformance(period = '30d') {
   });
 }
 
+export interface Fill {
+  id: string;
+  orderId: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  notional: number;
+  fee: number;
+  feeAsset: string;
+  liquidity: 'MAKER' | 'TAKER';
+  realizedPnl: number;
+  fillTsUtc: string;
+}
+
+export function useFills(symbol?: string, limit = 100) {
+  return useQuery({
+    queryKey: ['fills', symbol, limit],
+    queryFn: () =>
+      fetchJson<Fill[]>(
+        symbol ? `/api/v1/fills?symbol=${symbol}&limit=${limit}` : `/api/v1/fills?limit=${limit}`
+      ),
+    refetchInterval: 5000,
+  });
+}
+
 export function useActivity(limit = 50) {
   return useQuery({
     queryKey: ['activity', limit],

@@ -285,6 +285,39 @@ function getInitialAggressiveMode(): boolean {
   return false;
 }
 
+export function getPricePrecision(price?: number | null, symbol?: string): number {
+  if (symbol) {
+    const sym = symbol.toUpperCase();
+    if (sym.startsWith('BTC') || sym.startsWith('ETH')) return 2;
+    if (sym.startsWith('SOL') || sym.startsWith('BNB')) return 2;
+    if (sym.startsWith('XRP') || sym.startsWith('ADA')) return 4;
+    if (sym.startsWith('DOGE')) return 5;
+    if (sym.includes('PEPE') || sym.includes('SHIB')) return 8;
+  }
+  if (price === undefined || price === null || isNaN(price) || price === 0) return 2;
+  const abs = Math.abs(price);
+  if (abs >= 1000) return 2;
+  if (abs >= 10) return 2;
+  if (abs >= 1) return 4;
+  if (abs >= 0.01) return 5;
+  if (abs >= 0.0001) return 6;
+  return 8;
+}
+
+export function formatPrice(price?: number | null, symbol?: string): string {
+  if (price === undefined || price === null || isNaN(price)) return '—';
+  const precision = getPricePrecision(price, symbol);
+  return price.toLocaleString('en-US', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  });
+}
+
+export function formatCurrency(price?: number | null, symbol?: string): string {
+  if (price === undefined || price === null || isNaN(price)) return '—';
+  return `$${formatPrice(price, symbol)}`;
+}
+
 export const useStore = create<StoreState>((set) => ({
   activeTab: getInitialTab(),
   selectedSymbol: getInitialSymbol(),
