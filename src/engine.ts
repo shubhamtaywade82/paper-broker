@@ -304,9 +304,15 @@ export async function startEngine(): Promise<EngineHandle> {
       });
     },
     onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
+      broker.onMarket({ symbol, bid, ask, bidQty, askQty, last: (bid + ask) / 2 });
+      strategyEngine.onMarket({ symbol, bid, ask, bidQty, askQty, last: (bid + ask) / 2 } as any);
       throttledBroadcast('book.update', `book:${symbol}`, { symbol, bid, ask, bidQty, askQty });
     },
+    onMarkPrice: (symbol, markPrice, indexPrice, fundingRate) => {
+      broker.onMarket({ symbol, mark: markPrice, index: indexPrice, fundingRate });
+    },
     onAggTrade: (symbol, price, qty, isBuyerMaker, eventTime) => {
+      broker.onMarket({ symbol, last: price });
       const ts = eventTime || Date.now();
       for (const interval of timeframes) {
         const candle = klines.applyTick(

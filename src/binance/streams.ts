@@ -15,6 +15,7 @@ export interface StreamHandlerOptions {
   onKlineTick?: (kline: NormalizedKline) => void;
   onKlineClose?: (kline: NormalizedKline) => void;
   onBookTicker?: (symbol: string, bid: number, ask: number, bidQty: number, askQty: number) => void;
+  onMarkPrice?: (symbol: string, markPrice: number, indexPrice: number, fundingRate: number) => void;
   onAggTrade?: (symbol: string, price: number, qty: number, isBuyerMaker?: boolean, eventTime?: number) => void;
   onTrade?: (symbol: string, price: number, qty: number, isBuyerMaker?: boolean, eventTime?: number) => void;
   onSystemEvent?: (type: string, payload: Record<string, unknown>) => void;
@@ -116,6 +117,7 @@ export class BinanceStreamHandler {
             String(normalized.nextFundingTime),
             String(normalized.eventTime)
           );
+          this.options.onMarkPrice?.(normalized.symbol, normalized.markPrice, normalized.indexPrice, normalized.fundingRate);
         }
       } else if (streamName.includes('@kline')) {
         const normalized = normalizeKline(payload);
