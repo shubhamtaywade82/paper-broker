@@ -19,6 +19,22 @@ export interface EventEnvelope {
   payload: unknown;
 }
 
+// Rows written before the append() fix stored the full {id, seq, ts, type,
+// payload} envelope in the payload column instead of just the domain object —
+// self-heal those on read rather than requiring a data migration.
+function unwrapLegacyDoubleWrappedPayload(payload: unknown): unknown {
+  if (
+    payload !== null &&
+    typeof payload === 'object' &&
+    'payload' in payload &&
+    'seq' in payload &&
+    'type' in payload
+  ) {
+    return (payload as { payload: unknown }).payload;
+  }
+  return payload;
+}
+
 export class EventLog {
   private seq = 0;
   private jsonlFile: string;
@@ -113,7 +129,7 @@ export class EventLog {
       options?.symbol ?? null,
       options?.correlationId ?? null,
       options?.causationId ?? null,
-      jsonLine,
+      JSON.stringify(payload),
       new Date(now).toISOString()
     );
   }
@@ -250,7 +266,7 @@ export class EventLog {
       seq: row.seq,
       ts: new Date(row.created_at_utc).getTime(),
       type: row.event_type,
-      payload: JSON.parse(row.payload),
+      payload: unwrapLegacyDoubleWrappedPayload(JSON.parse(row.payload)),
     }));
   }
 
