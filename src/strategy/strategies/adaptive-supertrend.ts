@@ -100,12 +100,24 @@ function buildSignalInput(
   const riskPct = deps.riskFraction ?? 0.02;
   const stopDist = Math.abs(signal.currentPrice - signal.stopLossPrice);
 
-  if (stopDist <= 0) return null;
+  if (stopDist <= 0 || signal.currentPrice <= 0) return null;
 
+  // Sizing by risk budget with a safe notional cap ($3,500 per order)
   const rawQty = (equity * riskPct) / stopDist;
-  const minQty = instrument?.minQty ? parseFloat(instrument.minQty) : 0.01;
-  const maxQty = instrument?.maxQty ? parseFloat(instrument.maxQty) : 100;
-  const qty = Math.min(maxQty, Math.max(minQty, Math.round(rawQty * 100) / 100));
+  const maxNotional = 3500;
+  const maxQtyByNotional = maxNotional / signal.currentPrice;
+
+  const minQty = instrument?.minQty ? parseFloat(instrument.minQty) : 0.001;
+  const maxQty = instrument?.maxQty ? parseFloat(instrument.maxQty) : 100000;
+  const stepSize = instrument?.stepSize ? parseFloat(instrument.stepSize) : 0.001;
+
+  const boundedQty = Math.min(maxQty, Math.min(rawQty, maxQtyByNotional));
+  const precision = stepSize < 0.01 ? 3 : stepSize < 0.1 ? 2 : stepSize < 1 ? 1 : 0;
+  const qty = Math.max(minQty, Number(boundedQty.toFixed(precision)));
+
+  if (qty * signal.currentPrice < (instrument?.minNotional ? parseFloat(instrument.minNotional) : 5)) {
+    return null;
+  }
 
   return parseSignalInput({
     strategyId: ADAPTIVE_SUPERTREND_STRATEGY_ID,

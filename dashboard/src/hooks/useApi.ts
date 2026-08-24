@@ -29,6 +29,47 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function normalizePosition(
+  raw: Record<string, unknown>,
+  livePriceMap: Record<string, number> = {}
+): Position {
+  const qty = Number(raw.qty ?? raw.quantity ?? 0);
+  const side =
+    raw.side === 'LONG' || raw.side === 'SHORT'
+      ? raw.side
+      : qty >= 0
+      ? 'LONG'
+      : 'SHORT';
+  const entryPrice = Number(raw.entryPrice ?? 0);
+  const symbol = String(raw.symbol ?? '');
+  const currentMark =
+    livePriceMap[symbol] ?? Number(raw.markPrice ?? raw.lastPrice ?? entryPrice);
+  const unrealizedPnl =
+    side === 'LONG'
+      ? (currentMark - entryPrice) * Math.abs(qty)
+      : (entryPrice - currentMark) * Math.abs(qty);
+  const leverage = Number(raw.leverage ?? 5);
+  const margin = Number(
+    raw.initialMargin ?? (entryPrice * Math.abs(qty)) / (leverage || 1)
+  );
+  const roe = margin > 0 ? (unrealizedPnl / margin) * 100 : 0;
+
+  return {
+    symbol,
+    side,
+    quantity: Math.abs(qty),
+    entryPrice,
+    markPrice: currentMark,
+    unrealizedPnl,
+    leverage,
+    margin,
+    roe,
+    liquidationPrice: raw.liquidationPrice ? Number(raw.liquidationPrice) : undefined,
+    slPrice: raw.slPrice ? Number(raw.slPrice) : undefined,
+    tpPrice: raw.tpPrice ? Number(raw.tpPrice) : undefined,
+  };
+}
+
 export function useDashboard() {
   const setAccount = useStore((s) => s.setAccount);
   const setPositions = useStore((s) => s.setPositions);
@@ -44,13 +85,17 @@ export function useDashboard() {
         aggressiveMode?: boolean;
         engineRunning?: boolean;
         account: AccountInfo;
-        positions: Position[];
+        positions: Array<Record<string, unknown>>;
         health: Record<string, unknown>;
         incidents: Array<Record<string, unknown>>;
       }>('/api/v1/dashboard');
 
       if (data.account) setAccount(data.account);
-      if (data.positions) setPositions(data.positions);
+      if (Array.isArray(data.positions)) {
+        const livePrice = useStore.getState().livePrice;
+        const normalized = data.positions.map((p) => normalizePosition(p, livePrice));
+        setPositions(normalized);
+      }
       if (data.mode) setOperatingMode(data.mode, data.liveArmed);
       if (typeof data.aggressiveMode === 'boolean') setAggressiveMode(data.aggressiveMode);
       return data;

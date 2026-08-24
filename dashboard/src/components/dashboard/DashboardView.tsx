@@ -31,6 +31,7 @@ export function DashboardView() {
     timeframe,
     setTimeframe,
     liveEvents,
+    livePrice,
   } = useStore();
 
   useDashboard();
@@ -212,32 +213,41 @@ export function DashboardView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1b2537]">
-                  {positions.map((pos) => (
-                    <tr key={pos.symbol} className="hover:bg-[#141d2e] transition">
-                      <td className="px-4 py-3 font-bold text-white">{pos.symbol}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            pos.side === 'LONG'
-                              ? 'bg-emerald-500/20 text-emerald-400'
-                              : 'bg-red-500/20 text-red-400'
+                  {positions.map((pos) => {
+                    const entry = pos.entryPrice ?? 0;
+                    const qty = pos.quantity ?? Math.abs(Number((pos as unknown as Record<string, unknown>).qty ?? 0));
+                    const side = pos.side ?? (Number((pos as unknown as Record<string, unknown>).qty ?? 0) >= 0 ? 'LONG' : 'SHORT');
+                    const lev = pos.leverage ?? 5;
+                    const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
+                    const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+
+                    return (
+                      <tr key={pos.symbol} className="hover:bg-[#141d2e] transition">
+                        <td className="px-4 py-3 font-bold text-white">{pos.symbol}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              side === 'LONG'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : 'bg-red-500/20 text-red-400'
+                            }`}
+                          >
+                            {side} {lev}x
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-300">{qty}</td>
+                        <td className="px-4 py-3 text-right text-gray-400">${entry.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right text-white font-semibold">${mark.toFixed(2)}</td>
+                        <td
+                          className={`px-4 py-3 text-right font-bold ${
+                            pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                           }`}
                         >
-                          {pos.side} {pos.leverage}x
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-gray-300">{pos.quantity}</td>
-                      <td className="px-4 py-3 text-right text-gray-400">${pos.entryPrice.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-white font-semibold">${pos.markPrice.toFixed(2)}</td>
-                      <td
-                        className={`px-4 py-3 text-right font-bold ${
-                          pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
-                        }`}
-                      >
-                        {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
+                          {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

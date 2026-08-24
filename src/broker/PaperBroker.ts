@@ -323,6 +323,7 @@ export class PaperBroker implements ExecutionBroker {
   }
 
   getPositions(): Position[] {
+    this.recalculateAccount();
     return Array.from(this.positions.values());
   }
 
@@ -777,16 +778,22 @@ export class PaperBroker implements ExecutionBroker {
 
     for (const position of this.positions.values()) {
       const market = this.getMarket(position.symbol);
-      if (!market?.mark) continue;
+      const markPrice =
+        market?.mark ??
+        market?.last ??
+        (market?.bid && market?.ask ? D(market.bid).add(market.ask).div(2).toNumber() : undefined) ??
+        position.entryPrice;
+
+      if (!markPrice || !Number.isFinite(markPrice)) continue;
       if (position.qty === 0) {
         position.unrealizedPnl = 0;
         continue;
       }
 
-      position.unrealizedPnl = D(position.qty).mul(D(market.mark).sub(position.entryPrice)).toNumber();
+      position.unrealizedPnl = D(position.qty).mul(D(markPrice).sub(position.entryPrice)).toNumber();
       unrealizedPnl = D(unrealizedPnl).add(position.unrealizedPnl).toNumber();
 
-      const notional = D(Math.abs(position.qty)).mul(market.mark);
+      const notional = D(Math.abs(position.qty)).mul(markPrice);
       initialMargin = D(initialMargin).add(notional.div(position.leverage)).toNumber();
       maintenanceMargin = D(maintenanceMargin).add(notional.mul(position.maintenanceMarginRate)).toNumber();
     }

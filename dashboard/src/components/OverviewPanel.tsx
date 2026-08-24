@@ -87,16 +87,16 @@ export function OverviewPanel() {
                         {pos.side}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right text-gray-300">{pos.quantity}</td>
-                    <td className="px-6 py-4 text-right text-gray-300">${pos.entryPrice.toFixed(2)}</td>
-                    <td className="px-6 py-4 text-right text-white font-semibold">${pos.markPrice.toFixed(2)}</td>
-                    <td className="px-6 py-4 text-right text-amber-400">{pos.leverage}x</td>
+                    <td className="px-6 py-4 text-right text-gray-300">{pos.quantity ?? 0}</td>
+                    <td className="px-6 py-4 text-right text-gray-300">${(pos.entryPrice ?? 0).toFixed(2)}</td>
+                    <td className="px-6 py-4 text-right text-white font-semibold">${(pos.markPrice ?? pos.entryPrice ?? 0).toFixed(2)}</td>
+                    <td className="px-6 py-4 text-right text-amber-400">{pos.leverage ?? 5}x</td>
                     <td
                       className={`px-6 py-4 text-right font-semibold ${
-                        pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+                        (pos.unrealizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
                       }`}
                     >
-                      {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                      {(pos.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${(pos.unrealizedPnl ?? 0).toFixed(2)}
                     </td>
                   </tr>
                 ))}

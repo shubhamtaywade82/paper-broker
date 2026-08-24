@@ -30,6 +30,7 @@ export function TradingView() {
     setTradingTab,
     selectedSymbol,
     setActiveTab,
+    livePrice,
   } = useStore();
 
   useDashboard();
@@ -137,19 +138,31 @@ export function TradingView() {
                           {pos.side} {pos.leverage}x
                         </span>
                       </td>
-                      <td className="px-5 py-4 text-right text-gray-300">{pos.quantity}</td>
-                      <td className="px-5 py-4 text-right text-gray-400">${pos.entryPrice.toFixed(2)}</td>
-                      <td className="px-5 py-4 text-right text-white font-semibold">${pos.markPrice.toFixed(2)}</td>
-                      <td className="px-5 py-4 text-right text-amber-400">
-                        {pos.liquidationPrice ? `$${pos.liquidationPrice.toFixed(2)}` : '—'}
-                      </td>
-                      <td
-                        className={`px-5 py-4 text-right font-bold ${
-                          pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
-                        }`}
-                      >
-                        {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
-                      </td>
+                      {(() => {
+                        const entry = pos.entryPrice ?? 0;
+                        const qty = pos.quantity ?? 0;
+                        const side = pos.side ?? 'LONG';
+                        const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
+                        const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+
+                        return (
+                          <>
+                            <td className="px-5 py-4 text-right text-gray-300">{qty}</td>
+                            <td className="px-5 py-4 text-right text-gray-400">${entry.toFixed(2)}</td>
+                            <td className="px-5 py-4 text-right text-white font-semibold">${mark.toFixed(2)}</td>
+                            <td className="px-5 py-4 text-right text-amber-400">
+                              {pos.liquidationPrice ? `$${pos.liquidationPrice.toFixed(2)}` : '—'}
+                            </td>
+                            <td
+                              className={`px-5 py-4 text-right font-bold ${
+                                pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+                              }`}
+                            >
+                              {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className="px-5 py-4 text-center">
                         <button
                           onClick={(e) => {
@@ -271,26 +284,38 @@ export function TradingView() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Size</span>
-                <span className="font-bold text-white">{selectedPosition.quantity}</span>
+                <span className="font-bold text-white">{selectedPosition.quantity ?? 0}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Entry Price</span>
-                <span className="font-bold text-white">${selectedPosition.entryPrice.toFixed(2)}</span>
+                <span className="font-bold text-white">${(selectedPosition.entryPrice ?? 0).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Mark Price</span>
-                <span className="font-bold text-white">${selectedPosition.markPrice.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Unrealized PnL</span>
-                <span
-                  className={`font-bold ${
-                    selectedPosition.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
-                  }`}
-                >
-                  {selectedPosition.unrealizedPnl >= 0 ? '+' : ''}${selectedPosition.unrealizedPnl.toFixed(2)}
-                </span>
-              </div>
+              {(() => {
+                const entry = selectedPosition.entryPrice ?? 0;
+                const qty = selectedPosition.quantity ?? 0;
+                const side = selectedPosition.side ?? 'LONG';
+                const mark = livePrice[selectedPosition.symbol] ?? selectedPosition.markPrice ?? entry;
+                const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Mark Price</span>
+                      <span className="font-bold text-white">${mark.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Unrealized PnL</span>
+                      <span
+                        className={`font-bold ${
+                          pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+                        }`}
+                      >
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="space-y-2">
