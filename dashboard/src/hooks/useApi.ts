@@ -14,7 +14,18 @@ import {
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    let errMessage = `API error: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.message || errBody?.error) {
+        errMessage = String(errBody.message || errBody.error);
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(errMessage);
+  }
   return res.json();
 }
 
@@ -381,6 +392,7 @@ export function useEngineControl() {
       fetchJson<Record<string, unknown>>(`/engine/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
