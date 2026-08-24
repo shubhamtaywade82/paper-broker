@@ -389,6 +389,30 @@ export function useFills(symbol?: string, limit = 100) {
   });
 }
 
+export interface JournalEntry {
+  id: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  stopPrice: number | null;
+  realizedPnl: number;
+  rMultiple: number | null;
+  fillTsUtc: string;
+}
+
+export function useJournal(symbol?: string, limit = 100) {
+  return useQuery({
+    queryKey: ['journal', symbol, limit],
+    queryFn: () =>
+      fetchJson<JournalEntry[]>(
+        symbol ? `/api/v1/journal?symbol=${symbol}&limit=${limit}` : `/api/v1/journal?limit=${limit}`
+      ),
+    refetchInterval: 5000,
+  });
+}
+
 export function useActivity(limit = 50) {
   return useQuery({
     queryKey: ['activity', limit],

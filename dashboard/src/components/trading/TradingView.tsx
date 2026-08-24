@@ -7,6 +7,7 @@ import {
   useCancelAllOrders,
   useEngineControl,
   useFills,
+  useJournal,
 } from '../../hooks/useApi';
 import { OrderModal } from '../common/OrderModal';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -37,6 +38,7 @@ export function TradingView() {
   useDashboard();
   useOpenOrders();
   const { data: fills = [] } = useFills();
+  const { data: journal = [] } = useJournal();
 
   const cancelOrder = useCancelOrder();
   const cancelAllOrders = useCancelAllOrders();
@@ -61,7 +63,7 @@ export function TradingView() {
                   : 'bg-[#080c14] text-gray-400 hover:text-white border border-[#1b2537]'
               }`}
             >
-              {tab} {tab === 'positions' && `(${positions.length})`} {tab === 'orders' && `(${openOrders.length})`} {tab === 'fills' && `(${fills.length})`}
+              {tab} {tab === 'positions' && `(${positions.length})`} {tab === 'orders' && `(${openOrders.length})`} {tab === 'fills' && `(${fills.length})`} {tab === 'journal' && `(${journal.length})`}
             </button>
           ))}
         </div>
@@ -308,10 +310,66 @@ export function TradingView() {
 
       {/* Tab 4: Trade Journal */}
       {tradingTab === 'journal' && (
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-8 text-center text-gray-400">
-          <p>Not yet implemented. A forensic journal needs R-multiple (risk-normalized outcome per trade), which
-            requires linking each closed position back to the stop-loss distance at entry — that link doesn't
-            exist in persisted data yet. See the Fills tab for real per-fill history in the meantime.</p>
+        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl overflow-hidden">
+          {journal.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 space-y-2">
+              <p>No closed trades with a linked stop-loss yet.</p>
+              <p className="text-gray-600 text-[11px]">
+                R-multiple only computes when the closing fill can be traced back to the STOP_MARKET order placed
+                alongside the entry (same signal). Manually-closed or bracket-less trades show a real realized PnL
+                row but no R-multiple.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-[#080c14] text-gray-400 uppercase text-[10px] border-b border-[#1b2537]">
+                  <tr>
+                    <th className="px-4 py-2.5">Time</th>
+                    <th className="px-4 py-2.5">Symbol</th>
+                    <th className="px-4 py-2.5">Side</th>
+                    <th className="px-4 py-2.5 text-right">Qty</th>
+                    <th className="px-4 py-2.5 text-right">Entry</th>
+                    <th className="px-4 py-2.5 text-right">Exit</th>
+                    <th className="px-4 py-2.5 text-right">Stop</th>
+                    <th className="px-4 py-2.5 text-right">Realized PnL</th>
+                    <th className="px-4 py-2.5 text-right">R-Multiple</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1b2537]">
+                  {journal.map((j) => (
+                    <tr key={j.id} className="hover:bg-[#141d2e] transition">
+                      <td className="px-4 py-3 text-gray-500">
+                        {new Date(j.fillTsUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </td>
+                      <td className="px-4 py-3 font-bold text-white">{j.symbol}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          j.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {j.side}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-300">{j.quantity}</td>
+                      <td className="px-4 py-3 text-right text-gray-400">${j.entryPrice.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-white">${j.exitPrice.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-amber-400">
+                        {j.stopPrice !== null ? `$${j.stopPrice.toFixed(2)}` : '—'}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-bold ${j.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {j.realizedPnl >= 0 ? '+' : ''}${j.realizedPnl.toFixed(2)}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-bold ${
+                        j.rMultiple === null ? 'text-gray-600' : j.rMultiple >= 0 ? 'text-emerald-400' : 'text-red-400'
+                      }`}>
+                        {j.rMultiple !== null ? `${j.rMultiple >= 0 ? '+' : ''}${j.rMultiple}R` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

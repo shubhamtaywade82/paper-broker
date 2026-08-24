@@ -318,6 +318,51 @@ export class ApiServer {
         .filter((f) => !query.symbol || f['symbol'] === query.symbol);
     });
 
+    this.app.get('/api/v1/journal', async (request) => {
+      const query = request.query as { symbol?: string; limit?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 100;
+
+      // signalId is shared between the order that opened a position and the
+      // STOP_MARKET order placed alongside it (both come from the same Signal) —
+      // that's the only link back to "what was the planned risk on this trade."
+      const stopOrders = this.events.raw
+        .prepare(`SELECT signal_id, stop_price FROM orders WHERE type = 'STOP_MARKET' AND signal_id IS NOT NULL`)
+        .all() as Array<{ signal_id: string; stop_price: string }>;
+      const stopPriceBySignal = new Map(stopOrders.map((o) => [o.signal_id, Number(o.stop_price)]));
+
+      const closingFills = this.events
+        .getEvents({ type: 'FILL_CREATED', limit: 1000 })
+        .map((e) => e.payload as Record<string, unknown>)
+        .filter((f) => Number(f['realizedPnl'] ?? 0) !== 0)
+        .filter((f) => !query.symbol || f['symbol'] === query.symbol);
+
+      const entries = closingFills.map((f) => {
+        const signalId = f['signalId'] as string | undefined;
+        const stopPrice = signalId ? stopPriceBySignal.get(signalId) : undefined;
+        const entryPrice = Number(f['positionEntryBefore'] ?? 0);
+        const exitPrice = Number(f['price'] ?? 0);
+        const quantity = Number(f['quantity'] ?? 0);
+        const realizedPnl = Number(f['realizedPnl'] ?? 0);
+        const riskPerUnit = stopPrice && entryPrice ? Math.abs(entryPrice - stopPrice) : undefined;
+        const rMultiple = riskPerUnit && riskPerUnit > 0 ? realizedPnl / (riskPerUnit * quantity) : undefined;
+
+        return {
+          id: f['id'],
+          symbol: f['symbol'],
+          side: f['side'],
+          quantity,
+          entryPrice,
+          exitPrice,
+          stopPrice: stopPrice ?? null,
+          realizedPnl,
+          rMultiple: rMultiple !== undefined ? Number(rMultiple.toFixed(2)) : null,
+          fillTsUtc: f['fillTsUtc'],
+        };
+      });
+
+      return entries.slice(0, limit);
+    });
+
     this.app.get('/api/v1/equity-curve', async (request) => {
       const query = request.query as { limit?: string };
       const limit = query.limit ? parseInt(query.limit, 10) : 100;
