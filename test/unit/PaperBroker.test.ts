@@ -142,7 +142,35 @@ describe('PaperBroker', () => {
 
     const account = broker.getAccount();
     expect(account.totalRealizedPnl).toBeGreaterThan(0);
-    expect(account.openPositionsCount).toBe(1); // position record stays (qty 0)
+    // Position record stays in the map (qty 0, status CLOSED) for history, but
+    // a closed position must not count toward open-position exposure.
+    expect(account.openPositionsCount).toBe(0);
+    expect(position?.status).toBe('CLOSED');
+  });
+
+  it('reopening a closed position resets status to OPEN, not stuck at CLOSED', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 100,
+      ask: 100.1,
+      last: 100.05,
+      mark: 100,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 0.1, reduceOnly: true, leverage: 5 });
+
+    expect(broker.getPosition('BTCUSDT')?.status).toBe('CLOSED');
+    expect(broker.getAccount().openPositionsCount).toBe(0);
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+
+    const reopened = broker.getPosition('BTCUSDT');
+    expect(reopened?.status).toBe('OPEN');
+    expect(reopened?.qty).toBeCloseTo(0.1);
+    expect(broker.getAccount().openPositionsCount).toBe(1);
   });
 
   it('rejects reduce-only orders that would increase position', () => {

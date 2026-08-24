@@ -194,7 +194,7 @@ export class ApiServer {
         liveArmed: this.profile?.liveArmed ?? false,
         realOrders: this.profile?.realOrders ?? false,
         account,
-        positions,
+        positions: positions.filter((p) => p.qty !== 0),
         openOrders,
         signals: recentSignals,
         health: {
@@ -233,7 +233,7 @@ export class ApiServer {
         riskRating: exposurePct > 75 ? 'HIGH' : exposurePct > 40 ? 'MEDIUM' : 'LOW',
         exposurePct: Number(exposurePct.toFixed(2)),
         marginUsagePct: Number(marginUsagePct.toFixed(2)),
-        openPositionsCount: positions.length,
+        openPositionsCount: positions.filter((p) => p.qty !== 0).length,
         maxOpenPositions: 3,
         dailyLossLimitPct,
         dailyLossRemainingPct: Number(dailyLossRemainingPct.toFixed(2)),
@@ -263,7 +263,7 @@ export class ApiServer {
         aggressiveMode: this.options.getAggressiveMode?.() ?? false,
         engineRunning: typeof this.engine?.isRunning === 'function' ? this.engine.isRunning() : false,
         account,
-        positions,
+        positions: positions.filter((p) => p.qty !== 0),
         signals: recentSignals,
         health: {
           uptimeMs: Date.now() - this.startedAt,

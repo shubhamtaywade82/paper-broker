@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
 import { env, symbols, timeframes, runtimeProfile } from './config/env.js';
 import { defaultInstruments } from './config/instruments.js';
 import { BinanceClient } from '@nemesis-oss/binance-sdk';
@@ -202,7 +204,17 @@ export async function startEngine(): Promise<EngineHandle> {
     })
   );
 
+  const aggressiveConfigPath = path.join(dataDir, 'aggressive_mode.json');
   let aggressiveMode = false;
+  try {
+    if (fs.existsSync(aggressiveConfigPath)) {
+      const parsed = JSON.parse(fs.readFileSync(aggressiveConfigPath, 'utf8')) as { aggressive?: boolean };
+      aggressiveMode = Boolean(parsed.aggressive);
+      logger.info({ aggressiveMode }, 'Loaded persisted aggressive mode setting');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to read persisted aggressive mode setting');
+  }
 
   strategyEngine.register(
     createAdaptiveSupertrendStrategy({
@@ -305,7 +317,12 @@ export async function startEngine(): Promise<EngineHandle> {
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
       aggressiveMode = enabled;
-      logger.info({ aggressiveMode }, 'Aggressive simulation mode updated');
+      try {
+        fs.writeFileSync(aggressiveConfigPath, JSON.stringify({ aggressive: enabled }, null, 2), 'utf8');
+      } catch (err) {
+        logger.error({ err }, 'Failed to persist aggressive mode setting');
+      }
+      logger.info({ aggressiveMode }, 'Aggressive simulation mode updated and persisted');
     },
     onTriggerEvaluation: evaluateAllSymbols,
   });

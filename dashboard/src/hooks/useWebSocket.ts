@@ -11,6 +11,7 @@ export function useWebSocket() {
     setAccount,
     setLivePrice,
     setOperatingMode,
+    setAggressiveMode,
   } = useStore();
 
   useEffect(() => {
@@ -89,6 +90,13 @@ export function useWebSocket() {
                     Boolean(data.payload.liveArmed)
                   );
                 }
+                addLiveEvent({ type: 'system', stream: 'system', payload: data.payload });
+                break;
+              case 'mode.aggressive':
+                if (typeof data.payload.aggressive === 'boolean') {
+                  setAggressiveMode(data.payload.aggressive);
+                }
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
                 addLiveEvent({ type: 'system', stream: 'system', payload: data.payload });
                 break;
               case 'kill_switch.activated':

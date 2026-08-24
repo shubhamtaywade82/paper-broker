@@ -561,11 +561,13 @@ export class PaperBroker implements ExecutionBroker {
     let realized = 0;
 
     if (oldQty === 0) {
+      position.status = 'OPEN';
       position.entryPrice = price;
       position.qty = newQty;
       position.leverage = leverage;
       position.maintenanceMarginRate = parseNum(instrument.maintenanceMarginRate);
       position.openedAtUtc = nowIso;
+      position.closedAtUtc = undefined;
       position.updatedAtUtc = nowIso;
       this.emitPositionEvent('OPEN', position, 0, newQty, price);
 
@@ -789,8 +791,11 @@ export class PaperBroker implements ExecutionBroker {
     let unrealizedPnl = 0;
     let initialMargin = 0;
     let maintenanceMargin = 0;
+    let openPositionsCount = 0;
 
     for (const position of this.positions.values()) {
+      if (position.qty !== 0) openPositionsCount++;
+
       const market = this.getMarket(position.symbol);
       const markPrice =
         market?.mark ??
@@ -827,7 +832,7 @@ export class PaperBroker implements ExecutionBroker {
       totalFees: this.totalFees,
       totalFunding: this.totalFunding,
       totalRealizedPnl: this.totalRealizedPnl,
-      openPositionsCount: this.positions.size,
+      openPositionsCount,
       openOrdersCount: this.getOpenOrders().length,
       peakEquity: this.dayStartEquity,
       drawdown: this.dayStartEquity > 0 ? Math.max(0, (this.dayStartEquity - equity) / this.dayStartEquity) : 0,

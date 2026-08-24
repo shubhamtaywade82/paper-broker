@@ -278,6 +278,13 @@ function getInitialLiveArmed(): boolean {
   return false;
 }
 
+function getInitialAggressiveMode(): boolean {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('nemesis_aggressive_mode') === 'true';
+  }
+  return false;
+}
+
 export const useStore = create<StoreState>((set) => ({
   activeTab: getInitialTab(),
   selectedSymbol: getInitialSymbol(),
@@ -295,7 +302,7 @@ export const useStore = create<StoreState>((set) => ({
   wsConnected: false,
   operatingMode: getInitialOperatingMode(),
   liveArmed: getInitialLiveArmed(),
-  aggressiveMode: false,
+  aggressiveMode: getInitialAggressiveMode(),
   liveEvents: [],
   livePrice: {},
   tickers: {},
@@ -338,7 +345,12 @@ export const useStore = create<StoreState>((set) => ({
       liveArmed: armed !== undefined ? armed : state.liveArmed,
     }));
   },
-  setAggressiveMode: (aggressiveMode) => set({ aggressiveMode }),
+  setAggressiveMode: (aggressiveMode) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nemesis_aggressive_mode', String(aggressiveMode));
+    }
+    set({ aggressiveMode });
+  },
   addLiveEvent: (event) =>
     set((state) => ({
       liveEvents: [
