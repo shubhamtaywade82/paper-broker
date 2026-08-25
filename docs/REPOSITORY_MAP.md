@@ -13,8 +13,6 @@ Quick reference for navigating this codebase.
 | `CLAUDE.md` | Claude-specific adapter pointing to authoritative sources |
 | `CODEX.md` | Codex-specific adapter pointing to authoritative sources |
 | `README.md` | Project overview and quick start |
-| `IMPLEMENTATION_GUIDE.md` | Integration guide for the profit-goal subsystem |
-| `STAFF_ENGINEER_PROFITABILITY_REVIEW.md` | Design review: path to profitability |
 | `docs/` | Architecture, API, configuration, strategies references |
 
 ## Research Transcripts (not specifications)

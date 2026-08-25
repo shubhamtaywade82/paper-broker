@@ -153,14 +153,6 @@ export class TrailingStopManager {
   }
 
   /**
-   * Clear all trackers (useful for reset scenarios)
-   */
-  clearAllTrackers(): void {
-    this.positionTrackers.clear();
-    logger.info('[TrailingStopManager] All trackers cleared');
-  }
-
-  /**
    * Get configuration
    */
   getConfig(): Readonly<TrailingStopConfig> {
