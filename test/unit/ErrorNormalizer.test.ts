@@ -47,6 +47,28 @@ describe('ErrorNormalizer', () => {
     expect(second.incident.incidentId).toBe(first.incident.incidentId);
   });
 
+  it('does not collide two different long errors sharing the same first 50 characters (Medium)', () => {
+    // Previously the dedup key truncated the message to 50 chars, so two
+    // genuinely different errors differing only after that point (e.g. a
+    // different host/symbol/ID appended at the end) were treated as the
+    // same incident and the second one's alert was suppressed.
+    const normalizer = new ErrorNormalizer(60000);
+    const prefix = 'Failed to fetch order book depth from ';
+    expect(prefix.length).toBeLessThan(50);
+
+    const first = normalizer.normalize({
+      component: 'BinanceRest', error: `${prefix}https://fapi.binance.com/depth?symbol=BTCUSDT`, severity: 'WARNING',
+    });
+    const second = normalizer.normalize({
+      component: 'BinanceRest', error: `${prefix}https://fapi.binance.com/depth?symbol=ETHUSDT`, severity: 'WARNING',
+    });
+
+    expect(first.shouldAlert).toBe(true);
+    expect(second.shouldAlert).toBe(true); // must NOT be suppressed as a dup of the first
+    expect(second.incident.incidentId).not.toBe(first.incident.incidentId);
+    expect(second.incident.occurrenceCount).toBe(1);
+  });
+
   it('infers TRADING_UNSAFE classification for critical risk or reconciliation errors', () => {
     const normalizer = new ErrorNormalizer();
     const { incident } = normalizer.normalize({

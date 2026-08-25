@@ -92,13 +92,31 @@ export class AdaptiveParameterAI {
     };
   }
 
-  public learn(state: string, actionIndex: number, reward: number): void {
+  /**
+   * Bellman update: Q(s,a) += lr * (reward + gamma * max_a' Q(s',a') - Q(s,a)).
+   *
+   * `nextState` must be the regime observed *after* this decision resolved
+   * (e.g. the market state when the resulting trade closed), not `state`
+   * itself — bootstrapping off the same state being updated double-counts the
+   * action just taken and drives every Q-value into a uniform upward drift
+   * regardless of actual outcome (the C-08 bug). When there is no meaningful
+   * next state (a one-shot/terminal decision), omit it: the future-value term
+   * is then 0, which is the correct degenerate case, not a reuse of `state`.
+   */
+  public learn(state: string, actionIndex: number, reward: number, nextState?: string): void {
     if (!this.qTable.has(state)) {
       this.qTable.set(state, this.initHeuristicQValues(state));
     }
     const qValues = this.qTable.get(state)!;
     const currentQ = qValues[actionIndex] ?? 0;
-    const maxNextQ = Math.max(...qValues);
+
+    let maxNextQ = 0;
+    if (nextState !== undefined) {
+      if (!this.qTable.has(nextState)) {
+        this.qTable.set(nextState, this.initHeuristicQValues(nextState));
+      }
+      maxNextQ = Math.max(...this.qTable.get(nextState)!);
+    }
 
     const newQ = currentQ + this.learningRate * (reward + this.discountFactor * maxNextQ - currentQ);
     qValues[actionIndex] = Math.round(newQ * 1000) / 1000;

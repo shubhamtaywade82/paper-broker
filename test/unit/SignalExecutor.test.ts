@@ -118,10 +118,40 @@ describe('SignalExecutor', () => {
     expect(db.signals.findById(signal.id)?.status).toBe('CREATED');
   });
 
-  it('skips CLOSE_LONG with no position', async () => {
+  it('skips CLOSE_LONG with no position and marks the signal REJECTED (H-18)', async () => {
+    // H-18: a signal that resolves to zero quantity (nothing to close, no
+    // position) previously left the persisted status as 'CREATED' and
+    // reported success to the caller — indistinguishable from a genuinely
+    // executed signal. It must be explicitly REJECTED instead (same fix as
+    // the missing-price case).
     const signal = await run(db, executor, 'CLOSE_LONG');
 
-    expect(db.signals.findById(signal.id)?.status).toBe('CREATED');
+    const row = db.signals.findById(signal.id);
+    expect(row?.status).toBe('REJECTED');
+    expect(row?.rejectReason).toBe('ZERO_QUANTITY');
+  });
+
+  it('skips OPEN_LONG with no market price and marks the signal REJECTED (H-18)', async () => {
+    // H-18: execute() used to `return true` here — StrategyEngine treats a
+    // truthy return as success (no rejection event, no metric, and the
+    // persisted signal status was left ambiguous) even though no order was
+    // ever submitted to the broker.
+    const noMarketExecutor = new SignalExecutor({
+      broker,
+      orderFactory: new OrderFactory({ defaultLeverage: 5 }),
+      signals: db.signals,
+      getMarketState: () => undefined,
+    });
+
+    const signal = makeSignal('OPEN_LONG', { features: { quantity: 1, leverage: 5 } });
+    db.signals.insert(signal);
+    const accepted = await noMarketExecutor.execute(signal);
+
+    expect(accepted).toBe(false);
+    const row = db.signals.findById(signal.id);
+    expect(row?.status).toBe('REJECTED');
+    expect(row?.rejectReason).toBe('NO_MARKET_STATE');
+    expect(broker.getOpenOrders().length).toBe(0);
   });
 
   it('marks the signal REJECTED when the broker rejects', async () => {

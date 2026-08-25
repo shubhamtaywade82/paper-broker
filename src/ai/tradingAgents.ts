@@ -189,18 +189,34 @@ export class TradingAgentsPipeline {
   ): Promise<{ debate: DebateEntry[]; verdict: DebateVerdict }> {
     const debate: DebateEntry[] = [];
     const reportSummary = JSON.stringify(reports);
+    // H-17: `debateRounds` was accepted in config, stored on `this.config`,
+    // and never read anywhere — this method always ran exactly one bull/bear
+    // exchange regardless of what it was set to. Now actually drives the
+    // number of rounds, with each round's arguments responding to the
+    // debate transcript so far rather than repeating the opening case.
+    const rounds = Math.max(1, this.config.debateRounds);
 
-    // Round 1: Bull opening case
-    this.emitStep(onStep, cycleId, symbol, 'debate_bull', 'started');
-    const bullPrompt = `Analyst context: ${reportSummary}\nPresent the strongest evidence for a LONG position on ${symbol}.`;
-    const bullArg = await this.generateProse(cycleId, symbol, 'debate_bull', bullPrompt, 'You are a bullish researcher. Present a crisp evidence-grounded long case.', onStep);
-    debate.push({ role: 'BULL', round: 1, argument: bullArg });
+    for (let round = 1; round <= rounds; round++) {
+      const priorDebate = debate.length > 0 ? `\nDebate so far: ${JSON.stringify(debate)}` : '';
 
-    // Round 1: Bear rebuttal
-    this.emitStep(onStep, cycleId, symbol, 'debate_bear', 'started');
-    const bearPrompt = `Analyst context: ${reportSummary}\nBull argument: "${bullArg}"\nRebut the bull case and argue for SHORT or FLAT on ${symbol}.`;
-    const bearArg = await this.generateProse(cycleId, symbol, 'debate_bear', bearPrompt, 'You are a bearish researcher. Highlight leverage risks and rejection levels.', onStep);
-    debate.push({ role: 'BEAR', round: 1, argument: bearArg });
+      this.emitStep(onStep, cycleId, symbol, 'debate_bull', 'started');
+      const bullPrompt = `Analyst context: ${reportSummary}${priorDebate}\nPresent the strongest evidence for a LONG position on ${symbol} (round ${round} of ${rounds}).`;
+      const bullArg = await this.generateProse(
+        cycleId, symbol, 'debate_bull', bullPrompt,
+        'You are a bullish researcher. Present a crisp evidence-grounded long case, directly rebutting the bear\'s prior points if any exist.',
+        onStep
+      );
+      debate.push({ role: 'BULL', round, argument: bullArg });
+
+      this.emitStep(onStep, cycleId, symbol, 'debate_bear', 'started');
+      const bearPrompt = `Analyst context: ${reportSummary}\nBull argument: "${bullArg}"${priorDebate}\nRebut the bull case and argue for SHORT or FLAT on ${symbol} (round ${round} of ${rounds}).`;
+      const bearArg = await this.generateProse(
+        cycleId, symbol, 'debate_bear', bearPrompt,
+        'You are a bearish researcher. Highlight leverage risks and rejection levels, directly rebutting the bull\'s point above.',
+        onStep
+      );
+      debate.push({ role: 'BEAR', round, argument: bearArg });
+    }
 
     // Facilitator evaluation
     const verdict = await this.judgeDebate(cycleId, symbol, debate, onStep);
@@ -284,6 +300,25 @@ export class TradingAgentsPipeline {
     }
   }
 
+  /**
+   * H-16: deterministic by design, not a gap. The code review flagged the
+   * risk team and fund manager as "hardcoded rules, not LLM agents" despite
+   * RiskOpinionSchema/FundManagerApprovalSchema being shaped for structured
+   * LLM output, and suggested making them genuinely LLM-driven.
+   *
+   * That recommendation conflicts with this repository's own non-negotiable
+   * mandate (AGENTS.md Section 6.1 / Section 1 item 9): "Treat LLM reasoning
+   * as advisory/orchestrating, never as an authority over risk" — the LLM
+   * MUST NOT "bypass the risk engine" or "calculate authoritative execution
+   * state." Risk approval is exactly that authority: it's the gate deciding
+   * whether a trade executes at all. Handing that decision to an LLM call
+   * would be the violation, not the fix. The schemas are shaped this way
+   * because they also validate the analyst/trader/debate stages' genuine LLM
+   * output in the same CycleRecord — that doesn't obligate every stage to be
+   * LLM-produced. Keeping risk/fund-manager deterministic matches how every
+   * other execution path in this codebase works (Signal -> SignalExecutor ->
+   * RiskCheck -> PaperBroker, all deterministic).
+   */
   private async runRiskTeam(
     cycleId: string,
     ctx: MarketFactContext,

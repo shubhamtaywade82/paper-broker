@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import type {
   Fill,
@@ -10,6 +10,7 @@ import type {
   OrderEventType,
   SystemEventType,
 } from '../broker/types.js';
+import { logger } from '../telemetry/logger.js';
 
 export interface EventEnvelope {
   id: string;
@@ -40,16 +41,35 @@ export class EventLog {
   private jsonlFile: string;
   private db: Database.Database;
 
-  constructor(jsonlFile: string) {
+  /**
+   * `db` must be a shared connection to the same `paper.sqlite3` file owned by
+   * `DatabaseManager` (see C-03 in the code review) rather than a connection
+   * EventLog opens itself — three independent connections to one SQLite file
+   * with inconsistent pragmas risked corruption under concurrent writes.
+   */
+  constructor(jsonlFile: string, db: Database.Database) {
     const dataDir = path.dirname(jsonlFile);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
     this.jsonlFile = jsonlFile;
-    this.db = new Database(path.join(dataDir, 'paper.sqlite3'));
-    this.db.pragma('journal_mode = WAL');
+    this.db = db;
     this.initSchema();
+    this.seq = this.recoverSequence();
+  }
+
+  /**
+   * H-08: `seq` used to always start at 0, regardless of what was already
+   * persisted. On restart with a non-empty `events` table, new events would
+   * restart numbering from 1 — colliding with (and sorting before) existing
+   * rows' seq values, breaking the total ordering `getEvents()`'s
+   * `ORDER BY seq DESC` depends on. Recover the high-water mark from the
+   * table (the durable side of the dual-write) instead.
+   */
+  private recoverSequence(): number {
+    const row = this.db.prepare('SELECT MAX(seq) as maxSeq FROM events').get() as { maxSeq: number | null };
+    return row.maxSeq ?? 0;
   }
 
   private initSchema(): void {
@@ -113,9 +133,15 @@ export class EventLog {
       payload,
     };
 
-    const jsonLine = JSON.stringify(event);
-    fs.appendFileSync(this.jsonlFile, `${jsonLine}\n`);
-
+    // H-07: SQLite first, JSONL best-effort second. SQLite is the queryable,
+    // transactional, WAL-durable store getEvents()/getAgentCycles() and every
+    // API endpoint actually read from; the JSONL stream is a supplementary
+    // append-only log for external tailing/audit. Writing JSONL first (the
+    // old order) meant a crash between the two writes left an event in the
+    // JSONL stream that SQLite never saw — silently missing from every query
+    // path. Writing SQLite first and catching a JSONL failure means a crash
+    // or disk error on the JSONL side can never cause data SQLite has to
+    // "disappear" from the system's actual source of truth.
     this.db.prepare(`
       INSERT INTO events (id, seq, event_type, aggregate_type, aggregate_id, account_id, symbol, correlation_id, causation_id, payload, created_at_utc)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -132,6 +158,13 @@ export class EventLog {
       JSON.stringify(payload),
       new Date(now).toISOString()
     );
+
+    try {
+      const jsonLine = JSON.stringify(event);
+      fs.appendFileSync(this.jsonlFile, `${jsonLine}\n`);
+    } catch (err) {
+      logger.error({ err, eventId: event.id, seq: event.seq }, '[EventLog] failed to append to JSONL stream (SQLite write already succeeded)');
+    }
   }
 
   appendOrderEvent(event: OrderEventType): void {
@@ -243,7 +276,8 @@ export class EventLog {
 
     sql += ' ORDER BY seq DESC';
     if (options?.limit) {
-      sql += ` LIMIT ${options.limit}`;
+      sql += ' LIMIT ?';
+      params.push(options.limit);
     }
 
     const rows = this.db.prepare(sql).all(...params) as Array<{
@@ -282,12 +316,32 @@ export class EventLog {
     fundManagerApproval: unknown;
     executed: boolean;
   }): void {
+    // Medium finding ("INSERT OR REPLACE silently destroys data"): checked
+    // against the actual schema — every column in agent_cycles is provided
+    // here and nothing has a foreign key onto cycle_id, so REPLACE's
+    // delete-then-insert semantics don't currently lose or cascade-delete
+    // anything. Switched to ON CONFLICT DO UPDATE anyway as a defensive
+    // upsert: it can't silently null out a future column this INSERT
+    // forgets to list, and won't trigger cascading deletes if a foreign key
+    // onto this table is ever added later.
     this.db.prepare(`
-      INSERT OR REPLACE INTO agent_cycles (
+      INSERT INTO agent_cycles (
         cycle_id, symbol, started_at, completed_at, status,
         analyst_reports, debate_history, verdict,
         trader_decision, risk_opinions, fund_manager_approval, executed
       ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cycle_id) DO UPDATE SET
+        symbol = excluded.symbol,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        status = excluded.status,
+        analyst_reports = excluded.analyst_reports,
+        debate_history = excluded.debate_history,
+        verdict = excluded.verdict,
+        trader_decision = excluded.trader_decision,
+        risk_opinions = excluded.risk_opinions,
+        fund_manager_approval = excluded.fund_manager_approval,
+        executed = excluded.executed
     `).run(
       record.cycleId,
       record.symbol,
@@ -382,7 +436,8 @@ export class EventLog {
     return this.db;
   }
 
+  /** No-op: the underlying connection is shared and owned/closed by DatabaseManager. */
   close(): void {
-    this.db.close();
+    // intentionally does not close `this.db` — see constructor doc.
   }
 }

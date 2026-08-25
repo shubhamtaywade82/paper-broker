@@ -130,4 +130,66 @@ describe('event-driven market-state pipeline', () => {
     await position.applyFill('SOLUSDT', 'LONG');
     expect(position.getState('SOLUSDT')).toBe('LONG');
   });
+
+  it('applyIntent emits the event type matching the actual intent action, not always POSITION_OPENED (Medium)', async () => {
+    const bus = new TradingEventBus();
+    const position = new PositionStateMachine(bus);
+    const evidence = { structure: [], liquidity: [], flow: [], volume: [], derivatives: [] };
+
+    const openEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'OPEN', reason: 'BOS_RETEST', confidence: 0.8, evidence,
+    });
+    expect(openEvent?.type).toBe('ENTRY_INTENT');
+
+    await position.applyFill('SOLUSDT', 'LONG'); // FLAT -> LONG so REDUCE/CLOSE below are valid transitions
+
+    const reduceEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'REDUCE', reason: 'STRUCTURE_BREAK', confidence: 0.6, evidence,
+    });
+    expect(reduceEvent?.type).toBe('REDUCE_INTENT');
+
+    const closeEvent = await position.applyIntent({
+      symbol: 'SOLUSDT', direction: 'LONG', action: 'CLOSE', reason: 'STRUCTURE_BREAK', confidence: 0.6, evidence,
+    });
+    expect(closeEvent?.type).toBe('EXIT_INTENT');
+    // None of these must be the old hardcoded 'POSITION_OPENED', which
+    // applyFill (not applyIntent) is responsible for emitting.
+    expect([openEvent?.type, reduceEvent?.type, closeEvent?.type]).not.toContain('POSITION_OPENED');
+  });
+});
+
+describe('TradingEventBus.publish concurrency (C-07)', () => {
+  it('runs handlers concurrently instead of serially, so a slow handler does not delay others', async () => {
+    const bus = new TradingEventBus();
+    const order: string[] = [];
+    bus.subscribeAll(async () => {
+      order.push('slow-start');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      order.push('slow-end');
+    });
+    bus.subscribeAll(() => {
+      order.push('fast');
+    });
+
+    await bus.publish(candleClosedEvent(bus, candle(0, 1, 1, 1, 1)));
+
+    // Sequential execution would produce ['slow-start', 'slow-end', 'fast'] —
+    // the fast handler only proves concurrency by finishing before the slow
+    // one's timer fires.
+    expect(order).toEqual(['slow-start', 'fast', 'slow-end']);
+  });
+
+  it('isolates a throwing handler so it does not block or abort the other handlers', async () => {
+    const bus = new TradingEventBus();
+    const ran: string[] = [];
+    bus.subscribeAll(() => {
+      throw new Error('boom');
+    });
+    bus.subscribeAll(() => {
+      ran.push('second handler ran');
+    });
+
+    await expect(bus.publish(candleClosedEvent(bus, candle(0, 1, 1, 1, 1)))).resolves.toBeUndefined();
+    expect(ran).toEqual(['second handler ran']);
+  });
 });

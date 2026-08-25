@@ -63,12 +63,19 @@ export class PaperBroker implements ExecutionBroker {
   private risk: RiskLimits;
 
   private dayStartEquity: number;
+  // H-15: distinct from dayStartEquity, which resets to the current equity
+  // at every UTC day boundary (correct for the daily-loss circuit breaker,
+  // wrong for drawdown). peakEquity is a running high-water mark that only
+  // ever increases, so drawdown = (peak - equity) / peak actually reflects
+  // the worst intraday pullback instead of resetting to ~0 every day.
+  private peakEquity: number;
   private currentUtcDay: string;
   private isLiquidating = false;
 
   constructor(config: PaperBrokerConfig) {
     this.walletBalance = config.startingUsdt;
     this.dayStartEquity = config.startingUsdt;
+    this.peakEquity = config.startingUsdt;
     this.currentUtcDay = new Date().toISOString().slice(0, 10);
     this.marketState = config.marketState;
     this.eventLog = config.eventLog;
@@ -868,6 +875,10 @@ export class PaperBroker implements ExecutionBroker {
     const availableBalance = Math.max(0, D(equity).sub(initialMargin).toNumber());
     const marginRatio = maintenanceMargin > 0 ? equity / maintenanceMargin : 0;
 
+    if (equity > this.peakEquity) {
+      this.peakEquity = equity;
+    }
+
     return {
       walletBalance: this.walletBalance,
       unrealizedPnl,
@@ -881,8 +892,8 @@ export class PaperBroker implements ExecutionBroker {
       totalRealizedPnl: this.totalRealizedPnl,
       openPositionsCount,
       openOrdersCount: this.getOpenOrders().length,
-      peakEquity: this.dayStartEquity,
-      drawdown: this.dayStartEquity > 0 ? Math.max(0, (this.dayStartEquity - equity) / this.dayStartEquity) : 0,
+      peakEquity: this.peakEquity,
+      drawdown: this.peakEquity > 0 ? Math.max(0, (this.peakEquity - equity) / this.peakEquity) : 0,
       liquidations: this.liquidations,
     };
   }
@@ -917,18 +928,42 @@ export class PaperBroker implements ExecutionBroker {
 
       const closeSide: OrderSide = position.qty > 0 ? 'SELL' : 'BUY';
       const closeQty = Math.abs(position.qty);
+      const nowIso = new Date().toISOString();
 
-      const realized = this.applyPositionFill(
-        position.symbol,
-        closeSide,
-        closeQty,
-        market.mark,
-        position.leverage,
-        new Date().toISOString()
-      );
+      // C-04: forced liquidation used to close positions by calling
+      // applyPositionFill() directly, bypassing fillOrder/executeFill entirely —
+      // no Fill record, no fee, no ORDER_FILLED event, and the close was
+      // effectively invisible to the append-only audit trail. Route it through
+      // a synthetic MARKET order tagged strategyId=LIQUIDATION so it gets the
+      // same Fill/fee/event treatment as any other close.
+      const order: Order = {
+        id: ulid(),
+        clientOrderId: `liq-${ulid()}`,
+        accountId: position.accountId,
+        symbol: position.symbol,
+        strategyId: 'LIQUIDATION',
+        side: closeSide,
+        type: 'MARKET',
+        timeInForce: 'GTC',
+        status: 'NEW',
+        positionSide: position.positionSide,
+        quantity: closeQty,
+        filledQty: 0,
+        avgFillPrice: 0,
+        leverage: position.leverage,
+        reduceOnly: true,
+        postOnly: false,
+        closePosition: true,
+        submittedAtUtc: nowIso,
+        updatedAtUtc: nowIso,
+      };
+      this.orders.set(order.id, order);
 
-      this.walletBalance = D(this.walletBalance).add(realized).toNumber();
-      this.totalRealizedPnl = D(this.totalRealizedPnl).add(realized).toNumber();
+      this.executeFill(order, closeQty, market.mark, 'TAKER', nowIso);
+
+      order.status = 'FILLED';
+      order.updatedAtUtc = nowIso;
+      this.emitOrderEvent('ORDER_FILLED', order, { executionPrice: market.mark, reason: 'LIQUIDATION' });
     }
 
     this.recalculateAccount();

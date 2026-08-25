@@ -11,6 +11,7 @@ import type { AgentCycleStepListener, MarketFactContext } from '../../ai/trading
 import type { CycleRecord } from '../../ai/schemas.js';
 import type { AccountState, Instrument, Order, Position } from '../../broker/types.js';
 import { toRiskAccountState, toPortfolioPositions } from '../../trading/risk/adapters.js';
+import { logger } from '../../telemetry/logger.js';
 
 export interface AgentDebatePipeline {
   runCycle(ctx: MarketFactContext, onStep?: AgentCycleStepListener): Promise<CycleRecord>;
@@ -42,6 +43,22 @@ export function tradeSignalToSignalInput(
 
 const STRATEGY_ID = 'smc-agent-v1';
 
+// C-06: tradingAgentsPipeline.runCycle() used to be called unguarded — if
+// Ollama went down mid-cycle or any LLM call threw, the error propagated to
+// StrategyEngine.onCandleClose's generic catch (console.error only, no
+// alerting) and the strategy silently stopped producing signals with zero
+// operational visibility. Now caught locally with structured logging, plus a
+// simple circuit breaker: after MAX_CONSECUTIVE_LLM_FAILURES in a row, the
+// strategy stops calling the pipeline entirely for CIRCUIT_COOLDOWN_MS so a
+// persistently-down LLM doesn't retry (and log) every single candle close.
+const MAX_CONSECUTIVE_LLM_FAILURES = 5;
+const CIRCUIT_COOLDOWN_MS = 5 * 60_000;
+
+interface LlmCircuitState {
+  consecutiveFailures: number;
+  circuitOpenUntil: number;
+}
+
 export interface SmcAgentStrategyDeps {
   setupEngine: SetupEngine;
   structureEngine: MarketStructureEngine;
@@ -58,6 +75,7 @@ export interface SmcAgentStrategyDeps {
 }
 
 export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
+  const llmCircuit: LlmCircuitState = { consecutiveFailures: 0, circuitOpenUntil: 0 };
   return {
     id: STRATEGY_ID,
     name: 'SMC Structure + Multi-Agent Debate',
@@ -66,12 +84,13 @@ export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
     intervals: ['5m'],
     priority: 10,
     cooldownMs: 300_000,
-    onCandleClose: (ctx, candle) => evaluateCandle(deps, ctx, candle.symbol, candle.openTime),
+    onCandleClose: (ctx, candle) => evaluateCandle(deps, llmCircuit, ctx, candle.symbol, candle.openTime),
   };
 }
 
 async function evaluateCandle(
   deps: SmcAgentStrategyDeps,
+  llmCircuit: LlmCircuitState,
   ctx: StrategyContext,
   symbol: string,
   asOf: number
@@ -90,7 +109,30 @@ async function evaluateCandle(
   const marketFacts = buildMarketFacts(ctx, symbol, account);
   if (!marketFacts) return null;
 
-  const cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts, deps.onCycleStep);
+  if (Date.now() < llmCircuit.circuitOpenUntil) {
+    return null;
+  }
+
+  let cycle: CycleRecord;
+  try {
+    cycle = await deps.tradingAgentsPipeline.runCycle(marketFacts, deps.onCycleStep);
+    llmCircuit.consecutiveFailures = 0;
+  } catch (error) {
+    llmCircuit.consecutiveFailures += 1;
+    logger.warn(
+      { symbol, error: error instanceof Error ? error.message : String(error), consecutiveFailures: llmCircuit.consecutiveFailures },
+      '[SmcAgentStrategy] tradingAgentsPipeline.runCycle failed'
+    );
+    if (llmCircuit.consecutiveFailures >= MAX_CONSECUTIVE_LLM_FAILURES) {
+      llmCircuit.circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+      logger.error(
+        { symbol, consecutiveFailures: llmCircuit.consecutiveFailures, cooldownMs: CIRCUIT_COOLDOWN_MS },
+        '[SmcAgentStrategy] LLM pipeline circuit breaker OPEN after repeated failures — pausing agent debate calls'
+      );
+    }
+    return null;
+  }
+
   deps.onCycleCompleted?.(cycle);
 
   const currentPosition = ctx.getPosition(symbol);

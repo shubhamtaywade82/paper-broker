@@ -42,8 +42,16 @@ export class SignalExecutor {
         : market?.ask ?? market?.last ?? market?.mark;
 
     if (entryPrice === undefined || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+      // H-18: this used to `return true` — StrategyEngine.processSignal treats
+      // a truthy return as success and never marks the signal REJECTED or
+      // fires onSignalRejected, so a skipped-for-no-price signal looked
+      // identical to a genuinely executed one (no order, no rejection event,
+      // no metric, ambiguous persisted status). CONTRACTS.md's Signal
+      // Validation Contract requires rejection with an explicit reason, never
+      // a silent drop.
       log.warn(`[Signal] No price for ${signal.symbol}, skipping order`);
-      return true;
+      signals.updateStatus(signal.id, 'REJECTED', undefined, 'NO_MARKET_STATE');
+      return false;
     }
 
     const closeQty =
@@ -55,8 +63,11 @@ export class SignalExecutor {
 
     const quantity = closeQty > 0 ? closeQty : openQty;
     if (quantity <= 0) {
+      // Same fix as the no-price case above — must not report success for a
+      // signal that was never actually submitted to the broker.
       log.warn(`[Signal] Zero quantity for ${signal.symbol} ${signal.action}, skipping`);
-      return true;
+      signals.updateStatus(signal.id, 'REJECTED', undefined, 'ZERO_QUANTITY');
+      return false;
     }
 
     const orderCommand = {

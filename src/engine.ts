@@ -59,8 +59,8 @@ export async function startEngine(): Promise<EngineHandle> {
   const dataDir = env.DB_FILE.replace(/\/[^/]+$/, '');
 
   const db = new DatabaseManager(dataDir);
-  const events = new EventLog(env.EVENT_LOG_FILE);
-  const snapshots = new SnapshotStore(env.SNAPSHOT_DIR);
+  const events = new EventLog(env.EVENT_LOG_FILE, db.raw);
+  const snapshots = new SnapshotStore(env.SNAPSHOT_DIR, db.raw);
 
   const client = new BinanceClient({
     testnet: env.BINANCE_ENV === 'testnet',
@@ -314,6 +314,8 @@ export async function startEngine(): Promise<EngineHandle> {
     wsGateway,
     host: '0.0.0.0',
     port: env.PORT,
+    apiKey: env.API_KEY,
+    armPasscode: env.LIVE_ARM_PASSCODE,
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
       aggressiveMode = enabled;
@@ -397,7 +399,16 @@ export async function startEngine(): Promise<EngineHandle> {
     },
     onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
       broker.onMarket({ symbol, bid, ask, bidQty, askQty, last: (bid + ask) / 2 });
-      strategyEngine.onMarket({ symbol, bid, ask, bidQty, askQty, last: (bid + ask) / 2 } as any);
+      strategyEngine.onMarket({
+        symbol,
+        bid,
+        ask,
+        bidQty,
+        askQty,
+        last: (bid + ask) / 2,
+        localTsUtc: Date.now(),
+        stale: false,
+      });
       throttledBroadcast('book.update', `book:${symbol}`, { symbol, bid, ask, bidQty, askQty });
     },
     onMarkPrice: (symbol, markPrice, indexPrice, fundingRate) => {

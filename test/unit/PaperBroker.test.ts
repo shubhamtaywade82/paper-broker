@@ -551,4 +551,107 @@ describe('PaperBroker', () => {
     expect(broker.getPosition('BTCUSDT')?.totalFees).toBeCloseTo(fees, 10);
     expect(broker.getPosition('BTCUSDT')?.qty).toBeCloseTo(0.2, 10);
   });
+
+  it('H-15: tracks a true intraday peak equity (not day-start) and computes drawdown from it', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100,
+      localTsUtc: Date.now(), stale: false,
+    });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+
+    // Price rallies -> equity rises well above the starting 10000 balance ->
+    // a new peak, tracked independently of the UTC-day boundary.
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 149.9, ask: 150.1, last: 150, mark: 150,
+      localTsUtc: Date.now(), stale: false,
+    });
+    const atPeak = broker.getAccount();
+    expect(atPeak.equity).toBeGreaterThan(10000);
+    expect(atPeak.peakEquity).toBeCloseTo(atPeak.equity, 6);
+    expect(atPeak.drawdown).toBe(0);
+
+    // Price pulls back, but equity is STILL above the day-start balance of
+    // 10000 — under the old (dayStartEquity - equity)/dayStartEquity
+    // calculation this would clamp to 0 despite a real pullback from the peak.
+    broker.onMarket({
+      symbol: 'BTCUSDT', bid: 119.9, ask: 120.1, last: 120, mark: 120,
+      localTsUtc: Date.now(), stale: false,
+    });
+    const afterPullback = broker.getAccount();
+    expect(afterPullback.equity).toBeGreaterThan(10000);
+    expect(afterPullback.equity).toBeLessThan(atPeak.equity);
+    expect(afterPullback.peakEquity).toBeCloseTo(atPeak.peakEquity, 6); // peak persists, not reset
+    expect(afterPullback.drawdown).toBeGreaterThan(0); // real pullback is now captured
+  });
+
+  describe('forced liquidation (C-04)', () => {
+    // Previously, checkLiquidation() closed positions by calling applyPositionFill()
+    // directly — no Fill record, no fee, no ORDER_FILLED event. It now routes
+    // through executeFill() via a synthetic strategyId=LIQUIDATION order, so the
+    // forced close leaves the same audit trail as any other close.
+    it('creates a tagged Fill, charges a fee, updates the order/position event log, and closes the position', () => {
+      const eventLog = {
+        appendOrderEvent: vi.fn(),
+        appendFill: vi.fn(),
+        appendPositionEvent: vi.fn(),
+        appendFundingPayment: vi.fn(),
+      };
+
+      const liqBroker = new PaperBroker({
+        dataDir: '/tmp/paper-broker-test',
+        accountId: 'test-account',
+        startingUsdt: 10000,
+        instruments: [BTC],
+        takerFeeRate: 0.0004,
+        makerFeeRate: 0.0002,
+        risk: { maxLeverage: 20, maxOrderNotional: 50000, maxPositionNotional: 50000 },
+        eventLog,
+      });
+
+      liqBroker.onMarket({
+        symbol: 'BTCUSDT', bid: 99.9, ask: 100.1, last: 100, mark: 100,
+        localTsUtc: Date.now(), stale: false,
+      });
+
+      const open = liqBroker.submitOrder({
+        symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 200, leverage: 20,
+      });
+      expect(open.status).toBe('FILLED');
+      expect(liqBroker.getAccount().liquidations).toBe(0);
+
+      eventLog.appendFill.mockClear();
+      eventLog.appendOrderEvent.mockClear();
+
+      // Crash the mark price hard enough that equity falls well below
+      // maintenanceMargin (0.5% of notional) — this must trip checkLiquidation()
+      // synchronously inside onMarket().
+      liqBroker.onMarket({
+        symbol: 'BTCUSDT', bid: 39.9, ask: 40.1, last: 40, mark: 40,
+        localTsUtc: Date.now(), stale: false,
+      });
+
+      const account = liqBroker.getAccount();
+      expect(account.liquidations).toBe(1);
+
+      const position = liqBroker.getPosition('BTCUSDT');
+      expect(position?.qty).toBe(0);
+      expect(position?.status).toBe('CLOSED');
+
+      // A real Fill record was created and charged a fee (previously: neither).
+      const liqFill = liqBroker.getFills().find((f) => f.price === 40);
+      expect(liqFill).toBeDefined();
+      expect(liqFill?.fee).toBeGreaterThan(0);
+      expect(liqFill?.quantity).toBe(200);
+
+      // The audit trail (EventLog) actually saw the fill and the order event —
+      // this is the part that was silently skipped before the fix.
+      expect(eventLog.appendFill).toHaveBeenCalledWith(
+        expect.objectContaining({ price: 40, quantity: 200 })
+      );
+      expect(eventLog.appendOrderEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'ORDER_FILLED', reason: 'LIQUIDATION' })
+      );
+      expect(liqFill?.orderId).toBeDefined();
+    });
+  });
 });

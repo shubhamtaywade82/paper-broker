@@ -1,5 +1,10 @@
 import type { Strategy } from '../StrategyEngine.js';
 
+// Medium finding: same as mean-reversion-5m.ts — this strategy's emitted
+// signals carry no `features.quantity`, so SignalExecutor rejects every
+// OPEN_LONG/OPEN_SHORT with ZERO_QUANTITY. PROJECT_STATE.md documents this
+// as an intentionally retired/deferred strategy (--engine=indicators only),
+// not a live-path bug to patch here — see the longer note there.
 export interface MomentumStrategyOptions {
   symbols?: string[];
   cooldownMs?: number;

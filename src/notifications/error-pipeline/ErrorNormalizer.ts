@@ -1,4 +1,5 @@
 import { ulid } from 'ulid';
+import { createHash } from 'node:crypto';
 import type {
   ErrorSeverity,
   ErrorClassification,
@@ -39,6 +40,15 @@ export class ErrorNormalizer {
     return { message: String(error) };
   }
 
+  // Medium finding ("heuristic error classification is fragile"): substring
+  // matching on a free-form component name (e.g. "risk", "ws", "stream") can
+  // false-positive on an unrelated component whose name happens to contain
+  // that substring, or miss a genuinely risk-adjacent component that isn't
+  // named that way. Callers that know their own severity can already bypass
+  // this by passing `input.classification` explicitly (see normalize()
+  // below) — this heuristic is only the fallback when they don't. A more
+  // robust fix (an explicit per-component classification registry) is a
+  // larger design change than this pass covers.
   private inferClassification(severity: ErrorSeverity, component: string): ErrorClassification {
     if (severity === 'FATAL') return 'FATAL';
     if (severity === 'CRITICAL' || component.toLowerCase().includes('risk') || component.toLowerCase().includes('reconcil')) {
@@ -56,7 +66,14 @@ export class ErrorNormalizer {
     const classification: ErrorClassification =
       input.classification || this.inferClassification(severity, input.component);
 
-    const dedupeKey = `${input.component}:${input.provider || ''}:${message.slice(0, 50)}`;
+    // Medium finding ("dedup key truncation causes false collision"):
+    // truncating the message to 50 chars meant two genuinely different
+    // errors sharing the same first 50 characters (e.g. differing only in a
+    // URL, symbol, or ID appended at the end) were treated as the same
+    // incident and deduped together. Hash the full message instead — no
+    // length limit, negligible collision risk, still a short, stable key.
+    const messageHash = createHash('sha1').update(message).digest('hex').slice(0, 16);
+    const dedupeKey = `${input.component}:${input.provider || ''}:${messageHash}`;
     const now = Date.now();
     const existing = this.dedupeMap.get(dedupeKey);
 

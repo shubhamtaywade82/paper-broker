@@ -17,9 +17,13 @@ import type {
   TradeTrace,
 } from './types.js';
 
+// H-12: taker fee here used to default to 5bps while PaperBroker.ts (the live
+// paper-trading path) defaults to 4bps (real Binance USDM Futures VIP0 taker
+// rate) — the same fee schedule applied twice, inconsistently, made backtest
+// results not directly comparable to live paper trading. Aligned to 4bps.
 export const DEFAULT_PAPER_CONFIG: PaperBrokerConfig = {
   makerFeeRate: 0.0002,
-  takerFeeRate: 0.0005,
+  takerFeeRate: 0.0004,
   slippageModel: 'NONE',
   ambiguousIntrabarPolicy: 'REJECT_AMBIGUOUS',
   breakevenEnabled: true,

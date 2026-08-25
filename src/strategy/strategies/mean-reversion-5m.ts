@@ -1,5 +1,15 @@
 import type { Strategy } from '../StrategyEngine.js';
 
+// Medium finding: this strategy's emitted signals carry no `features.quantity`,
+// so SignalExecutor (which sizes/risk-gates upstream, not per-strategy — see
+// PROJECT_STATE.md) rejects every OPEN_LONG/OPEN_SHORT it produces with
+// ZERO_QUANTITY (H-18 made this an explicit rejection instead of a silent
+// no-op). This is not an oversight to patch here: PROJECT_STATE.md's
+// "Deferred" section documents this strategy as retired pending a future
+// sizing/risk-gate unification, reachable only via cli.ts's --engine=indicators
+// flag, not a working alternative to the live --engine=smc path. Adding
+// ad-hoc sizing directly in this file would bypass that documented
+// architecture rather than complete it.
 export interface MeanReversionStrategyOptions {
   lookbackPeriods?: number;
   symbols?: string[];

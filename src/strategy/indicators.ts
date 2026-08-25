@@ -184,6 +184,26 @@ export function macd(closes: number[], fastPeriod = 12, slowPeriod = 26, signalP
   const signalLine = ema(macdLine, signalPeriod);
   const histogram: number[] = macdLine.map((val, i) => val - (signalLine[i] ?? 0));
 
+  // H-19: ema() seeds its first output directly from the raw input value
+  // (rather than an SMA-based warm-up) and never returns NaN, so macd/
+  // signal/histogram "exist" from index 0 — but those early values are
+  // dominated by that seed, not a genuine fastPeriod/slowPeriod/signalPeriod
+  // average, and are misleading if read directly (e.g. by a strategy acting
+  // on the histogram on a symbol's first ~34 candles). Mask them with NaN,
+  // matching how other indicators in this file (e.g. adx()) already signal
+  // "not enough data yet" — macdLine needs slowPeriod bars (the slower of
+  // the two EMAs) to stop reflecting the seed; signal/histogram need
+  // signalPeriod MORE bars of (by-then-valid) macdLine on top of that.
+  const macdWarmup = Math.min(Math.max(0, slowPeriod - 1), macdLine.length);
+  for (let i = 0; i < macdWarmup; i++) {
+    macdLine[i] = NaN;
+  }
+  const signalWarmup = Math.min(Math.max(0, slowPeriod - 1 + signalPeriod - 1), signalLine.length);
+  for (let i = 0; i < signalWarmup; i++) {
+    signalLine[i] = NaN;
+    histogram[i] = NaN;
+  }
+
   return { macd: macdLine, signal: signalLine, histogram };
 }
 
@@ -260,7 +280,15 @@ export function supertrend(candles: Candle[], atrPeriod = 10, multiplier = 3): S
   const atrValues = atr(candles, atrPeriod);
   const len = candles.length;
   const st: number[] = candles.map(() => NaN);
-  const dir: number[] = candles.map(() => 1);
+  // H-20: was previously `() => 1` — the only one of these four arrays not
+  // defaulting to NaN for the not-yet-computed warm-up region. A caller
+  // deriving a trend-crossover signal by comparing consecutive `direction`
+  // entries near the warm-up boundary could compare a genuinely computed
+  // direction against this placeholder "uptrend" default and see a false
+  // crossover purely from the array initialization, not a real trend flip
+  // (see the identical, actually-live-reachable bug fixed in
+  // adaptive-supertrend/calculator.ts's isCrossover computation).
+  const dir: number[] = candles.map(() => NaN);
   const upperBand: number[] = candles.map(() => NaN);
   const lowerBand: number[] = candles.map(() => NaN);
 

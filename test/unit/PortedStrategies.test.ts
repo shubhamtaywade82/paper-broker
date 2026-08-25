@@ -159,6 +159,26 @@ describe('ported strategies', () => {
     expect(directOrders.every((o) => (o as { type: string }).type === 'LIMIT')).toBe(true);
   });
 
+  it('C-09: stops placing ladder orders once the max grid notional cap is reached', async () => {
+    const { engine, directOrders } = setup();
+    // equity is 10000 in setup()'s account mock; maxEquityFraction: 1 makes
+    // the absolute maxTotalGridNotional cap (150) the binding constraint —
+    // each order is ~50 notional (baseQty 0.5 @ ~mid 100), so only 3 of the
+    // 10 ladder levels should fit before the cap stops further placement.
+    engine.register(createGridStrategy({
+      symbols: ['SOLUSDT'],
+      maxTotalGridNotional: 150,
+      maxEquityFraction: 1,
+    }));
+    await engine.start();
+
+    const gridCandle = { ...candle, interval: '15m' };
+    await engine.onCandleClose(gridCandle);
+
+    expect(directOrders.length).toBe(3);
+    expect(directOrders.length).toBeLessThan(10);
+  });
+
   it('mean reversion signals long below lower band', async () => {
     const { engine, submitted, setMarket } = setup();
     engine.register(createMeanReversionStrategy({ symbol: 'SOLUSDT', symbols: ['SOLUSDT'] }));

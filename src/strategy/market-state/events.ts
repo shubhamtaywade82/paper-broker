@@ -1,6 +1,6 @@
 import { ulid } from 'ulid';
 import type { Candle } from '../indicators.js';
-import type { CandleClosedPayload, IntentPayload, MarketStateSnapshot, PositionLifecyclePayload, PositionLifecycleState, SetupLifecyclePayload, TradeSetup, TradingEvent, TradingEventType } from './types.js';
+import type { CandleClosedPayload, IntentPayload, MarketStateSnapshot, PositionAction, PositionLifecyclePayload, PositionLifecycleState, SetupLifecyclePayload, TradeSetup, TradingEvent, TradingEventType } from './types.js';
 
 export type TradingEventHandler = (event: TradingEvent) => void | Promise<void>;
 
@@ -26,9 +26,25 @@ export class TradingEventBus {
     return () => this.allHandlers.delete(handler);
   }
 
+  // C-07: previously awaited each handler sequentially in a for-loop, so a
+  // slow handler (e.g. an LLM-backed subscriber via subscribeAll) blocked
+  // every handler registered after it for this event, and a throwing handler
+  // aborted the remaining handlers entirely (no isolation). Handlers now run
+  // concurrently and are isolated from each other's failures/latency via
+  // Promise.allSettled; publish() still resolves only once all handlers have
+  // settled, preserving "await publish() to know this event was fully
+  // dispatched" for callers like EventDrivenMarketStateEngine.
   async publish(event: TradingEvent): Promise<void> {
     const handlers = [...(this.handlers.get(event.type) ?? []), ...this.allHandlers];
-    for (const handler of handlers) await handler(event);
+    // Wrapped in an async IIFE so a handler that throws synchronously (not
+    // just one that returns a rejected promise) is also isolated by
+    // allSettled rather than escaping the .map() call and aborting publish().
+    const results = await Promise.allSettled(handlers.map((handler) => (async () => handler(event))()));
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error(`[TradingEventBus] handler failed for event ${event.type}:`, result.reason);
+      }
+    }
   }
 }
 
@@ -145,7 +161,22 @@ export class PositionStateMachine {
     else if (intent.action === 'REVERSE' && (previous === 'LONG' || previous === 'SHORT')) current = 'EXIT_PENDING';
     else return null;
     this.states.set(intent.symbol, current);
-    const event = this.bus.create('POSITION_OPENED', intent.symbol, this.source, { previous, current, action: intent.action, reason: String(intent.reason) });
+    // Medium finding: this used to hardcode 'POSITION_OPENED' regardless of
+    // `intent.action` — a REDUCE or CLOSE intent (transitioning toward
+    // EXIT_PENDING) was published as if it were an entry. applyIntent
+    // represents intent BEFORE fill confirmation, so it emits the *_INTENT
+    // event types (matching the ones EventDrivenMarketStateEngine already
+    // uses for the same concept elsewhere in this file); applyFill below is
+    // the one that correctly emits the fill-confirmed POSITION_* types.
+    const intentEventType: Record<Exclude<PositionAction, 'HOLD'>, TradingEventType> = {
+      OPEN: 'ENTRY_INTENT',
+      ADD: 'ADD_INTENT',
+      REDUCE: 'REDUCE_INTENT',
+      CLOSE: 'EXIT_INTENT',
+      REVERSE: 'REVERSE_INTENT',
+    };
+    const eventType = intentEventType[intent.action as Exclude<PositionAction, 'HOLD'>];
+    const event = this.bus.create(eventType, intent.symbol, this.source, { previous, current, action: intent.action, reason: String(intent.reason) });
     await this.bus.publish(event);
     return event;
   }
