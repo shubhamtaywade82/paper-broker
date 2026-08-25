@@ -93,13 +93,23 @@ The LLM may NOT:
 
 ---
 
-## 6. Live Execution Contract (Future)
+## 6. Live Execution Contract
 
 **Live mode requires explicit arm state.**
 
 `TRADING_MODE=live` selects the live profile but does NOT automatically enable live order submission.
 
-A separate armed state (e.g., `LIVE_ARMED=true` or explicit guard) is required before any order reaches a real exchange.
+`LIVE_TRADING_ARMED=true` is required before any order reaches a real exchange,
+and is enforced by `LiveTradingGuard` inside `ExecutionRouter`.
+
+**Live execution is never simulated.**
+
+If the profile demands real orders but no usable live adapter is available —
+no adapter registered, or missing `COINDCX_API_KEY`/`COINDCX_API_SECRET` — the
+router MUST reject the order with `NO_LIVE_EXECUTION_ADAPTER`. It MUST NOT fall
+through to the paper broker. A simulated fill reported as live execution would
+make every downstream number (PnL, equity, risk state) fiction presented as
+real, which is worse than refusing to trade.
 
 Reconciliation with exchange state is mandatory after:
 - Startup
@@ -270,6 +280,47 @@ If an order submission or cancellation times out or returns an indeterminate sta
 2. Stop new order submissions on affected symbols.
 3. Query the exchange and reconcile positions and open orders.
 4. Resume execution only after exchange state is authoritatively confirmed.
+
+---
+
+## 18. Execution Routing Contract
+
+**Every order submission goes through `ExecutionRouter`.**
+
+No component may hold a direct reference to a concrete broker for the purpose
+of submitting orders. `SignalExecutor` and any future order-submitting
+component accept `ExecutionBroker`, and `engine.ts` supplies the router.
+
+Read paths (positions, account, instruments) may address the paper broker
+directly — it owns the simulated ledger — but writes must not.
+
+---
+
+## 19. Observer Isolation Contract
+
+**Observers must never break execution.**
+
+`PaperBrokerConfig.onFill` and equivalent hooks are notification channels for
+non-authoritative consumers (profit goals, performance tracking, telemetry). A
+throwing observer MUST NOT abort the fill path after the ledger has been
+updated. The broker isolates the call and records the failure.
+
+Observers MUST NOT mutate broker state.
+
+---
+
+## 20. Performance Feedback Contract
+
+**Quarantine is automatic; release is not.**
+
+`StrategyPerformanceTracker` may stop a strategy from trading when it breaches
+its configured drawdown or win-rate limits. It MUST NOT re-enable a strategy on
+its own: a strategy that "recovers" after being shut off has not demonstrated
+anything, because it stopped trading. Release is an operator action
+(`POST /api/v1/strategies/:id/release`) and is recorded.
+
+Quarantine state MUST survive a restart, or bouncing the process would silently
+re-enable a strategy that was shut off for losing money.
 
 ---
 

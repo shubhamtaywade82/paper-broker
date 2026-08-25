@@ -1,5 +1,24 @@
 # Implementation Guide: Profit-Aware Trading System
 
+> **Status: implemented as of 2026-08-25.** This guide was written as a
+> forward-looking integration plan. The integration it describes is now done —
+> `engine.ts` constructs `ProfitGoalManager`, injects it into
+> `TradeIntentEngine` → `RiskEngine`, feeds it realized PnL through the broker's
+> `onFill` hook, persists it via `ProfitGoalStore`, and resets its windows in
+> `Scheduler`. `TrailingStopController` applies trailing stops to real broker
+> orders.
+>
+> The snippets below are kept as design rationale. **They do not match the
+> shipped code** — in particular the engine is a function (`startEngine()`), not
+> a `TradingEngine` class, and everything is opt-in behind
+> `PROFIT_GOALS_ENABLED` / `TRAILING_STOPS_ENABLED`.
+>
+> For current wiring read `src/engine.ts`; for configuration read
+> `docs/configuration.md`.
+
+---
+
+
 ## Overview
 
 This guide provides step-by-step instructions for integrating the new profit-aware features into your crypto futures trading system. These features transform the system from "always trading" to "trading for specific financial goals."

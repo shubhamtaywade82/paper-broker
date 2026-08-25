@@ -2,7 +2,7 @@
 
 Strategies run on candle close. Each emits a typed signal (`OPEN_LONG` / `OPEN_SHORT` / `CLOSE_LONG` / `CLOSE_SHORT` / `HOLD` / `CANCEL_ALL`) with optional confidence; the `StrategyEngine` validates and de-duplicates it (cooldown, confidence threshold, TTL), and the `SignalExecutor` converts it into orders:
 
-- **OPEN signals** — sized by `SizingEngine`: risk-per-trade (0.5% of equity) ÷ stop distance, capped by max notional (5000 USDT). If the signal carries a stop-loss price, a `STOP_MARKET` bracket is attached.
+- **OPEN signals** — arrive **pre-sized**. `TradeIntentEngine`/`RiskEngine` compute quantity and leverage upstream and place them on `signal.features`; `SignalExecutor` no longer sizes anything itself. If the signal carries a stop-loss price, a `STOP_MARKET` bracket is attached.
 - **CLOSE signals** — reduce-only market order at current position size.
 - **HOLD / CANCEL_ALL** — no-op / cancel outstanding orders.
 
@@ -13,6 +13,33 @@ onCandleClose(ctx: StrategyContext, candle: Candle): Signal | null
 ```
 
 `StrategyContext` provides `getCandles(symbol, interval, limit)`, `getMarket(symbol)` and `submitOrder(command)` (used by the grid strategy for direct ladder placement).
+
+## Which strategies actually run
+
+Only two strategies are registered by `engine.ts` and produce trades:
+
+| Strategy | Type | Notes |
+|----------|------|-------|
+| `smc-agent-v1` | SMC structure + LLM confirmation | The deterministic SMC engine produces a candidate; the agent debate can only confirm or veto it. |
+| adaptive Supertrend | Q-learning parameter selection | Learns which ATR/factor set suits which market regime from realized outcomes. No LLM. |
+
+The classic indicator strategies documented below remain on disk and are
+reachable via `cli.ts --engine=indicators`, but they produce **zero trades**:
+they emit unsized signals, and `SignalExecutor` rejects a signal that carries no
+quantity. Treat the sections below as reference for a retired path.
+
+## Performance feedback
+
+When `STRATEGY_FEEDBACK_ENABLED=true`, `StrategyPerformanceTracker` watches
+realized PnL, win rate and peak-to-trough drawdown per strategy. A strategy that
+breaches `STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT` or falls below
+`STRATEGY_FEEDBACK_MIN_WIN_RATE` (after `STRATEGY_FEEDBACK_MIN_TRADES`) is
+**quarantined**: `StrategyEngine` stops routing candles and ticks to it.
+
+Quarantine persists across restarts. Lifting one is an operator action via
+`POST /api/v1/strategies/:id/release` — the system never re-enables a strategy
+on its own, because a strategy that "recovers" while shut off has not
+demonstrated anything.
 
 ---
 

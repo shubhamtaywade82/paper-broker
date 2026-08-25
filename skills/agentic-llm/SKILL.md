@@ -7,13 +7,27 @@ description: Use Ollama as a constrained reasoning/orchestration agent.
 
 ## Current State
 
-**LLM integration is partial.**
+**A multi-agent pipeline is implemented; tool orchestration is not.**
 
-The `OllamaSignalGenerator` produces simple BUY/SELL/HOLD signals but does not use:
-- Tool-calling agent loop
-- MCP orchestration
-- Skill selection
-- Structured evidence output
+`TradingAgentsPipeline` (`src/ai/tradingAgents.ts`) runs a seven-stage cycle over
+`@nemesis-oss/ollama-sdk`, with a local daemon plus an optional cloud key pool
+and failover. `OllamaSignalGenerator` and the `ollama-trend-5m` strategy no
+longer exist — do not reference them.
+
+| Stage | Engine |
+|-------|--------|
+| `analyst_team` | LLM |
+| `debate_bull` / `debate_bear` | LLM |
+| `debate_verdict` | LLM |
+| `trader_decision` | LLM |
+| `risk_team` | **deterministic** |
+| `fund_manager` | **deterministic** |
+
+Every `AgentCycleStep` carries `engine: 'llm' | 'deterministic'`. Never present a
+deterministic stage as model output.
+
+Still missing: tool-calling agent loop, MCP orchestration, skill selection, and
+any memory across cycles. Every cycle starts cold.
 
 See KNOWN_LIMITATIONS.md for details.
 
@@ -101,11 +115,18 @@ interface LLMSignal {
 Current integration:
 
 ```
-src/ai/ollama-signal-generator.ts
-  → generateSignal(marketData, context)
-  → returns { action: 'BUY'|'SELL'|'HOLD', reason: string }
-  → consumed by ollama-trend-5m strategy
+src/market/setup/SetupEngine    → deterministic SMC candidate
+  → TradingAgentsPipeline.runCycle(ctx)
+      analyst → debate → verdict → trader   (LLM)
+      → risk team → fund manager            (deterministic policy)
+  → smc-agent.ts: DISCARD unless agentDirection === candidate.direction
+  → TradeIntentEngine → RiskEngine → SignalExecutor → ExecutionRouter
 ```
+
+**The pipeline's authority is a veto, not a decision.** The SMC engine produces
+the candidate; the agents can only confirm or kill it. The LLM cannot originate
+a trade, choose a symbol, set a stop, or size a position. If no model is
+reachable, the debate resolves to `NEUTRAL` and no SMC trades occur.
 
 Future integration:
 
@@ -134,11 +155,14 @@ Strategies to prevent hallucination:
 
 | Component | File | Status |
 |-----------|------|--------|
-| OllamaSignalGenerator | `src/ai/ollama-signal-generator.ts` | ✅ Implemented |
-| Ollama Trend Strategy | `src/strategy/strategies/ollama-trend.ts` | ✅ Implemented |
-| Agent Loop | (not yet created) | ❌ Planned |
-| MCP Integration | (not yet created) | ❌ Planned |
-| Tool Framework | (not yet created) | ❌ Planned |
+| TradingAgentsPipeline | `src/ai/tradingAgents.ts` | ✅ Implemented |
+| Structured output schemas | `src/ai/schemas.ts` | ✅ Implemented |
+| SMC agent strategy | `src/strategy/strategies/smc-agent.ts` | ✅ Implemented |
+| Deterministic risk policy | `src/ai/tradingAgents.ts` (`AgentRiskPolicy`) | ✅ Implemented |
+| Circuit breaker around the pipeline | `src/strategy/strategies/smc-agent.ts` | ✅ Implemented (5 failures) |
+| Agent memory across cycles | (not created) | ❌ Not implemented |
+| MCP Integration | (not created) | ❌ Not implemented |
+| Tool Framework | (not created) | ❌ Not implemented |
 
 ## Testing Requirements
 

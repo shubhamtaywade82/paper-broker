@@ -1,3 +1,12 @@
+> **Status: research transcript, not a specification.**
+>
+> This file is a captured design conversation, kept for provenance. It does
+> **not** describe current behaviour and is not maintained against the code.
+> For what the system actually does today see `PROJECT_STATE.md`,
+> `KNOWN_LIMITATIONS.md`, and the source.
+
+---
+
 I have received the paper **"TradingAgents: Multi-Agents LLM Financial Trading Framework"** and the link to its official GitHub repository.
 
 Based on the provided document, **TradingAgents** is a novel multi-agent LLM framework designed to simulate the organizational structure and collaborative dynamics of a real-world trading firm. It addresses the limitations of single-agent systems and unstructured communication by employing specialized, role-based agents—including Fundamental, Sentiment, News, and Technical Analysts, as well as Bull/Bear Researchers, Traders, and a Risk Management Team—that interact through structured communication protocols and natural language debates to make highly explainable trading decisions.

@@ -91,13 +91,27 @@ COINDCX_EXECUTION_ENABLED=true
 
 | Capability | Paper | Shadow | Live |
 |------------|-------|--------|------|
-| Market data | ✅ Real | ✅ Real | ✅ Real |
-| Order submission | ❌ Simulated | ❌ Simulated | ✅ Real |
-| Position query | Local only | Exchange read | Exchange authoritative |
-| Balance query | Local only | Exchange read | Exchange authoritative |
-| Reconciliation | N/A | Periodic | Mandatory |
-| Arm state required | No | No | Yes |
+| Market data | ✅ Real (Binance) | ✅ Real | ✅ Real |
+| Order submission | Simulated (`PaperBroker`) | Simulated (`PaperBroker`) | Real (`CoinDCXBroker`) |
+| Position query | Local only | Local, `accountReadOnly` | Exchange authoritative |
+| Balance query | Local only | Local, `accountReadOnly` | Exchange authoritative |
+| Reconciliation | N/A | Flagged on, **not implemented** | Flagged on, **not implemented** |
+| Arm state required | No | No | Yes (`LIVE_TRADING_ARMED=true`) |
+| Credentials required | No | No | Yes (`COINDCX_API_KEY`/`_SECRET`) |
 | Event persistence | ✅ Yes | ✅ Yes | ✅ Yes |
+
+### As-built notes
+
+- Every mode routes through `ExecutionRouter`, constructed in `engine.ts`.
+- Shadow still executes against `PaperBroker`; `accountReadOnly` and
+  `reconciliationEnabled` are set on the profile but no reconciliation loop
+  exists yet (see KNOWN_LIMITATIONS.md).
+- **An armed live profile with no usable adapter rejects orders** with
+  `NO_LIVE_EXECUTION_ADAPTER`. It must never fall back to a paper fill: a
+  simulated fill reported as live execution makes every downstream number
+  fiction presented as real.
+- The live path has never been validated against a real CoinDCX account in this
+  repository.
 
 ## Implementation Requirements
 

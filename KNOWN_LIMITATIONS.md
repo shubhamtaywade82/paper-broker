@@ -9,14 +9,17 @@ This file records confirmed limitations of the current implementation.
 
 ## Execution & Trading Modes
 
-### ✅ Paper, Shadow & Live Routing Implemented
+### ✅ Paper, Shadow & Live Routing Implemented and Wired
 - `TRADING_MODE=paper|shadow|live` resolution implemented via `resolveRuntimeProfile`.
 - `CoinDCXBroker` implements `ExecutionBroker` using `@nemesis-oss/coindcx-sdk`.
-- `ExecutionRouter` routes between simulation and live venue with `LiveTradingGuard` arming validation (`LIVE_TRADING_ARMED=true`).
+- `ExecutionRouter` is constructed in `engine.ts` and sits on every order submission, applying the profile and `LiveTradingGuard` (`LIVE_TRADING_ARMED=true`).
+- An armed live profile with missing `COINDCX_API_KEY`/`COINDCX_API_SECRET` rejects orders with `NO_LIVE_EXECUTION_ADAPTER`; it never falls back to simulated fills while reporting live execution.
+- **Caveat:** the live path has never been validated against a real CoinDCX account in this repository. Treat it as implemented but unproven.
 
-### ✅ Provider Failover & Divergence Guard Implemented
-- `MarketDataSupervisor`, `ProviderHealthManager`, and `DivergenceGuard` implemented.
-- Automatic failover from Binance to CoinDCX occurs only when fallback is healthy and price divergence is within threshold (default 50 bps).
+### ⚠️ Provider Failover & Divergence Guard Implemented But NOT Wired
+- `MarketDataSupervisor`, `ProviderHealthManager`, and `DivergenceGuard` exist under `src/market/` with unit tests.
+- **`engine.ts` does not construct any of them.** The running engine consumes the Binance stream directly via `BinanceStreamHandler`, so no automatic failover, no divergence check, and no provider health tracking happens at runtime.
+- Do not describe failover as active. Work required: construct the supervisor in `engine.ts` and route `BinanceStreamHandler` through it.
 
 ### ❌ Exchange Position Reconciliation (Live Mode Ongoing Reconnects)
 - Startup and periodic reconciliation with exchange balance/positions for automated multi-day recovery is planned.
@@ -45,24 +48,49 @@ Work required:
 - Skill system integration
 - Structured output schema
 
-### ❌ Full Risk Engine Not Implemented
+### ✅ Risk Engine Implemented
 
-Risk validation is partial.
+`RiskEngine` (`src/trading/risk/RiskEngine.ts`) validates every signal before an
+order is built, via `TradeIntentEngine`.
 
-Current status:
-- Basic sizing exists in SignalExecutor
-- No daily loss limits
-- No exposure caps
-- No cooldown enforcement beyond strategy-level
-- No kill switch
+Implemented:
+- Daily loss limit (`DAILY_LOSS_LIMIT_REACHED`)
+- Max open positions and per-symbol caps (`MAX_OPEN_POSITIONS_REACHED`)
+- Account-wide risk cap (`MAX_ACCOUNT_RISK_EXCEEDED`)
+- Cooldown enforcement (`COOLDOWN_ACTIVE`)
+- Duplicate-signal rejection
+- Position sizing via `PositionSizer` with instrument step/tick rounding
+- Profit-goal trading halt (`PROFIT_GOAL_TRADING_HALTED`) and position-size risk multiplier
+- Kill switch via `POST /api/v1/kill_switch` (cancels open orders, broadcasts `kill_switch.activated`)
 
-Work required:
-- RiskEngine component
-- Daily/weekly/monthly loss tracking
-- Position exposure limits
-- Symbol exposure limits
-- Kill switch mechanism
-- Integration before SignalExecutor → Broker
+Still missing:
+- Weekly/monthly loss tracking (profit goals track weekly/monthly *gains*, not loss limits)
+- Correlated-exposure limits across symbols (each symbol is capped independently)
+
+### ✅ Per-Strategy Performance Feedback Implemented
+
+`StrategyPerformanceTracker` maintains realized PnL, win rate, and
+peak-to-trough drawdown per strategy from broker fills, and quarantines a
+strategy that breaches its thresholds — `StrategyEngine` then stops routing
+candles and ticks to it. State persists to `data/strategy_performance.json`.
+
+- Off by default; `STRATEGY_FEEDBACK_ENABLED=true` opts in. Otherwise the
+  tracker observes without acting.
+- Releasing a quarantine is an operator action
+  (`POST /api/v1/strategies/:id/release`), never automatic.
+- Not implemented: continuous capital weighting between strategies. The gate is
+  binary (trading / quarantined), not an allocator.
+
+### ✅ Profit Goals and Trailing Stops Implemented
+
+- `ProfitGoalManager` is constructed in `engine.ts`, injected into
+  `TradeIntentEngine` → `RiskEngine`, fed realized PnL by the broker's `onFill`
+  hook, persisted to `data/profit_goals.json`, and reset on calendar boundaries
+  by `Scheduler`. Off by default (`PROFIT_GOALS_ENABLED`).
+- `TrailingStopController` performs real cancel-and-replace on resting
+  reduce-only `STOP_MARKET` orders. Off by default (`TRAILING_STOPS_ENABLED`).
+- Not implemented: trailing stops are driven from the aggTrade price stream
+  only, so a symbol with no trade prints does not trail.
 
 ---
 
@@ -164,12 +192,11 @@ architecture change):
   map from one query, then does the entries computation in JS rather than
   a single joined query — works correctly today, but doesn't scale past the
   1000-row `FILL_CREATED` fetch it's already capped at.
-- **Hardcoded risk parameters in `/api/v1/risk`** (`maxOpenPositions: 3`,
-  `maxLeverage: 10`, `dailyLossLimitPct: 5.0`, etc.): these are display-only
-  values in the API response, not read from `RiskLimits`
-  (`PaperBroker`'s actual configured risk config) — the dashboard could show
-  numbers that don't match what the broker will actually enforce if
-  `PaperBrokerConfig.risk` is ever overridden from its defaults.
+- ~~**Hardcoded risk parameters in `/api/v1/risk`**~~ — **RESOLVED 2026-08-25.** The
+  endpoint now reports the `RiskConfig` actually in force (passed from
+  `engine.ts`), plus real `safeMode` from `LiveTradingGuard`, live profit-goal
+  state, and the list of quarantined strategies.
+
 - **Silent error swallowing on external Binance proxy calls**
   (`/api/v1/orderbook`, `/api/v1/trades`, `/api/v1/tickers`): `catch { ... }`
   blocks with no logging fall back to market-state data or an empty array.
@@ -257,52 +284,39 @@ architecture change):
 
 ## Dashboard & Control
 
-### ❌ Dashboard Frontend Not Implemented
+### ✅ Dashboard Frontend Implemented
 
-No React/web dashboard exists.
+A React application exists under `dashboard/` (Vite, Zustand stores, its own
+vitest suite, nginx config, Docker build). It consumes the REST API and the
+WebSocket gateway.
 
-Current status:
-- REST API backend implemented (`src/api/server.ts`)
-- No frontend UI
-- Monitoring via API responses only
+Still missing:
+- The dashboard does not yet surface the newer endpoints
+  (`/api/v1/profit-goals`, `/api/v1/strategies/performance`) or the
+  `profit.goal` / `strategy.performance` / `trailing.stop` WebSocket events.
+- `AgentCycleStep` now carries `engine: 'llm' | 'deterministic'`; the agent view
+  does not yet use it to distinguish model output from deterministic policy.
 
-Work required:
-- React application
-- Real-time WebSocket updates
-- Position/order visualization
-- P&L charts
-- Control panel (with auth)
+### ⚠️ API Authentication Partially Implemented
 
-### ❌ API Authentication Not Implemented
+`API_KEY` guards control endpoints via the `requireApiKey` preHandler:
+order submission/cancel, kill switch, mode arm/disarm, aggressive mode,
+backtest run, and strategy quarantine release.
 
-The REST API has no authentication.
+Still missing:
+- Read endpoints are unauthenticated even when `API_KEY` is set.
+- When `API_KEY` is unset, control endpoints are open — localhost-only is assumed.
+- No role-based authorization, no rate limiting, no per-command audit log.
 
-Current status:
-- All endpoints accessible without credentials
-- Assumes localhost-only deployment
+### ✅ Telegram Notifications Implemented
 
-Work required:
-- API key authentication
-- Role-based authorization
-- Rate limiting
-- Audit logging for commands
+`TelegramNotifier` sends startup, incident, and trade notifications, with
+`TelegramLimiter` rate limiting, HTML escaping, and bot-token redaction in logs.
+`ErrorNormalizer` assigns incident IDs (`INC-...`).
 
-### ❌ Telegram Notifications Not Implemented
-
-No notification subsystem exists.
-
-Current status:
-- Logging via Pino
-- No Telegram integration
-- No email integration
-- No alert routing
-
-Work required:
-- NotificationService abstraction
-- Telegram provider implementation
-- Severity-based routing
-- Deduplication logic
-- Incident correlation IDs
+Still missing:
+- No webhook sink beyond Telegram.
+- `TELEGRAM_MIN_LEVEL` is parsed from env but not used to filter sends.
 
 ---
 
@@ -475,9 +489,15 @@ When you complete work that addresses a limitation:
 | 2026-08-24 | Dead code: `signalAdapter.ts`, `agentRuntime.ts` | Removed (zero production importers confirmed) |
 | 2026-08-24 | Several Medium findings (funding double-apply, wrong `applyIntent` event type, VOLATILITY slippage silently zero, ErrorNormalizer dedup collisions, Telegram HTML injection, missing `orders.signal_id` index, cli.ts shutdown/--help, Metrics HELP annotations) | See git history on `claude/paper-broker-code-review-wp6pkg` |
 | 2026-08-24 | Remaining Medium findings (API layer design debt, WebSocket backpressure/subscriptions, TEXT-column range queries, in-memory metrics/incident persistence, api.md coverage, PaperBroker/StructureClassifier performance characteristics, PaperLiquidation formula simplification, SmcPaperBroker decimal.js migration) | Investigated and documented above (not fixed — each requires its own larger, separately-scoped change) rather than left unrecorded |
+| 2026-08-25 | `ProfitGoalManager`/`TrailingStopManager` existed but were unreachable — `engine.ts` called `new TradeIntentEngine()` with no arguments | Constructed in `engine.ts`, injected into `RiskEngine`, fed by a new `PaperBroker.onFill` hook, persisted via `ProfitGoalStore`, reset on calendar boundaries by `Scheduler`. New `TrailingStopController` performs real cancel-and-replace on resting stop orders |
+| 2026-08-25 | `ExecutionRouter` was imported only by its own test; the engine talked to `PaperBroker` directly regardless of `TRADING_MODE` | Router constructed in `engine.ts` and placed on every order submission; `SignalExecutor` widened to `ExecutionBroker`; `CoinDCXBroker` wired as the live adapter behind the arm gate |
+| 2026-08-25 | `ExecutionRouter` silently fell back to paper fills when the profile demanded real orders but no adapter was registered — simulated fills reported as live execution | Rejects with `NO_LIVE_EXECUTION_ADAPTER` instead |
+| 2026-08-25 | `StrategyEngine` had no performance feedback; strategies ran always-on regardless of PnL | `StrategyPerformanceTracker` + quarantine gate, persisted across restarts, operator-released |
+| 2026-08-25 | Agent risk team evaluated 2 of 3 declared personas and its only rule was `leverage > 5`; the fund manager rubber-stamped on confidence alone | Complete deterministic policy across SAFE/NEUTRAL/RISKY with real ceilings, stop validation, free-margin limits, and every `RiskOpinionSchema` verdict reachable. Kept deterministic per CONTRACTS.md §5 — not converted to LLM calls |
+| 2026-08-25 | All seven agent stages were presented identically as "agents" despite two being hardcoded policy | `AgentCycleStep` now carries `engine: 'llm' \| 'deterministic'` |
 
 ---
 
-**Last Updated**: 2026-08-24
+**Last Updated**: 2026-08-25
 
 **Agent Reminder**: If you discover a capability claimed in documentation that doesn't match implementation, add it here before proceeding.

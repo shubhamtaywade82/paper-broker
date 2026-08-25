@@ -53,13 +53,20 @@
 
 ## 🟢 Low Priority (nice-to-have)
 
-### TODO-5: Strategy performance dashboard
+### TODO-5: Strategy performance dashboard ⚠️ PARTIAL
+**Done (2026-08-25):** per-strategy PnL, win rate and drawdown are tracked by
+`StrategyPerformanceTracker` from broker fills and exposed at
+`GET /api/v1/strategies/performance`, with quarantine on breach.
+**Remaining:** equity curve visualisation and the dashboard UI surface.
 - Equity curve from `account_snapshots` + `fills` + `events`.
 - Per-strategy PnL attribution (join `signals` → `orders` → `fills` → `strategies`).
 - Web UI (Fastify + static) or TUI (Ratatui/TTY).
 
-### TODO-6: Alerting
-- Telegram/webhook on: fills, signal acceptance/rejection, kill-switch, daily PnL summary.
+### TODO-6: Alerting ⚠️ PARTIAL
+**Done:** `TelegramNotifier` with rate limiting, HTML escaping and token
+redaction; `ErrorNormalizer` incident IDs.
+**Remaining:** webhook sink; `TELEGRAM_MIN_LEVEL` is parsed from env but not
+used to filter sends.
 
 ### TODO-7: Long-run 24/7 testnet data collection
 - Deploy via Docker, run weeks on testnet.
@@ -75,5 +82,8 @@
 
 - **Zombie `node dist/boot.js` (PID 357486)** — leftover from pre-consolidation; non-root-owned, port-free, harmless.
 - **Funding cycle** — 8h schedule, `nextFundingTimeUtc` in future; not yet fired in test runs. Verify when it triggers.
-- **Ollama strategy** — auto-registers only when `OllamaSignalGenerator.ping()` succeeds (model loaded in Ollama).
-- **`paper-exchange.md`** — 8k-line original design spec, kept for reference.
+- **Agent pipeline** — always registered. If no Ollama endpoint is reachable the
+  debate resolves to `NEUTRAL` and the SMC strategy simply produces no trades;
+  `OllamaSignalGenerator` no longer exists.
+- **`paper-exchange.md`** — research transcript, kept for reference. See the
+  banner at the top of the file.

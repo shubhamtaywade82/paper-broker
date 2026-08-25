@@ -1,3 +1,12 @@
+> **Status: design review, not a specification.**
+>
+> A forward-looking assessment of what profitability would require. Some
+> recommendations have since been implemented (profit goals, trailing stops,
+> per-strategy performance feedback); most have not. Check `PROJECT_STATE.md`
+> before treating anything here as shipped.
+
+---
+
 # Staff Engineer Review: Path to Profitability Through Self-Learning & Market Adaptation
 
 ## Executive Summary

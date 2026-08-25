@@ -25,6 +25,7 @@ import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
 import { ExecutionRouter } from './execution/ExecutionRouter.js';
 import { DEFAULT_RISK_CONFIG } from './trading/risk/RiskLimits.js';
 import { LiveTradingGuard } from './execution/LiveTradingGuard.js';
+import { CoinDCXBroker } from './coindcx/CoinDCXBroker.js';
 import type { ProfitGoalManager } from './trading/goals/ProfitGoalManager.js';
 import { ProfitGoalStore } from './trading/goals/ProfitGoalStore.js';
 import type { ProfitGoalConfig } from './trading/goals/ProfitGoalTypes.js';
@@ -183,16 +184,36 @@ export async function startEngine(): Promise<EngineHandle> {
   // No live venue adapter ships in this repository, so an armed live profile
   // is rejected by the router rather than silently paper-filled.
   const liveGuard = new LiveTradingGuard();
+
+  // The live venue adapter is only constructed when the profile actually asks
+  // for real orders AND credentials are present. Constructing it
+  // unconditionally would put a credential-less client on the hot path and
+  // blur the line between "live is possible" and "live is armed".
+  let coindcxBroker: CoinDCXBroker | undefined;
+  if (runtimeProfile.executionVenue === 'COINDCX' && runtimeProfile.realOrders) {
+    if (env.COINDCX_API_KEY && env.COINDCX_API_SECRET) {
+      coindcxBroker = new CoinDCXBroker({
+        apiKey: env.COINDCX_API_KEY,
+        apiSecret: env.COINDCX_API_SECRET,
+      });
+      logger.warn(
+        'LIVE EXECUTION ARMED — orders will be routed to CoinDCX with real funds'
+      );
+    } else {
+      // Router rejects with NO_LIVE_EXECUTION_ADAPTER rather than silently
+      // paper-filling while the profile reports live execution.
+      logger.error(
+        'TRADING_MODE=live is armed but COINDCX_API_KEY/COINDCX_API_SECRET are missing — all orders will be REJECTED'
+      );
+    }
+  }
+
   const executionBroker = new ExecutionRouter({
     profile: runtimeProfile,
     paperBroker: broker,
+    coindcxBroker,
     guard: liveGuard,
   });
-  if (runtimeProfile.mode === 'live' && runtimeProfile.realOrders) {
-    logger.error(
-      'TRADING_MODE=live is armed but no live execution adapter is registered — all orders will be REJECTED'
-    );
-  }
 
   const klines = new KlineStore(500);
 

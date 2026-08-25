@@ -1,3 +1,12 @@
+> **Status: research transcript, not a specification.**
+>
+> This file is a captured design conversation, kept for provenance. It does
+> **not** describe current behaviour and is not maintained against the code.
+> For what the system actually does today see `PROJECT_STATE.md`,
+> `KNOWN_LIMITATIONS.md`, and the source.
+
+---
+
 Yes — **but not a traditional chart-heavy dashboard**.
 
 For an autonomous crypto-futures trading agent, the dashboard should answer:
