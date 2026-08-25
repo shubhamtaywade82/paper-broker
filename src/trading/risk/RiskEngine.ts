@@ -4,12 +4,20 @@ import { ExposureCalculator } from './ExposureCalculator.js';
 import { PositionSizer } from './PositionSizer.js';
 import { DEFAULT_RISK_CONFIG } from './RiskLimits.js';
 import type { AccountState, PortfolioPosition, RiskCheckResult, RiskConfig } from './types.js';
+import type { ProfitGoalManager } from '../goals/ProfitGoalManager.js';
+
+export interface RiskEngineDeps {
+  config?: RiskConfig;
+  profitGoalManager?: ProfitGoalManager;
+}
 
 export class RiskEngine {
   private config: RiskConfig;
-
-  constructor(config: RiskConfig = DEFAULT_RISK_CONFIG) {
-    this.config = config;
+  private profitGoalManager?: ProfitGoalManager;
+  
+  constructor(deps: RiskEngineDeps = {}) {
+    this.config = deps.config ?? DEFAULT_RISK_CONFIG;
+    this.profitGoalManager = deps.profitGoalManager;
   }
 
   validateSignalRisk(
@@ -18,16 +26,29 @@ export class RiskEngine {
     openPositions: PortfolioPosition[],
     instrument?: Instrument,
     existingSignalKeys = new Set<string>(),
-    cooldownSymbols = new Set<string>()
+    cooldownSymbols = new Set<string>(),
+    timestamp?: number
   ): RiskCheckResult {
     const failures: string[] = [];
     const exposure = ExposureCalculator.calculateExposure(openPositions);
 
+    // Check profit goal restrictions first
+    if (this.profitGoalManager) {
+      const ts = timestamp ?? Date.now();
+      if (!this.profitGoalManager.isTradingAllowed(ts)) {
+        failures.push('PROFIT_GOAL_TRADING_HALTED');
+      }
+    }
+
     this.checkAccountLimits(account, exposure, signal.symbol, failures, existingSignalKeys, cooldownSymbols);
+
+    // Apply profit goal risk multiplier to position sizing
+    const riskMultiplier = this.profitGoalManager?.getCurrentRiskMultiplier() ?? 1.0;
+    const adjustedRiskPerTrade = this.config.riskPerTradePct * riskMultiplier;
 
     const sizeResult = PositionSizer.calculatePositionSize(
       account.equity,
-      this.config.riskPerTradePct,
+      adjustedRiskPerTrade,
       signal.entryPrice,
       signal.stopLossPrice,
       instrument,
