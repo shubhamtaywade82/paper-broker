@@ -142,10 +142,7 @@ export const DEFAULT_PROFIT_GOAL_CONFIG: ProfitGoalConfig = {
   enableMonthlyGoals: false,   // Disabled by default for flexibility
 };
 
-export function createInitialProfitGoalState(
-  startingEquity: number,
-  config: ProfitGoalConfig = DEFAULT_PROFIT_GOAL_CONFIG
-): ProfitGoalState {
+export function createInitialProfitGoalState(startingEquity: number): ProfitGoalState {
   const now = Date.now();
   
   return {

@@ -1,7 +1,8 @@
 import type { Instrument } from '../broker/types.js';
 import type { ExecutionPlan } from '../market/execution/types.js';
 import { RiskEngine } from './risk/RiskEngine.js';
-import type { AccountState, PortfolioPosition, RiskConfig } from './risk/types.js';
+import type { RiskEngineOptions } from './risk/RiskEngine.js';
+import type { AccountState, PortfolioPosition } from './risk/types.js';
 import { SignalEngine } from './signal/SignalEngine.js';
 import type { TradeSignal } from './signal/types.js';
 
@@ -10,8 +11,8 @@ export class TradeIntentEngine {
   private activeSignalKeys = new Set<string>();
   private cooldownSymbols = new Set<string>();
 
-  constructor(riskConfig?: RiskConfig) {
-    this.riskEngine = new RiskEngine(riskConfig);
+  constructor(riskOptions?: RiskEngineOptions) {
+    this.riskEngine = new RiskEngine(riskOptions);
   }
 
   processExecutionPlan(
@@ -41,7 +42,8 @@ export class TradeIntentEngine {
       openPositions,
       instrument,
       this.activeSignalKeys,
-      this.cooldownSymbols
+      this.cooldownSymbols,
+      asOf
     );
 
     if (riskResult.approved && riskResult.sizing) {

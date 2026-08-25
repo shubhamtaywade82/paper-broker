@@ -11,11 +11,22 @@ export interface RiskEngineDeps {
   profitGoalManager?: ProfitGoalManager;
 }
 
+/**
+ * Accepted for backwards compatibility: callers that predate profit goals pass a
+ * bare `RiskConfig`, newer callers pass a `RiskEngineDeps` bag.
+ */
+export type RiskEngineOptions = RiskConfig | RiskEngineDeps;
+
+function isRiskConfig(options: RiskEngineOptions): options is RiskConfig {
+  return 'riskPerTradePct' in options;
+}
+
 export class RiskEngine {
   private config: RiskConfig;
   private profitGoalManager?: ProfitGoalManager;
-  
-  constructor(deps: RiskEngineDeps = {}) {
+
+  constructor(options: RiskEngineOptions = {}) {
+    const deps: RiskEngineDeps = isRiskConfig(options) ? { config: options } : options;
     this.config = deps.config ?? DEFAULT_RISK_CONFIG;
     this.profitGoalManager = deps.profitGoalManager;
   }

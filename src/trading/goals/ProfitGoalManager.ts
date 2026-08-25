@@ -30,7 +30,7 @@ export class ProfitGoalManager {
     config: ProfitGoalConfig = DEFAULT_PROFIT_GOAL_CONFIG
   ) {
     this.config = config;
-    this.state = createInitialProfitGoalState(startingEquity, config);
+    this.state = createInitialProfitGoalState(startingEquity);
     logger.info(
       { startingEquity, config },
       '[ProfitGoalManager] Initialized with profit targets'
@@ -52,7 +52,7 @@ export class ProfitGoalManager {
     this.checkAndSetTargets(currentEquity, timestamp);
 
     // Apply risk multiplier based on target achievement
-    this.updateRiskMultiplier(timestamp);
+    this.updateRiskMultiplier();
 
     logger.debug(
       {
@@ -114,13 +114,14 @@ export class ProfitGoalManager {
    */
   resetDaily(newStartingEquity: number): void {
     const now = Date.now();
-    
+    const prevDayPnL = this.state.dailyPnL;
+
     // Record previous day's metrics
     if (this.state.lastDailyReset > 0) {
-      const prevDay = new Date(this.state.lastDailyReset).toISOString().split('T')[0];
+      const prevDay = new Date(this.state.lastDailyReset).toISOString().slice(0, 10);
       this.dailyPnLHistory.push({
         date: prevDay,
-        pnl: this.state.dailyPnL,
+        pnl: prevDayPnL,
         equity: this.state.dailyStartingEquity,
       });
     }
@@ -133,10 +134,7 @@ export class ProfitGoalManager {
     this.state.reducedRiskActive = false;
     this.state.currentRiskMultiplier = 1.0;
 
-    logger.info(
-      { newStartingEquity, prevDayPnL: this.state.dailyPnL },
-      '[ProfitGoalManager] Daily reset complete'
-    );
+    logger.info({ newStartingEquity, prevDayPnL }, '[ProfitGoalManager] Daily reset complete');
   }
 
   /**
@@ -267,7 +265,7 @@ export class ProfitGoalManager {
   /**
    * Private: Update risk multiplier based on target achievement and configured action
    */
-  private updateRiskMultiplier(timestamp: number): void {
+  private updateRiskMultiplier(): void {
     const anyTargetAchieved = this.isAnyTargetAchieved();
 
     if (!anyTargetAchieved) {

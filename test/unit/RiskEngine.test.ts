@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RiskEngine } from '../../src/trading/risk/RiskEngine.js';
+import { ProfitGoalManager } from '../../src/trading/goals/ProfitGoalManager.js';
+import { DEFAULT_PROFIT_GOAL_CONFIG } from '../../src/trading/goals/ProfitGoalTypes.js';
 import type { Instrument } from '../../src/broker/types.js';
 import type { TradeSignal } from '../../src/trading/signal/types.js';
 import type { AccountState, PortfolioPosition } from '../../src/trading/risk/types.js';
@@ -102,5 +104,88 @@ describe('Phase 7 — Risk Engine', () => {
     const res = risk.validateSignalRisk(sig, account, [], undefined, new Set(), cooldowns);
     expect(res.approved).toBe(false);
     expect(res.rejectionReasons).toContain('COOLDOWN_ACTIVE');
+  });
+});
+
+describe('Phase 7 — Risk Engine profit goal integration', () => {
+  const T0 = 1_700_000_000_000;
+
+  it('still accepts a bare RiskConfig (pre-profit-goal call sites)', () => {
+    const risk = new RiskEngine({
+      maxOpenPositions: 5,
+      maxPositionsPerSymbol: 1,
+      maxDailyLossPct: 0.03,
+      riskPerTradePct: 0.01,
+      maxAccountRiskPct: 0.05,
+      cooldownBars: 3,
+      defaultLeverage: 5,
+      maxLeverage: 10,
+    });
+    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+
+    const res = risk.validateSignalRisk(makeMockSignal(), account, [], makeMockInstrument());
+    expect(res.approved).toBe(true);
+    expect(res.sizing?.quantity).toBe(50.0);
+  });
+
+  it('halts trading while the profit goal cooldown is active', () => {
+    const goals = new ProfitGoalManager(10000, {
+      ...DEFAULT_PROFIT_GOAL_CONFIG,
+      targetAchievedAction: 'STOP_TRADING',
+    });
+    goals.updatePnL({ realizedPnl: 250, currentEquity: 10250, timestamp: T0 });
+
+    const risk = new RiskEngine({ profitGoalManager: goals });
+    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+
+    const res = risk.validateSignalRisk(
+      makeMockSignal(),
+      account,
+      [],
+      makeMockInstrument(),
+      new Set(),
+      new Set(),
+      T0 + 1000
+    );
+
+    expect(res.approved).toBe(false);
+    expect(res.rejectionReasons).toContain('PROFIT_GOAL_TRADING_HALTED');
+  });
+
+  it('scales position size by the profit goal risk multiplier', () => {
+    const goals = new ProfitGoalManager(10000, {
+      ...DEFAULT_PROFIT_GOAL_CONFIG,
+      targetAchievedAction: 'REDUCE_RISK',
+      riskReductionFactor: 0.5,
+      cooldownAfterTargetMs: 0,
+    });
+    goals.updatePnL({ realizedPnl: 250, currentEquity: 10250, timestamp: T0 });
+    expect(goals.getCurrentRiskMultiplier()).toBe(0.5);
+
+    const risk = new RiskEngine({ profitGoalManager: goals });
+    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+
+    const res = risk.validateSignalRisk(
+      makeMockSignal(),
+      account,
+      [],
+      makeMockInstrument(),
+      new Set(),
+      new Set(),
+      T0 + 1000
+    );
+
+    expect(res.approved).toBe(true);
+    // Half the risk budget of the unconstrained case (50.0).
+    expect(res.sizing?.quantity).toBe(25.0);
+  });
+
+  it('leaves sizing untouched when no profit goal manager is wired in', () => {
+    const risk = new RiskEngine();
+    const account: AccountState = { equity: 10000, availableBalance: 5000, dailyLoss: 0, realizedPnl: 0 };
+
+    const res = risk.validateSignalRisk(makeMockSignal(), account, [], makeMockInstrument());
+    expect(res.approved).toBe(true);
+    expect(res.sizing?.quantity).toBe(50.0);
   });
 });

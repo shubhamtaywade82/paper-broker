@@ -50,7 +50,10 @@ export interface TrailingStopResult {
   /** Current unrealized PnL percentage */
   currentUnrealizedPnlPct: number;
   
-  /** Highest favorable price seen (for tracking) */
+  /**
+   * Most favorable market price seen while the position was open:
+   * the highest price for a LONG, the lowest price for a SHORT.
+   */
   highestFavorablePrice: number;
 }
 
@@ -63,8 +66,8 @@ export const DEFAULT_TRAILING_STOP_CONFIG: TrailingStopConfig = {
 };
 
 interface PositionTracker {
+  /** Highest price for a LONG, lowest price for a SHORT. */
   highestFavorablePrice: number;
-  lowestAdversePrice: number;
   breakevenApplied: boolean;
   lastUpdateTimestamp: number;
 }
@@ -91,34 +94,28 @@ export class TrailingStopManager {
     if (!tracker) {
       tracker = {
         highestFavorablePrice: position.entryPrice,
-        lowestAdversePrice: position.entryPrice,
         breakevenApplied: false,
         lastUpdateTimestamp: ts,
       };
       this.positionTrackers.set(positionKey, tracker);
     }
 
-    // Update highest/lowest favorable prices based on position side
+    // Track the most favorable price reached: the high for a LONG, the low for a SHORT.
     const isLong = position.side === 'LONG';
-    if (isLong) {
-      tracker.highestFavorablePrice = Math.max(tracker.highestFavorablePrice, currentPrice);
-    } else {
-      // For shorts, lower price is more favorable
-      tracker.highestFavorablePrice = Math.max(
-        tracker.highestFavorablePrice,
-        position.entryPrice - (currentPrice - position.entryPrice)
-      );
-    }
+    tracker.highestFavorablePrice = isLong
+      ? Math.max(tracker.highestFavorablePrice, currentPrice)
+      : Math.min(tracker.highestFavorablePrice, currentPrice);
 
     // Calculate current unrealized PnL percentage
     const unrealizedPnlPct = isLong
       ? (currentPrice - position.entryPrice) / position.entryPrice
       : (position.entryPrice - currentPrice) / position.entryPrice;
 
-    // Check if we should apply breakeven
+    // Check if we should apply breakeven. Only a position in profit qualifies —
+    // moving a losing position's stop to entry would stop it out immediately.
     if (this.config.enableBreakeven && !tracker.breakevenApplied) {
-      if (Math.abs(unrealizedPnlPct) >= this.config.breakevenTriggerPct) {
-        return this.applyBreakeven(position, tracker, ts);
+      if (unrealizedPnlPct >= this.config.breakevenTriggerPct) {
+        return this.applyBreakeven(position, tracker, unrealizedPnlPct, ts);
       }
     }
 
@@ -176,6 +173,7 @@ export class TrailingStopManager {
   private applyBreakeven(
     position: PortfolioPosition,
     tracker: PositionTracker,
+    unrealizedPnlPct: number,
     timestamp: number
   ): TrailingStopResult {
     const isLong = position.side === 'LONG';
@@ -197,9 +195,7 @@ export class TrailingStopManager {
         previousStop: position.stopLossPrice,
         newStop: position.stopLossPrice,
         reason: 'NO_CHANGE',
-        currentUnrealizedPnlPct: (isLong
-          ? (position.entryPrice - position.stopLossPrice) / position.stopLossPrice
-          : (position.stopLossPrice - position.entryPrice) / position.stopLossPrice),
+        currentUnrealizedPnlPct: unrealizedPnlPct,
         highestFavorablePrice: tracker.highestFavorablePrice,
       };
     }
@@ -222,7 +218,7 @@ export class TrailingStopManager {
       previousStop: position.stopLossPrice,
       newStop: breakevenPrice,
       reason: 'BREAKEVEN',
-      currentUnrealizedPnlPct: this.config.breakevenTriggerPct,
+      currentUnrealizedPnlPct: unrealizedPnlPct,
       highestFavorablePrice: tracker.highestFavorablePrice,
     };
   }
