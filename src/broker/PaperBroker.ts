@@ -865,6 +865,7 @@ export class PaperBroker implements ExecutionBroker {
         continue;
       }
 
+      position.markPrice = markPrice;
       position.unrealizedPnl = D(position.qty).mul(D(markPrice).sub(position.entryPrice)).toNumber();
       unrealizedPnl = D(unrealizedPnl).add(position.unrealizedPnl).toNumber();
 

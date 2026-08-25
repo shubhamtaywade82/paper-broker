@@ -42,12 +42,27 @@ function normalizePosition(
       : 'SHORT';
   const entryPrice = Number(raw.entryPrice ?? 0);
   const symbol = String(raw.symbol ?? '');
+  const rawUnrealizedPnl = raw.unrealizedPnl !== undefined ? Number(raw.unrealizedPnl) : undefined;
   const currentMark =
-    livePriceMap[symbol] ?? Number(raw.markPrice ?? raw.lastPrice ?? entryPrice);
+    livePriceMap[symbol] ??
+    (raw.markPrice !== undefined && Number(raw.markPrice) > 0 ? Number(raw.markPrice) : undefined) ??
+    (raw.lastPrice !== undefined && Number(raw.lastPrice) > 0 ? Number(raw.lastPrice) : undefined) ??
+    (rawUnrealizedPnl !== undefined && qty !== 0
+      ? side === 'LONG'
+        ? entryPrice + rawUnrealizedPnl / qty
+        : entryPrice - rawUnrealizedPnl / qty
+      : entryPrice);
+
   const unrealizedPnl =
-    side === 'LONG'
-      ? (currentMark - entryPrice) * Math.abs(qty)
-      : (entryPrice - currentMark) * Math.abs(qty);
+    livePriceMap[symbol] !== undefined
+      ? side === 'LONG'
+        ? (currentMark - entryPrice) * Math.abs(qty)
+        : (entryPrice - currentMark) * Math.abs(qty)
+      : rawUnrealizedPnl ??
+        (side === 'LONG'
+          ? (currentMark - entryPrice) * Math.abs(qty)
+          : (entryPrice - currentMark) * Math.abs(qty));
+
   const leverage = Number(raw.leverage ?? 5);
   const margin = Number(
     raw.initialMargin ?? (entryPrice * Math.abs(qty)) / (leverage || 1)

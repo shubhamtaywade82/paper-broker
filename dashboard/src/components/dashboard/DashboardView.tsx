@@ -225,8 +225,20 @@ export function DashboardView() {
                     const qty = pos.quantity ?? Math.abs(Number((pos as unknown as Record<string, unknown>).qty ?? 0));
                     const side = pos.side ?? (Number((pos as unknown as Record<string, unknown>).qty ?? 0) >= 0 ? 'LONG' : 'SHORT');
                     const lev = pos.leverage ?? 5;
-                    const mark = livePrice[pos.symbol] ?? pos.markPrice ?? entry;
-                    const pnl = side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+                    const mark =
+                      livePrice[pos.symbol] ??
+                      pos.markPrice ??
+                      (pos.unrealizedPnl && qty > 0
+                        ? side === 'LONG'
+                          ? entry + pos.unrealizedPnl / qty
+                          : entry - pos.unrealizedPnl / qty
+                        : entry);
+                    const pnl =
+                      livePrice[pos.symbol] !== undefined
+                        ? side === 'LONG'
+                          ? (mark - entry) * qty
+                          : (entry - mark) * qty
+                        : pos.unrealizedPnl ?? (side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty);
                     // A reduce-only bracket only actually protects this position if its side
                     // can fill against it (SELL reduces LONG, BUY reduces SHORT) — a stale
                     // order left over from a prior direction on this symbol can never fire.
