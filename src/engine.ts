@@ -166,9 +166,13 @@ export async function startEngine(): Promise<EngineHandle> {
   const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
   const planEngine = new ExecutionPlanEngine();
   const tradeIntentEngine = new TradeIntentEngine();
+  const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
   const tradingAgentsPipeline = new TradingAgentsPipeline({
     model: env.OLLAMA_MODEL,
     baseUrl: env.OLLAMA_BASE_URL,
+    apiKeys: cloudKeys,
+    cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
+    cloudModel: env.OLLAMA_CLOUD_MODEL,
   });
 
   // Non-blocking: the agent debate already falls back to a safe NEUTRAL decision when

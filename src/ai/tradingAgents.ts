@@ -20,6 +20,9 @@ export interface TradingAgentsConfig {
   baseUrl?: string;
   timeoutMs?: number;
   debateRounds?: number;
+  apiKeys?: string[];
+  cloudBaseUrl?: string;
+  cloudModel?: string;
 }
 
 export type AgentCycleStage =
@@ -66,10 +69,34 @@ export class TradingAgentsPipeline {
       baseUrl: config.baseUrl ?? 'http://localhost:11434',
       timeoutMs: config.timeoutMs ?? 60_000,
       debateRounds: config.debateRounds ?? 2,
+      apiKeys: (config.apiKeys ?? []).filter(Boolean),
+      cloudBaseUrl: config.cloudBaseUrl ?? 'https://ollama.com',
+      cloudModel: config.cloudModel ?? 'gemma4:cloud',
     };
-    this.client = new OllamaClient({
+
+    const endpoints: Array<{ name: string; baseUrl: string; apiKey?: string; priority?: number }> = [];
+
+    // Register all configured cloud account keys in priority order (1..N)
+    this.config.apiKeys.forEach((key, idx) => {
+      endpoints.push({
+        name: `ollama-cloud-account-${idx + 1}`,
+        baseUrl: this.config.cloudBaseUrl,
+        apiKey: key,
+        priority: idx + 1,
+      });
+    });
+
+    // Local daemon fallback endpoint
+    endpoints.push({
+      name: 'ollama-local-daemon',
       baseUrl: this.config.baseUrl,
+      priority: 10,
+    });
+
+    this.client = new OllamaClient({
+      endpoints,
       timeoutMs: this.config.timeoutMs,
+      failoverOn: ['rate_limited', 'network_error', 'server_error', 'unsupported_capability', 'timeout'],
     });
   }
 
@@ -376,9 +403,10 @@ export class TradingAgentsPipeline {
     system: string,
     onStep?: AgentCycleStepListener
   ): Promise<string> {
+    const targetModel = this.config.apiKeys.length > 0 ? this.config.cloudModel : this.config.model;
     try {
       const res = await this.client.chat({
-        model: this.config.model,
+        model: targetModel,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: prompt },
@@ -390,7 +418,25 @@ export class TradingAgentsPipeline {
       this.emitStep(onStep, cycleId, symbol, stage, 'completed', text.slice(0, 160));
       return text;
     } catch (err) {
-      logger.warn({ cycleId, symbol, stage, model: this.config.model, error: (err as Error).message }, '[TradingAgents] researcher call failed, using fallback text');
+      if (targetModel !== this.config.model) {
+        try {
+          const fallbackRes = await this.client.chat({
+            model: this.config.model,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: prompt },
+            ],
+            think: false,
+            options: { temperature: 0.4 },
+          });
+          const text = fallbackRes.message.content.trim() || 'No argument provided.';
+          this.emitStep(onStep, cycleId, symbol, stage, 'completed', text.slice(0, 160));
+          return text;
+        } catch {
+          // Fall through to error reporting
+        }
+      }
+      logger.warn({ cycleId, symbol, stage, model: targetModel, error: (err as Error).message }, '[TradingAgents] researcher call failed, using fallback text');
       this.emitStep(onStep, cycleId, symbol, stage, 'failed', (err as Error).message);
       return 'Argument generation unavailable.';
     }

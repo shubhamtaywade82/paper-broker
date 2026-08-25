@@ -178,4 +178,59 @@ describe('TradingAgents Multi-Agent Schemas & Pipeline', () => {
     expect(cycle.debate.length).toBe(2); // 1 round x (BULL + BEAR)
     expect(cycle.debate.filter((d) => d.round === 1).length).toBe(2);
   }, 30_000);
+
+  it('supports multi-account cloud credentials and local fallback pool', async () => {
+    const pipeline = new TradingAgentsPipeline({
+      model: 'qwen3.5:2b',
+      cloudModel: 'gemma4:cloud',
+      apiKeys: ['test-key-account-1', 'test-key-account-2', 'test-key-account-3'],
+      debateRounds: 1,
+    });
+
+    vi.spyOn((pipeline as unknown as { client: { generateWithSchema: unknown } }).client, 'generateWithSchema')
+      .mockResolvedValueOnce({
+        agent: 'DerivativesAnalyst',
+        symbol: 'ETHUSDT',
+        timestamp: Date.now(),
+        summary: 'Strong bullish momentum',
+        bullishSignals: ['Higher lows'],
+        bearishSignals: [],
+        keyMetrics: { fundingRate: 0.0001 },
+        confidence: 0.8,
+      })
+      .mockResolvedValueOnce({
+        prevailingSide: 'BULL',
+        rationale: 'Bullish thesis prevailed',
+        conviction: 0.85,
+      })
+      .mockResolvedValueOnce({
+        symbol: 'ETHUSDT',
+        action: 'LONG',
+        leverage: 3,
+        sizePct: 0.1,
+        stopLoss: 2450,
+        takeProfit: 2600,
+        rationale: 'Breakout long',
+        confidence: 0.85,
+      });
+
+    vi.spyOn((pipeline as unknown as { client: { chat: unknown } }).client, 'chat')
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Bull argument for ETH long.' } } as never)
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Bear counter-argument on ETH.' } } as never);
+
+    const cycle = await pipeline.runCycle({
+      symbol: 'ETHUSDT',
+      lastPrice: 2500,
+      bid: 2499.8,
+      ask: 2500.2,
+      spread: 0.4,
+      mark: 2500,
+    });
+
+    expect(cycle.symbol).toBe('ETHUSDT');
+    expect(cycle.debate.length).toBe(2);
+    expect(cycle.debate[0]?.argument).toBe('Bull argument for ETH long.');
+    expect(cycle.fundManagerApproval?.approved).toBe(true);
+    expect(CycleRecordSchema.safeParse(cycle).success).toBe(true);
+  });
 });

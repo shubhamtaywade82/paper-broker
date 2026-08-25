@@ -594,3 +594,33 @@ export function useTriggerEvaluation() {
     },
   });
 }
+
+export interface AgentPoolConfig {
+  localBaseUrl: string;
+  localModel: string;
+  cloudBaseUrl: string;
+  cloudModel: string;
+  configuredAccountsCount: number;
+  accounts: Array<{
+    id: number;
+    name: string;
+    configured: boolean;
+    maskedKey: string;
+    priority: number;
+  }>;
+  fallback: {
+    name: string;
+    baseUrl: string;
+    model: string;
+    priority: number;
+    status: string;
+  };
+}
+
+export function useAgentPoolConfig() {
+  return useQuery({
+    queryKey: ['agentPoolConfig'],
+    queryFn: () => fetchJson<AgentPoolConfig>('/api/v1/agents/config'),
+    refetchInterval: 10000,
+  });
+}

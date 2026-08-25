@@ -8,6 +8,7 @@ import {
   useProviderHealth,
   useSetAggressiveMode,
   useTriggerEvaluation,
+  useAgentPoolConfig,
   type ProviderHealthState,
 } from '../../hooks/useApi';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -26,6 +27,11 @@ import {
   Unlock,
   AlertTriangle,
   Cpu,
+  Cloud,
+  Key,
+  Sparkles,
+  Database,
+  Layers,
 } from 'lucide-react';
 
 function errorMessage(err: unknown): string | null {
@@ -53,6 +59,7 @@ export function SystemSettingsView() {
   const { operatingMode, liveArmed, aggressiveMode } = useStore();
   const { data: dashboardData } = useDashboard();
   const { data: providerHealth } = useProviderHealth();
+  const { data: agentPool } = useAgentPoolConfig();
 
   const armMode = useArmMode();
   const disarmMode = useDisarmMode();
@@ -314,6 +321,124 @@ export function SystemSettingsView() {
               Dialectical multi-agent debate runtime for autonomous signal generation.
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* AI Multi-Account Pool & Hybrid LLM Routing */}
+      <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1b2537] pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-400">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white uppercase text-xs">AI Agent &amp; Multi-Account LLM Pool</h3>
+              <p className="text-gray-400 text-[10px]">
+                Hybrid routing across up to 3 Ollama Cloud accounts with automatic failover to local daemon.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-bold">
+              {agentPool?.configuredAccountsCount ?? 0} CLOUD KEYS CONFIGURED
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+              LOCAL DAEMON ACTIVE
+            </span>
+          </div>
+        </div>
+
+        {/* Model Routing Architecture */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-[#080c14] border border-[#1b2537] p-3.5 rounded-xl space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400 text-[10px] uppercase font-bold flex items-center gap-1.5">
+                <Cloud className="w-3.5 h-3.5 text-blue-400" /> Debate &amp; Research Model
+              </span>
+              <span className="font-bold text-white bg-[#141d2e] px-2 py-0.5 rounded text-[10px]">
+                {agentPool?.cloudModel || 'gemma4:cloud'}
+              </span>
+            </div>
+            <p className="text-gray-500 text-[10px]">
+              Multi-turn Bull vs. Bear debate and narrative reasoning evaluated across the cloud account pool.
+            </p>
+          </div>
+
+          <div className="bg-[#080c14] border border-[#1b2537] p-3.5 rounded-xl space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400 text-[10px] uppercase font-bold flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Structured Extraction &amp; Fallback
+              </span>
+              <span className="font-bold text-white bg-[#141d2e] px-2 py-0.5 rounded text-[10px]">
+                {agentPool?.localModel || 'qwen3.5:2b'}
+              </span>
+            </div>
+            <p className="text-gray-500 text-[10px]">
+              Analyst report &amp; trader parameter schema extraction (low latency, zero token cost).
+            </p>
+          </div>
+        </div>
+
+        {/* Endpoint Priority Matrix */}
+        <div className="space-y-2">
+          <h4 className="text-gray-400 text-[10px] uppercase font-bold flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-purple-400" /> Endpoint Pool &amp; Failover Priority
+          </h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {(agentPool?.accounts || []).map((acc) => (
+              <div
+                key={acc.id}
+                className={`p-3 rounded-xl border ${
+                  acc.configured
+                    ? 'bg-[#080c14] border-blue-500/30'
+                    : 'bg-[#080c14]/50 border-[#1b2537] opacity-60'
+                } space-y-1.5`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-white text-[11px] flex items-center gap-1">
+                    <Key className="w-3 h-3 text-blue-400" /> {acc.name}
+                  </span>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                    acc.configured ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-800 text-gray-500'
+                  }`}>
+                    {acc.configured ? `PRIORITY ${acc.priority}` : 'EMPTY'}
+                  </span>
+                </div>
+                <div className="text-[10px] text-gray-400 font-mono">
+                  Key: <span className="text-gray-300">{acc.maskedKey}</span>
+                </div>
+                <div className="text-[9px] text-gray-500">
+                  Target: {agentPool?.cloudBaseUrl || 'https://ollama.com'}
+                </div>
+              </div>
+            ))}
+
+            {/* Local Fallback Node */}
+            <div className="p-3 rounded-xl border bg-[#080c14] border-emerald-500/30 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-white text-[11px] flex items-center gap-1">
+                  <Database className="w-3 h-3 text-emerald-400" /> Local Daemon
+                </span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                  FALLBACK (P10)
+                </span>
+              </div>
+              <div className="text-[10px] text-gray-400 font-mono">
+                Host: <span className="text-gray-300">{agentPool?.localBaseUrl || 'http://localhost:11434'}</span>
+              </div>
+              <div className="text-[9px] text-gray-500">
+                Model: {agentPool?.localModel || 'qwen3.5:2b'} (Local)
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Configuration Guide Footer */}
+        <div className="bg-[#080c14] border border-[#1b2537] p-3 rounded-xl flex items-center justify-between text-[10px] text-gray-400">
+          <span>
+            To configure or rotate keys, set <code className="text-blue-400">OLLAMA_API_KEY_1</code>, <code className="text-blue-400">OLLAMA_API_KEY_2</code>, <code className="text-blue-400">OLLAMA_API_KEY_3</code> in your <code className="text-amber-400">.env</code> file.
+          </span>
+          <span className="text-emerald-400 font-bold ml-2 shrink-0">Auto Failover Enabled</span>
         </div>
       </div>
 

@@ -564,6 +564,46 @@ export class ApiServer {
       };
     });
 
+    this.app.get('/api/v1/agents/config', async () => {
+      return {
+        localBaseUrl: env.OLLAMA_BASE_URL,
+        localModel: env.OLLAMA_MODEL,
+        cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
+        cloudModel: env.OLLAMA_CLOUD_MODEL,
+        configuredAccountsCount: [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean).length,
+        accounts: [
+          {
+            id: 1,
+            name: 'Cloud Account 1',
+            configured: Boolean(env.OLLAMA_API_KEY_1),
+            maskedKey: env.OLLAMA_API_KEY_1 ? `••••••••${env.OLLAMA_API_KEY_1.slice(-4)}` : 'Not configured',
+            priority: 1,
+          },
+          {
+            id: 2,
+            name: 'Cloud Account 2',
+            configured: Boolean(env.OLLAMA_API_KEY_2),
+            maskedKey: env.OLLAMA_API_KEY_2 ? `••••••••${env.OLLAMA_API_KEY_2.slice(-4)}` : 'Not configured',
+            priority: 2,
+          },
+          {
+            id: 3,
+            name: 'Cloud Account 3',
+            configured: Boolean(env.OLLAMA_API_KEY_3),
+            maskedKey: env.OLLAMA_API_KEY_3 ? `••••••••${env.OLLAMA_API_KEY_3.slice(-4)}` : 'Not configured',
+            priority: 3,
+          },
+        ],
+        fallback: {
+          name: 'Local Ollama Daemon',
+          baseUrl: env.OLLAMA_BASE_URL,
+          model: env.OLLAMA_MODEL,
+          priority: 10,
+          status: 'ALWAYS_ACTIVE_FAILOVER',
+        },
+      };
+    });
+
     this.app.get('/api/v1/agents/cycles', async (request) => {
       const query = request.query as { symbol?: string; limit?: string; offset?: string };
       const limit = parseLimit(query.limit, 20);
@@ -848,9 +888,13 @@ export class ApiServer {
       const ask = state?.ask ?? lastPrice + 0.02;
       const spread = state?.spread ?? Math.max(0.01, ask - bid);
 
+      const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
       const pipeline = new TradingAgentsPipeline({
         model: body.model || env.OLLAMA_MODEL,
         baseUrl: env.OLLAMA_BASE_URL,
+        apiKeys: cloudKeys,
+        cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
+        cloudModel: env.OLLAMA_CLOUD_MODEL,
       });
       try {
         const cycle = await pipeline.runCycle(

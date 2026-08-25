@@ -34,6 +34,11 @@ const EnvSchema = z.object({
 
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
   OLLAMA_MODEL: z.string().default('qwen3.5:2b'),
+  OLLAMA_API_KEY_1: z.string().optional(),
+  OLLAMA_API_KEY_2: z.string().optional(),
+  OLLAMA_API_KEY_3: z.string().optional(),
+  OLLAMA_CLOUD_BASE_URL: z.string().url().default('https://ollama.com'),
+  OLLAMA_CLOUD_MODEL: z.string().default('gemma4:cloud'),
 
   PAPER_STARTING_USDT: z.coerce.number().positive().default(10000),
 
