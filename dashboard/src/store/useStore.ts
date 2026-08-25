@@ -10,6 +10,17 @@ export type WorkspaceTab =
   | 'activity'
   | 'system';
 
+export interface ClosedCandle {
+  symbol: string;
+  interval: string;
+  openTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface Position {
   symbol: string;
   side: 'LONG' | 'SHORT';
@@ -192,6 +203,7 @@ interface StoreState {
   aggressiveMode: boolean;
   liveEvents: LiveEventItem[];
   livePrice: Record<string, number>;
+  closedCandle: Record<string, ClosedCandle>;
   tickers: Record<string, TickerData>;
   orderbook: OrderbookDepth | null;
 
@@ -213,6 +225,7 @@ interface StoreState {
   setAggressiveMode: (aggressive: boolean) => void;
   addLiveEvent: (event: { type: string; payload: Record<string, unknown>; stream?: string; id?: string }) => void;
   setLivePrice: (symbol: string, price: number) => void;
+  setClosedCandle: (candle: ClosedCandle) => void;
   setTickers: (tickers: Record<string, TickerData>) => void;
   setOrderbook: (orderbook: OrderbookDepth | null) => void;
 }
@@ -338,6 +351,7 @@ export const useStore = create<StoreState>((set) => ({
   aggressiveMode: getInitialAggressiveMode(),
   liveEvents: [],
   livePrice: {},
+  closedCandle: {},
   tickers: {},
   orderbook: null,
 
@@ -397,6 +411,10 @@ export const useStore = create<StoreState>((set) => ({
     })),
   setLivePrice: (symbol, price) =>
     set((state) => ({ livePrice: { ...state.livePrice, [symbol]: price } })),
+  setClosedCandle: (candle) =>
+    set((state) => ({
+      closedCandle: { ...state.closedCandle, [`${candle.symbol}:${candle.interval}`]: candle },
+    })),
   setTickers: (tickers) => set({ tickers }),
   setOrderbook: (orderbook) => set({ orderbook }),
 }));

@@ -383,6 +383,7 @@ export async function startEngine(): Promise<EngineHandle> {
       };
 
       klines.upsertCandle(candle);
+      api.wsGateway.broadcast('kline.closed', candle);
       snapshots.saveKline1m({
         symbol: candle.symbol,
         openTime: candle.openTime,

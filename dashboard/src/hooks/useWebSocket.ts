@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useStore } from '../store/useStore';
+import { useStore, type ClosedCandle } from '../store/useStore';
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -10,6 +10,7 @@ export function useWebSocket() {
     addLiveEvent,
     setAccount,
     setLivePrice,
+    setClosedCandle,
     setOperatingMode,
     setAggressiveMode,
   } = useStore();
@@ -54,6 +55,11 @@ export function useWebSocket() {
               case 'book.update':
                 if (data.payload.symbol && (data.payload.lastPrice || data.payload.price)) {
                   setLivePrice(String(data.payload.symbol), Number(data.payload.lastPrice || data.payload.price));
+                }
+                break;
+              case 'kline.closed':
+                if (data.payload.symbol && data.payload.interval && data.payload.openTime) {
+                  setClosedCandle(data.payload as unknown as ClosedCandle);
                 }
                 break;
               case 'account.updated':
@@ -143,5 +149,5 @@ export function useWebSocket() {
         }
       }
     };
-  }, [addLiveEvent, queryClient, setAccount, setLivePrice, setOperatingMode, setWsConnected]);
+  }, [addLiveEvent, queryClient, setAccount, setLivePrice, setClosedCandle, setOperatingMode, setWsConnected]);
 }

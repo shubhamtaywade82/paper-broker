@@ -20,6 +20,15 @@ export interface ChartMarker {
   text: string;
 }
 
+const TIMEFRAME_SECONDS: Record<string, number> = {
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '1h': 3600,
+  '4h': 14400,
+  '1d': 86400,
+};
+
 export interface TradingChartProps {
   candles?: Array<{
     openTime: number;
@@ -57,6 +66,7 @@ export function TradingChart({
   const initialFitDoneRef = useRef(false);
 
   const livePrice = useStore((s) => s.livePrice[symbol]);
+  const closedCandle = useStore((s) => s.closedCandle[`${symbol}:${timeframe}`]);
   const prevSymbolRef = useRef(symbol);
 
   // Initialize Lightweight Chart instance
@@ -206,6 +216,50 @@ export function TradingChart({
     lastBarRef.current = updatedBar;
     candleSeriesRef.current.update(updatedBar);
   }, [livePrice]);
+
+  // Authoritative candle close: correct the just-closed bar (tick accumulation
+  // may have drifted), then seed a fresh bar for the new period so the live-tick
+  // effect above starts stretching the *new* candle instead of the old one.
+  useEffect(() => {
+    if (!candleSeriesRef.current || !closedCandle || !lastBarRef.current) return;
+
+    const closedTime = Math.floor(closedCandle.openTime / 1000) as UTCTimestamp;
+    if (Number(closedTime) < Number(lastBarRef.current.time)) return; // stale/duplicate
+
+    const finalBar: CandlestickData = {
+      time: closedTime,
+      open: closedCandle.open,
+      high: closedCandle.high,
+      low: closedCandle.low,
+      close: closedCandle.close,
+    };
+    candleSeriesRef.current.update(finalBar);
+    if (volumeSeriesRef.current) {
+      volumeSeriesRef.current.update({
+        time: closedTime,
+        value: closedCandle.volume,
+        color: closedCandle.close >= closedCandle.open ? 'rgba(5, 205, 153, 0.25)' : 'rgba(255, 77, 79, 0.25)',
+      });
+    }
+
+    const stepSec = TIMEFRAME_SECONDS[timeframe];
+    if (!stepSec) {
+      lastBarRef.current = finalBar;
+      return;
+    }
+
+    // ponytail: open seeded from prior close, not Binance's actual first trade of
+    // the new window — approximation corrected by the next close or 15s REST poll.
+    const nextBar: CandlestickData = {
+      time: (Number(closedTime) + stepSec) as UTCTimestamp,
+      open: closedCandle.close,
+      high: closedCandle.close,
+      low: closedCandle.close,
+      close: closedCandle.close,
+    };
+    candleSeriesRef.current.update(nextBar);
+    lastBarRef.current = nextBar;
+  }, [closedCandle, timeframe]);
 
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 

@@ -1,5 +1,6 @@
 export type WebSocketEventType =
   | 'market.tick'
+  | 'kline.closed'
   | 'signal.created'
   | 'order.updated'
   | 'order.filled'
