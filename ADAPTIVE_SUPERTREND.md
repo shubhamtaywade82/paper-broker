@@ -1,3 +1,12 @@
+> **Status: research transcript, not a specification.**
+>
+> This file is a captured design conversation, kept for provenance. It does
+> **not** describe current behaviour and is not maintained against the code.
+> For what the system actually does today see `PROJECT_STATE.md`,
+> `KNOWN_LIMITATIONS.md`, and the source.
+
+---
+
 building an ai based adaptive Supertrend signal generator strategy which uses the complete market data and historical lookback ohlcv and other indicators to Calculate the supertrend input parameters adaptivly and feeds on each candle instead of static inputs to supertrend and this should be adaptive based on the current market context use binance-sdk(typescript library) for market data and this ai based adaptive Supertrend signal generator is completly ai based adaptive  to detect trend Aand trade setups along with other indicators which we can use to support it
 
 Building an **AI-based Adaptive Supertrend Strategy** in TypeScript requires moving away from static parameters. Instead of hardcoding the ATR Period and Multiplier, we will use an **AI Agent** to dynamically calculate these inputs on every candle close based on the current market regime (volatility, trend strength, momentum).

@@ -18,16 +18,73 @@ All configuration is environment-driven. Copy `.env.example` to `.env` and adjus
 | `BINANCE_API_KEY` | — | API key. Optional — enables authenticated bootstrap (exchange info, account) |
 | `BINANCE_API_SECRET` | — | API secret. Optional |
 
-Without credentials the engine logs a warning, uses default instrument definitions and subscribes to the configured symbols on the testnet feed. **Live keys are only for reading market data, never for placing real orders** — `PaperBroker` is entirely in-memory simulation.
+Without credentials the engine logs a warning, uses default instrument definitions and subscribes to the configured symbols on the testnet feed. **Binance keys are only ever used for reading market data.** Order execution is either `PaperBroker` (in-memory simulation) or, in an armed live profile, `CoinDCXBroker` — never Binance.
 
 ## Ollama (optional)
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama HTTP endpoint |
-| `OLLAMA_MODEL` | `qwen2.5:7b` | Model id used by `ollama-trend-5m` |
+| `OLLAMA_MODEL` | `qwen3.5:2b` | Local model id used by the agent pipeline |
+| `OLLAMA_API_KEY_1` … `_3` | — | Optional Ollama Cloud account keys, tried in priority order before the local daemon |
+| `OLLAMA_CLOUD_BASE_URL` | `https://ollama.com` | Cloud endpoint |
+| `OLLAMA_CLOUD_MODEL` | `gemma4:cloud` | Cloud model id |
 
-At startup the engine pings the model (`listModels`). If it responds, the Ollama strategy registers; otherwise it is skipped with a warning. The strategy never runs without a reachable model.
+At startup the engine probes reachability and logs a warning if nothing responds. Startup is **not** gated: if no model is reachable, the agent debate resolves to `NEUTRAL` and the SMC strategy produces no trades. The adaptive Supertrend strategy has no LLM dependency and keeps running.
+
+## Trading mode and live execution
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TRADING_MODE` | `paper` | `paper` / `shadow` / `live`. The single operational profile selector (CONTRACTS.md §7). |
+| `LIVE_TRADING_ARMED` | `false` | Must be `true` before any order can reach a real venue. |
+| `COINDCX_API_KEY` | — | Required for live execution. |
+| `COINDCX_API_SECRET` | — | Required for live execution. |
+| `LIVE_ARM_PASSCODE` | — | When set, `POST /api/v1/mode/arm` requires a matching passcode. |
+| `API_KEY` | — | When set, control endpoints require `Authorization: Bearer <key>` or `x-api-key`. |
+
+`TRADING_MODE=live` alone does nothing. Orders reach CoinDCX only when the mode is `live`, `LIVE_TRADING_ARMED=true`, **and** both CoinDCX credentials are present. If the profile is armed but credentials are missing, orders are rejected with `NO_LIVE_EXECUTION_ADAPTER` — the router never falls back to simulated fills while reporting live execution.
+
+## Profit goals
+
+Off by default. When enabled, `ProfitGoalManager` gates trading and scales position size through `RiskEngine`, and state persists to `<data>/profit_goals.json` across restarts.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PROFIT_GOALS_ENABLED` | `false` | Master switch. |
+| `PROFIT_GOAL_DAILY_TARGET_PCT` | `0.02` | Daily target as a fraction of the period's starting equity. |
+| `PROFIT_GOAL_WEEKLY_TARGET_PCT` | `0.08` | Weekly target. |
+| `PROFIT_GOAL_MONTHLY_TARGET_PCT` | `0.2` | Monthly target. |
+| `PROFIT_GOAL_ACTION` | `REDUCE_RISK` | `REDUCE_RISK` / `STOP_TRADING` / `TRAIL_STOPS` on target achievement. |
+| `PROFIT_GOAL_RISK_REDUCTION_FACTOR` | `0.5` | Risk multiplier applied under `REDUCE_RISK`. |
+| `PROFIT_GOAL_COOLDOWN_MS` | `3600000` | Trading pause after a daily target is hit. |
+| `PROFIT_GOAL_ENABLE_DAILY` | `true` | Set `false` to disable the daily window. |
+| `PROFIT_GOAL_ENABLE_WEEKLY` | `true` | Set `false` to disable the weekly window. |
+| `PROFIT_GOAL_ENABLE_MONTHLY` | `false` | Set `true` to enable the monthly window. |
+
+Windows are reset by `Scheduler` on UTC calendar boundaries (daily 00:00, weekly Monday 00:00, monthly 1st 00:00), rebasing on current equity.
+
+## Trailing stops
+
+Off by default. When enabled, `TrailingStopController` cancels and replaces resting reduce-only `STOP_MARKET` orders as price moves in favour. Driven from the aggTrade stream, so a symbol with no trade prints does not trail.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TRAILING_STOPS_ENABLED` | `false` | Master switch. |
+| `TRAILING_ACTIVATION_PCT` | `0.02` | Profit required before trailing begins. |
+| `TRAILING_DISTANCE_PCT` | `0.015` | Distance kept behind the best favourable price. |
+| `TRAILING_BREAKEVEN_PCT` | `0.01` | Profit at which the stop moves to entry plus a fee buffer. |
+
+## Strategy performance feedback
+
+Observe-only by default. When enabled, a strategy breaching its limits is quarantined — `StrategyEngine` stops routing candles and ticks to it. State persists to `<data>/strategy_performance.json`; release is manual via `POST /api/v1/strategies/:id/release`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STRATEGY_FEEDBACK_ENABLED` | `false` | When `false` the tracker records but never quarantines. |
+| `STRATEGY_FEEDBACK_MIN_TRADES` | `20` | Trades required before any quarantine rule applies. |
+| `STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT` | `500` | Peak-to-trough realized drawdown that triggers quarantine. |
+| `STRATEGY_FEEDBACK_MIN_WIN_RATE` | `0.3` | Win-rate floor below which a strategy is quarantined. |
 
 ## Paper account
 

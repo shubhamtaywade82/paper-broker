@@ -15,6 +15,33 @@ import type { SignalInput } from '../strategy/signal.js';
 import { parseSignalInput } from '../strategy/signal.js';
 import { logger } from '../telemetry/logger.js';
 
+/**
+ * Limits the deterministic risk stage enforces. Deliberately separate from
+ * RiskConfig (src/trading/risk): this bounds what the *agent pipeline* is
+ * willing to propose, and RiskEngine independently re-validates whatever
+ * survives before an order is built. Two gates, not one.
+ */
+export interface AgentRiskPolicy {
+  personaCeilings: Record<
+    'SAFE' | 'NEUTRAL' | 'RISKY',
+    { maxLeverage: number; maxSizePct: number; minConfidence: number }
+  >;
+  /** Reject a directional proposal that carries no stop loss. */
+  requireStopLoss: boolean;
+  /** Fund manager's own confidence floor, applied after the personas. */
+  minApprovalConfidence: number;
+}
+
+export const DEFAULT_AGENT_RISK_POLICY: AgentRiskPolicy = {
+  personaCeilings: {
+    SAFE: { maxLeverage: 3, maxSizePct: 0.05, minConfidence: 0.65 },
+    NEUTRAL: { maxLeverage: 5, maxSizePct: 0.1, minConfidence: 0.55 },
+    RISKY: { maxLeverage: 10, maxSizePct: 0.15, minConfidence: 0.45 },
+  },
+  requireStopLoss: true,
+  minApprovalConfidence: 0.5,
+};
+
 export interface TradingAgentsConfig {
   model: string;
   baseUrl?: string;
@@ -23,6 +50,7 @@ export interface TradingAgentsConfig {
   apiKeys?: string[];
   cloudBaseUrl?: string;
   cloudModel?: string;
+  riskPolicy?: AgentRiskPolicy;
 }
 
 export type AgentCycleStage =
@@ -41,6 +69,17 @@ export interface AgentCycleStep {
   status: 'started' | 'completed' | 'failed';
   detail?: string;
   timestamp: number;
+  /**
+   * What actually produced this stage.
+   *
+   * The pipeline mixes genuine LLM stages (analyst, debate, trader) with
+   * deterministic policy stages (risk team, fund manager — see the note on
+   * runRiskTeam). Presenting all seven identically as "agents" in the
+   * dashboard and the event log overstates how much of the decision an LLM
+   * makes. This field makes the distinction explicit at the point the step is
+   * emitted, so no consumer has to infer it.
+   */
+  engine: 'llm' | 'deterministic';
 }
 
 export type AgentCycleStepListener = (step: AgentCycleStep) => void;
@@ -72,6 +111,7 @@ export class TradingAgentsPipeline {
       apiKeys: (config.apiKeys ?? []).filter(Boolean),
       cloudBaseUrl: config.cloudBaseUrl ?? 'https://ollama.com',
       cloudModel: config.cloudModel ?? 'gemma4:cloud',
+      riskPolicy: config.riskPolicy ?? DEFAULT_AGENT_RISK_POLICY,
     };
 
     const endpoints: Array<{ name: string; baseUrl: string; apiKey?: string; priority?: number }> = [];
@@ -154,6 +194,16 @@ export class TradingAgentsPipeline {
     });
   }
 
+  private static readonly STAGE_ENGINE: Record<AgentCycleStage, 'llm' | 'deterministic'> = {
+    analyst_team: 'llm',
+    debate_bull: 'llm',
+    debate_bear: 'llm',
+    debate_verdict: 'llm',
+    trader_decision: 'llm',
+    risk_team: 'deterministic',
+    fund_manager: 'deterministic',
+  };
+
   private emitStep(
     onStep: AgentCycleStepListener | undefined,
     cycleId: string,
@@ -162,7 +212,15 @@ export class TradingAgentsPipeline {
     status: AgentCycleStep['status'],
     detail?: string
   ): void {
-    onStep?.({ cycleId, symbol, stage, status, detail, timestamp: Date.now() });
+    onStep?.({
+      cycleId,
+      symbol,
+      stage,
+      status,
+      detail,
+      timestamp: Date.now(),
+      engine: TradingAgentsPipeline.STAGE_ENGINE[stage],
+    });
   }
 
   private async runAnalystTeam(
@@ -328,23 +386,24 @@ export class TradingAgentsPipeline {
   }
 
   /**
-   * H-16: deterministic by design, not a gap. The code review flagged the
-   * risk team and fund manager as "hardcoded rules, not LLM agents" despite
-   * RiskOpinionSchema/FundManagerApprovalSchema being shaped for structured
-   * LLM output, and suggested making them genuinely LLM-driven.
+   * Risk team and fund manager are deterministic by design — this is the one
+   * stage of the pipeline an LLM is not allowed to drive.
    *
-   * That recommendation conflicts with this repository's own non-negotiable
-   * mandate (AGENTS.md Section 6.1 / Section 1 item 9): "Treat LLM reasoning
-   * as advisory/orchestrating, never as an authority over risk" — the LLM
-   * MUST NOT "bypass the risk engine" or "calculate authoritative execution
-   * state." Risk approval is exactly that authority: it's the gate deciding
-   * whether a trade executes at all. Handing that decision to an LLM call
-   * would be the violation, not the fix. The schemas are shaped this way
-   * because they also validate the analyst/trader/debate stages' genuine LLM
-   * output in the same CycleRecord — that doesn't obligate every stage to be
-   * LLM-produced. Keeping risk/fund-manager deterministic matches how every
-   * other execution path in this codebase works (Signal -> SignalExecutor ->
-   * RiskCheck -> PaperBroker, all deterministic).
+   * CONTRACTS.md Section 5 (LLM Authority Contract) states the LLM may NOT
+   * "override risk checks", and AGENTS.md requires treating LLM reasoning as
+   * "advisory/orchestrating, never as an authority over risk". Risk approval
+   * is precisely that authority: it is the gate deciding whether a trade
+   * executes at all. Routing it through a model call would be the contract
+   * violation, not the fix — a prompt-injected or simply hallucinating model
+   * could approve unbounded leverage.
+   *
+   * What was genuinely incomplete, and is fixed here, is that the policy was a
+   * stub: it evaluated only two of the three declared personas and its only
+   * rule was `leverage > 5`. It now evaluates all three personas against the
+   * risk limits actually in force and can return every verdict in
+   * RiskOpinionSchema, and every step it emits is tagged `engine:
+   * 'deterministic'` so no dashboard or event-log consumer can mistake it for
+   * model output.
    */
   private async runRiskTeam(
     cycleId: string,
@@ -353,22 +412,135 @@ export class TradingAgentsPipeline {
     onStep?: AgentCycleStepListener
   ): Promise<RiskOpinion[]> {
     this.emitStep(onStep, cycleId, ctx.symbol, 'risk_team', 'started');
-    const personas: Array<'RISKY' | 'NEUTRAL' | 'SAFE'> = ['SAFE', 'NEUTRAL'];
-    const opinions: RiskOpinion[] = [];
 
-    for (const persona of personas) {
-      opinions.push({
-        persona,
-        verdict: decision.action === 'NEUTRAL' ? 'APPROVE' : persona === 'SAFE' && decision.leverage > 5 ? 'REDUCE_LEVERAGE' : 'APPROVE',
-        adjustedLeverage: persona === 'SAFE' && decision.leverage > 5 ? Math.min(3, decision.leverage) : decision.leverage,
-        rationale: `${persona} risk evaluation against equity ${ctx.accountEquity ?? 10000}`,
-      });
-    }
+    const limits = this.config.riskPolicy;
+    const personas: Array<'SAFE' | 'NEUTRAL' | 'RISKY'> = ['SAFE', 'NEUTRAL', 'RISKY'];
+    const opinions: RiskOpinion[] = personas.map((persona) =>
+      this.evaluateRiskPersona(persona, ctx, decision, limits)
+    );
 
-    this.emitStep(onStep, cycleId, ctx.symbol, 'risk_team', 'completed');
+    const rejects = opinions.filter((o) => o.verdict === 'REJECT').length;
+    this.emitStep(
+      onStep,
+      cycleId,
+      ctx.symbol,
+      'risk_team',
+      'completed',
+      `${opinions.length} personas, ${rejects} reject`
+    );
     return opinions;
   }
 
+  /**
+   * One persona's view of the trader's proposal. Each persona has its own
+   * leverage ceiling and size ceiling; a proposal beyond a ceiling is reduced,
+   * and a proposal that fails a hard safety condition is rejected outright.
+   */
+  private evaluateRiskPersona(
+    persona: 'SAFE' | 'NEUTRAL' | 'RISKY',
+    ctx: MarketFactContext,
+    decision: TraderDecision,
+    limits: AgentRiskPolicy
+  ): RiskOpinion {
+    const ceilings = limits.personaCeilings[persona];
+
+    // A neutral proposal has nothing to approve or reduce.
+    if (decision.action === 'NEUTRAL') {
+      return {
+        persona,
+        verdict: 'APPROVE',
+        adjustedLeverage: decision.leverage,
+        adjustedSizePct: decision.sizePct,
+        rationale: `${persona}: no directional exposure proposed`,
+      };
+    }
+
+    const reasons: string[] = [];
+
+    // Hard rejections first — these are not negotiable by resizing.
+    if (decision.confidence < ceilings.minConfidence) {
+      return {
+        persona,
+        verdict: 'REJECT',
+        rationale: `${persona}: confidence ${decision.confidence.toFixed(2)} below floor ${ceilings.minConfidence}`,
+      };
+    }
+
+    if (limits.requireStopLoss && !Number.isFinite(decision.stopLoss ?? NaN)) {
+      return {
+        persona,
+        verdict: 'REJECT',
+        rationale: `${persona}: no stop loss on the proposal`,
+      };
+    }
+
+    // A stop on the wrong side of entry would widen, not cap, the loss.
+    const entry = ctx.lastPrice;
+    const stop = decision.stopLoss;
+    if (stop !== undefined && Number.isFinite(stop) && Number.isFinite(entry)) {
+      const stopIsWrongSide =
+        decision.action === 'LONG' ? stop >= entry : stop <= entry;
+      if (stopIsWrongSide) {
+        return {
+          persona,
+          verdict: 'REJECT',
+          rationale: `${persona}: stop ${stop} is on the wrong side of entry ${entry} for a ${decision.action}`,
+        };
+      }
+    }
+
+    let adjustedLeverage = decision.leverage;
+    let adjustedSizePct = decision.sizePct;
+
+    if (adjustedLeverage > ceilings.maxLeverage) {
+      adjustedLeverage = ceilings.maxLeverage;
+      reasons.push(`leverage capped ${decision.leverage}x -> ${adjustedLeverage}x`);
+    }
+
+    if (adjustedSizePct > ceilings.maxSizePct) {
+      adjustedSizePct = ceilings.maxSizePct;
+      reasons.push(`size capped ${(decision.sizePct * 100).toFixed(1)}% -> ${(adjustedSizePct * 100).toFixed(1)}%`);
+    }
+
+    const equity = ctx.accountEquity ?? 0;
+    const available = ctx.availableBalance ?? equity;
+    if (equity > 0 && available > 0) {
+      // Notional the proposal implies must be servable by free margin.
+      const impliedMargin = equity * adjustedSizePct;
+      if (impliedMargin > available) {
+        const cappedSizePct = available / equity;
+        reasons.push(
+          `size limited by free margin ${(adjustedSizePct * 100).toFixed(1)}% -> ${(cappedSizePct * 100).toFixed(1)}%`
+        );
+        adjustedSizePct = cappedSizePct;
+      }
+    }
+
+    const leverageReduced = adjustedLeverage < decision.leverage;
+    const sizeReduced = adjustedSizePct < decision.sizePct;
+
+    let verdict: RiskOpinion['verdict'] = 'APPROVE';
+    if (sizeReduced) verdict = 'REDUCE_SIZE';
+    else if (leverageReduced) verdict = 'REDUCE_LEVERAGE';
+
+    return {
+      persona,
+      verdict,
+      adjustedLeverage,
+      adjustedSizePct,
+      rationale:
+        reasons.length > 0
+          ? `${persona}: ${reasons.join('; ')}`
+          : `${persona}: within limits at equity ${equity.toFixed(2)}`,
+    };
+  }
+
+  /**
+   * Final gate. Takes the most conservative view across the risk personas —
+   * any single REJECT blocks the trade, and the surviving leverage/size are the
+   * minimum any persona was willing to allow. Deterministic for the same
+   * contract reason as the risk team.
+   */
   private async runFundManager(
     cycleId: string,
     decision: TraderDecision,
@@ -376,23 +548,51 @@ export class TradingAgentsPipeline {
     onStep?: AgentCycleStepListener
   ): Promise<FundManagerApproval> {
     this.emitStep(onStep, cycleId, decision.symbol, 'fund_manager', 'started');
-    const safeOpinion = riskOpinions.find((o) => o.persona === 'SAFE');
-    const finalDecision = { ...decision };
 
-    if (safeOpinion?.adjustedLeverage) {
-      finalDecision.leverage = safeOpinion.adjustedLeverage;
+    const limits = this.config.riskPolicy;
+    const finalDecision: TraderDecision = { ...decision };
+
+    const rejections = riskOpinions.filter((o) => o.verdict === 'REJECT');
+
+    // Most conservative surviving numbers across every persona.
+    const leverages = riskOpinions
+      .map((o) => o.adjustedLeverage)
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const sizes = riskOpinions
+      .map((o) => o.adjustedSizePct)
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+
+    if (leverages.length > 0) finalDecision.leverage = Math.min(...leverages);
+    if (sizes.length > 0) finalDecision.sizePct = Math.min(...sizes);
+
+    let approved = decision.action !== 'NEUTRAL';
+    let rationale: string;
+
+    if (!approved) {
+      rationale = 'Held neutral — no directional proposal to approve';
+    } else if (rejections.length > 0) {
+      approved = false;
+      rationale = `Rejected by risk team: ${rejections.map((r) => r.rationale).join(' | ')}`;
+    } else if (decision.confidence < limits.minApprovalConfidence) {
+      approved = false;
+      rationale = `Rejected: confidence ${decision.confidence.toFixed(2)} below approval floor ${limits.minApprovalConfidence}`;
+    } else if (finalDecision.sizePct <= 0) {
+      approved = false;
+      rationale = 'Rejected: risk team reduced position size to zero';
+    } else {
+      rationale = `Approved at ${finalDecision.leverage}x, ${(finalDecision.sizePct * 100).toFixed(1)}% of equity (most conservative of ${riskOpinions.length} risk personas)`;
     }
 
-    const approved = decision.action !== 'NEUTRAL' && decision.confidence >= 0.5;
+    this.emitStep(
+      onStep,
+      cycleId,
+      decision.symbol,
+      'fund_manager',
+      'completed',
+      approved ? 'APPROVED' : 'REJECTED'
+    );
 
-    this.emitStep(onStep, cycleId, decision.symbol, 'fund_manager', 'completed', approved ? 'APPROVED' : 'REJECTED');
-    return {
-      approved,
-      finalDecision,
-      rationale: approved
-        ? `Approved with leverage ${finalDecision.leverage}x based on risk team consensus`
-        : 'Trade rejected or held neutral due to risk limits',
-    };
+    return { approved, finalDecision, rationale };
   }
 
   private async generateProse(

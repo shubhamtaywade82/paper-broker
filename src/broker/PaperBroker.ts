@@ -47,6 +47,7 @@ export class PaperBroker implements ExecutionBroker {
   private marketState?: MarketStateProvider;
   private eventLog?: OrderEventSink;
   private persister?: BrokerPersister;
+  private onFill?: (fill: Fill) => void;
 
   private walletBalance: number;
   private totalFees = 0;
@@ -82,6 +83,7 @@ export class PaperBroker implements ExecutionBroker {
     this.marketState = config.marketState;
     this.eventLog = config.eventLog;
     this.persister = config.persister;
+    this.onFill = config.onFill;
 
     this.takerFeeRate = config.takerFeeRate ?? 0.0004;
     this.makerFeeRate = config.makerFeeRate ?? 0.0002;
@@ -537,6 +539,20 @@ export class PaperBroker implements ExecutionBroker {
     this.eventLog?.appendFill(fill);
     this.persister?.saveFill(fill);
     this.recalculateAccount();
+
+    // Observers (profit goals, per-strategy performance) must never be able to
+    // break execution: a throwing listener would abort the fill path after the
+    // ledger has already been updated, leaving order and account state
+    // inconsistent. Isolate it.
+    if (this.onFill) {
+      try {
+        this.onFill(fill);
+      } catch (error) {
+        this.emitOrderEvent('ORDER_FILLED', order, {
+          reason: `onFill listener threw: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    }
   }
 
   private applyPositionFill(

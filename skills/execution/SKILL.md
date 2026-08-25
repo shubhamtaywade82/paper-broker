@@ -48,11 +48,21 @@ interface ExecutionBroker {
 
 | Order Type | Paper Status | Live Status |
 |------------|--------------|-------------|
-| MARKET | ✅ Implemented | ❌ Not connected |
-| LIMIT | ✅ Implemented | ❌ Not connected |
-| STOP_MARKET | ✅ Implemented | ❌ Not connected |
-| TAKE_PROFIT_MARKET | ✅ Implemented | ❌ Not connected |
-| TRAILING_STOP | ❌ Not implemented | ❌ Not connected |
+| MARKET | ✅ Implemented | ✅ Via `CoinDCXBroker` (arm-gated) |
+| LIMIT | ✅ Implemented | ✅ Via `CoinDCXBroker` (arm-gated) |
+| STOP_MARKET | ✅ Implemented | ✅ Mapped to `stop_limit_order` |
+| TAKE_PROFIT_MARKET | ✅ Implemented | ⚠️ Mapped to `market_order` by `CoinDCXBroker` |
+| TRAILING_STOP | ⚠️ Emulated | ⚠️ Emulated |
+
+`TRAILING_STOP` is not a native order type here. `TrailingStopController`
+emulates it by cancelling and replacing a resting reduce-only `STOP_MARKET`
+order as price moves in favour. The replacement is submitted **before** the
+original is cancelled, so the position is never momentarily unprotected.
+
+All order submission goes through `ExecutionRouter`, which applies the runtime
+profile and `LiveTradingGuard`. An armed live profile with no usable adapter
+rejects with `NO_LIVE_EXECUTION_ADAPTER` — it must never fall back to a
+simulated fill.
 
 ## Never
 

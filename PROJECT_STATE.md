@@ -4,38 +4,46 @@
 
 **Phase: foundation**
 
-This project is a paper trading engine with real Binance market data and simulated execution.
+This project is a crypto futures trading engine with real Binance market data
+and simulated (paper) execution by default. A live CoinDCX execution path
+exists and is wired, but requires explicit arming and credentials.
 
 ## Operating Modes
 
-| Mode    | Status      | Description                                      |
-|---------|-------------|--------------------------------------------------|
-| paper   | implemented | Simulated execution with real market data        |
-| shadow  | implemented | Read-only account state, simulated execution     |
-| live    | implemented | CoinDCX execution with explicit arm gate (`LiveTradingGuard`) |
+`TRADING_MODE` selects the profile (see `src/config/modes/resolver.ts`).
+Every order submission goes through `ExecutionRouter`, which is constructed in
+`engine.ts` and applies the profile plus `LiveTradingGuard`.
+
+| Mode    | Status      | Description                                                                 |
+|---------|-------------|-----------------------------------------------------------------------------|
+| paper   | implemented | Simulated execution against real market data. Default.                       |
+| shadow  | implemented | `accountReadOnly`, reconciliation enabled, still routed to the paper broker. |
+| live    | implemented, unproven in production | Routes to `CoinDCXBroker` only when `LIVE_TRADING_ARMED=true` **and** `COINDCX_API_KEY`/`COINDCX_API_SECRET` are set. Missing credentials produce `NO_LIVE_EXECUTION_ADAPTER` rejections — never a silent paper fill. |
 
 ## Providers
 
-| Provider         | Market Data | Execution | Status                          |
-|------------------|-------------|-----------|---------------------------------|
-| Binance Futures  | ✅          | ❌        | Primary market data stream active |
-| CoinDCX          | ✅ (Fallback)| ✅       | MarketDataSupervisor fallback + CoinDCXBroker live execution |
+| Provider         | Market Data | Execution | Status                                                                 |
+|------------------|-------------|-----------|------------------------------------------------------------------------|
+| Binance Futures  | ✅ wired     | ❌        | Primary stream (`BinanceStreamHandler`), wired in `engine.ts`.          |
+| CoinDCX          | ⚠️ not wired | ✅ wired   | `CoinDCXBroker` is routed via `ExecutionRouter`. The `MarketDataSupervisor` fallback exists in `src/market/supervisor/` but is **not** constructed by `engine.ts`. |
 
 ## Agent / LLM
 
 | Component       | Status      | Notes                                    |
 |-----------------|-------------|------------------------------------------|
-| Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`                |
-| Agent loop      | implemented | `TradingAgentsPipeline` multi-agent debate drives every live signal via `createSmcAgentStrategy` (registered in `engine.ts`); also reachable manually via `/api/v1/agents/cycle`. LLM-backed stages: analyst team, bull/bear debate (rounds configurable via `debateRounds`, default 2), trader decision. The risk team and fund-manager approval stages are deterministic rule-based code, not LLM calls — intentionally, per AGENTS.md's "LLM must never be an authority over risk" mandate, not a gap |
-| Ollama reachability | hard runtime dependency | If Ollama is unreachable, the agent debate always resolves to NEUTRAL and no trades occur (safe by design); `engine.ts` logs a startup warning if unreachable, but does not gate startup |
-| MCP             | planned     | Planned for tool orchestration           |
-| Trading supervision | implemented | LiveTradingGuard, DivergenceGuard, Risk check |
+| Ollama SDK      | available   | `@nemesis-oss/ollama-sdk`, local daemon plus optional cloud key pool |
+| Agent pipeline  | implemented | `TradingAgentsPipeline`, driven by `createSmcAgentStrategy`. **LLM-backed stages:** analyst team, bull/bear debate (`debateRounds`, default 2), debate verdict, trader decision. **Deterministic stages:** risk team, fund manager. Each emitted `AgentCycleStep` carries `engine: 'llm' \| 'deterministic'` so consumers cannot conflate them. |
+| Agent authority | advisory only | The pipeline **confirms or vetoes** a candidate the deterministic SMC engine already produced (`smc-agent.ts`: a NEUTRAL or mismatched direction returns null). It cannot originate a trade, pick a symbol, set a stop, or size a position. |
+| Ollama reachability | soft dependency | If unreachable, the debate resolves to NEUTRAL and no SMC trades occur. `engine.ts` logs a startup warning; startup is not gated. |
+| MCP             | not implemented | No tool orchestration. Agents are prompt-in / JSON-out. |
+| Learning        | implemented, narrow | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. Nothing else in the system learns; the LLM has no memory across cycles. |
 
 ## Persistence
 
 | Store     | Status      | Notes                                    |
 |-----------|-------------|------------------------------------------|
 | SQLite    | implemented | `paper.sqlite3` with WAL mode            |
+| JSON state | implemented | `adaptive_supertrend_qtable.json`, `profit_goals.json`, `strategy_performance.json`, `aggressive_mode.json` under the data dir |
 | PostgreSQL| planned     | For production multi-instance deployment |
 | Redis     | planned     | For pub/sub and caching                  |
 
@@ -44,75 +52,78 @@ This project is a paper trading engine with real Binance market data and simulat
 | Component | Status      | Notes                                    |
 |-----------|-------------|------------------------------------------|
 | Backend / BFF | implemented | Fastify REST API + WebSocket Gateway (`/ws`, `/api/v1/dashboard`) |
-| Frontend  | planned     | React dashboard                          |
+| Frontend  | implemented | React app under `dashboard/` (Vite, Zustand stores, own vitest suite) |
 
 ## Notifications
 
 | Provider | Status      | Notes                                    |
 |----------|-------------|------------------------------------------|
-| Telegram | implemented | ErrorNormalizer with incident IDs (`INC-...`) and TelegramNotifier |
+| Telegram | implemented | `ErrorNormalizer` incident IDs (`INC-...`) + `TelegramNotifier` with rate limiting and token redaction |
 | Webhook  | planned     | Additional operational alert sinks       |
 
 ## Hard Invariants
 
 These must NOT change without an ADR:
 
-1. **LLM cannot execute orders directly** - LLM produces signals only; SignalExecutor owns order submission.
-2. **PaperBroker owns trading state** - No strategy, scheduler, or API handler mutates positions/orders directly.
-3. **Market data owns price truth** - Stale/missing market causes `NO_MARKET_STATE` rejection, never invented prices.
-4. **Event log is append-only** - `events` table and `events.jsonl` are immutable history.
-5. **Live execution requires explicit arm** - Future live mode needs separate armed state beyond `TRADING_MODE=live`.
-6. **Exchange state is authoritative (future)** - Live trading requires reconciliation before resuming operations.
-7. **TRADING_MODE is single selector** - One flag controls operational profile, not multiple booleans.
+1. **LLM cannot execute orders directly** — LLM produces signals only; `SignalExecutor` owns order submission.
+2. **LLM is never an authority over risk** — the risk team and fund manager stages are deterministic by contract (CONTRACTS.md §5).
+3. **PaperBroker owns trading state** — no strategy, scheduler, or API handler mutates positions/orders directly.
+4. **Market data owns price truth** — stale/missing market causes `NO_MARKET_STATE` rejection, never invented prices.
+5. **Event log is append-only** — `events` table and `events.jsonl` are immutable history.
+6. **Live execution requires explicit arm** — `TRADING_MODE=live` alone does nothing; `LIVE_TRADING_ARMED=true` plus credentials are required.
+7. **Live execution is never simulated** — an armed live profile with no usable adapter rejects orders; it must never fall back to paper fills.
+8. **TRADING_MODE is single selector** — one flag controls the operational profile, not multiple booleans.
 
 ## Current Capabilities
 
-### Implemented
+### Implemented and wired into `engine.ts`
 
-- ✅ Binance WebSocket market data streams (bookTicker, markPrice, klines)
-- ✅ CoinDCX execution broker (`CoinDCXBroker`) via `@nemesis-oss/coindcx-sdk`
-- ✅ Unified execution router (`ExecutionRouter`) and live safety guard (`LiveTradingGuard`)
-- ✅ Multi-feed market data supervisor (`MarketDataSupervisor`) with fallback coordination
-- ✅ Cross-exchange price divergence guard (`DivergenceGuard`)
-- ✅ Provider health & latency tracking (`ProviderHealthManager`)
-- ✅ Fastify WebSocket gateway (`ws://localhost:8080/ws`) for real-time dashboard push events
-- ✅ Consolidated dashboard BFF endpoints (`/api/v1/dashboard`, `/api/v1/health/providers`, `/api/v1/incidents`, `/api/v1/mode/arm`)
-- ✅ Incident normalization and error pipeline (`ErrorNormalizer`) with Telegram alerts (`TelegramNotifier`)
-- ✅ PaperBroker with LIMIT/MARKET/STOP_MARKET/TAKE_PROFIT_MARKET orders
-- ✅ Position accounting (weighted entry, P&L realization, flips)
-- ✅ Funding payments simulation
-- ✅ Fee tracking (taker/maker)
+- ✅ Binance WebSocket market data (bookTicker, markPrice, klines, aggTrade)
+- ✅ `PaperBroker` with LIMIT/MARKET/STOP_MARKET/TAKE_PROFIT_MARKET, weighted-entry position accounting, flips, funding, fees, liquidation
+- ✅ `ExecutionRouter` + `LiveTradingGuard` on every order submission
+- ✅ `CoinDCXBroker` live adapter, arm-gated and credential-gated
+- ✅ Strategy engine hosting **two** live strategies: `smc-agent-v1` and the adaptive Supertrend strategy
+- ✅ SMC structure detection → `TradingAgentsPipeline` debate → `TradeIntentEngine` risk gate
+- ✅ Adaptive Supertrend with Q-learning parameter selection per regime, persisted across restarts
+- ✅ Profit goals (`ProfitGoalManager`) feeding `RiskEngine`'s trading halt and position-size multiplier, persisted, with calendar resets in `Scheduler`
+- ✅ Trailing stops (`TrailingStopController`) doing real cancel-and-replace on resting STOP_MARKET orders
+- ✅ Per-strategy performance feedback (`StrategyPerformanceTracker`) with drawdown/win-rate quarantine, persisted, operator-released
 - ✅ SQLite event persistence (append-only + queryable tables)
-- ✅ Strategy engine with cooldowns and conflict rules, hosting a single live strategy (`smc-agent-v1`)
-- ✅ SMC structure detection → `TradingAgentsPipeline` multi-agent debate → `TradeIntentEngine` risk gate drives every live/paper trading signal (`createSmcAgentStrategy`, wired in `engine.ts`); classic indicator strategies (EMA/RSI/breakout/momentum/grid/Ollama-trend) removed from the live loop
-- ✅ Signal executor executes pre-sized signals (quantity/leverage sourced from `signal.features`, computed upstream by the risk gate — `SignalExecutor` itself no longer contains sizing logic)
+- ✅ Fastify REST + WebSocket gateway, API key auth on control endpoints
+- ✅ Incident normalization (`ErrorNormalizer`) with Telegram alerts
 - ✅ CLI for operational commands
 
-### In Progress
+### Implemented but NOT wired into `engine.ts`
 
-- 🔄 Multi-timeframe structure analysis (`MtfStateEngine`, wired into the live SMC pipeline in `engine.ts`)
+These exist with tests and are reachable programmatically, but the running
+engine does not construct them. Do not describe them as active.
 
-### Deferred (not yet migrated to the unified pipeline)
+- ⚠️ `MarketDataSupervisor` (multi-feed failover coordination)
+- ⚠️ `DivergenceGuard` (cross-exchange price divergence)
+- ⚠️ `ProviderHealthManager` (provider health/latency tracking)
 
-- ⏸️ `SizingEngine.ts`, the 6 non-Ollama classic strategy files, and `BacktestRunner.ts` remain on disk, reachable via `cli.ts`'s `--engine=indicators` flag, but produce zero trades (`SignalExecutor` no longer computes sizing for signals that don't carry it) — this path is retired pending a future unification plan, not a working alternative to the default `--engine=smc` path
+### Deferred
+
+- ⏸️ `SizingEngine.ts`, the classic indicator strategy files, and `BacktestRunner.ts` remain on disk and are reachable via `cli.ts --engine=indicators`, but produce zero trades because `SignalExecutor` no longer computes sizing for signals that do not carry it. Retired pending a unification plan, not a working alternative to the default `--engine=smc` path.
 
 ### Planned
 
-- ⏳ Standalone React dashboard UI (`apps/dashboard`)
 - ⏳ MCP tool orchestration loop
+- ⏳ Exchange position reconciliation for live mode
 - ⏳ Backtest engine visualization
 
 ## Known Constraints
 
-- Testnet vs mainnet switch via `BINANCE_TESTNET` environment variable
+- Testnet vs mainnet switch via `BINANCE_ENV` (`testnet` | `mainnet` | `production`)
 - Single-process architecture (not yet cluster-ready)
 - SQLite limits concurrency; migration path to PostgreSQL planned
-- No authentication on API yet (localhost-only assumed)
+- API control endpoints require `API_KEY` when set; without it they are unauthenticated and localhost-only is assumed
+- Live mode has never been validated against a real CoinDCX account in this repository
 
 ## Last Updated
 
-2026-08-23
+2026-08-25
 
 ---
 
-**Agent Note**: Update this file when the project materially changes phase, capabilities, or invariants.
+**Agent Note**: Update this file when the project materially changes phase, capabilities, or invariants. Verify every claim against source before writing it here — several claims in earlier revisions of this file described code that existed on disk but was never constructed at runtime.

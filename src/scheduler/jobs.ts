@@ -4,6 +4,7 @@ import type { MarketStateManager } from '../market/MarketState.js';
 import type { SnapshotStore } from '../persistence/SnapshotStore.js';
 import type { StrategyEngine } from '../strategy/StrategyEngine.js';
 import type { EventLog } from '../persistence/EventLog.js';
+import type { ProfitGoalManager } from '../trading/goals/ProfitGoalManager.js';
 import { metrics } from '../telemetry/metrics.js';
 import { logger } from '../telemetry/logger.js';
 
@@ -14,6 +15,13 @@ export interface SchedulerOptions {
   engine: StrategyEngine;
   events: EventLog;
   staleMarketMaxAgeMs: number;
+  /**
+   * Profit goals roll on calendar boundaries. Without these resets a daily
+   * target achieved once would keep risk throttled forever, because
+   * dailyTargetAchieved is only cleared by resetDaily().
+   */
+  profitGoals?: ProfitGoalManager;
+  onProfitGoalsReset?: (period: 'daily' | 'weekly' | 'monthly') => void;
 }
 
 export class Scheduler {
@@ -76,6 +84,17 @@ export class Scheduler {
       cron.schedule('0 0 * * *', () => {
         logger.info('Rolling daily equity baseline');
         metrics.inc('daily_baseline_rolls_total');
+        this.rollProfitGoals('daily');
+      }),
+
+      // Monday 00:00 UTC — start of the trading week.
+      cron.schedule('0 0 * * 1', () => {
+        this.rollProfitGoals('weekly');
+      }),
+
+      // 1st of the month, 00:00 UTC.
+      cron.schedule('0 0 1 * *', () => {
+        this.rollProfitGoals('monthly');
       })
     );
 
@@ -131,6 +150,30 @@ export class Scheduler {
     );
 
     logger.info('Scheduler started');
+  }
+
+  /**
+   * Reset the profit-goal window for a period. The new baseline is current
+   * equity, so the next period's target is measured from where this one
+   * actually finished rather than from the original starting balance.
+   */
+  private rollProfitGoals(period: 'daily' | 'weekly' | 'monthly'): void {
+    const { profitGoals, broker, events, onProfitGoalsReset } = this.options;
+    if (!profitGoals) return;
+
+    const equity = broker.getAccount().equity;
+    if (period === 'daily') profitGoals.resetDaily(equity);
+    else if (period === 'weekly') profitGoals.resetWeekly(equity);
+    else profitGoals.resetMonthly(equity);
+
+    metrics.inc('profit_goal_resets_total');
+    events.appendSystemEvent({
+      eventType: 'PROFIT_GOAL_RESET',
+      payload: { period, equity },
+      createdAtUtc: new Date().toISOString(),
+    });
+    onProfitGoalsReset?.(period);
+    logger.info({ period, equity }, 'Profit goal window reset');
   }
 
   stop(): void {

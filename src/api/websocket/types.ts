@@ -13,7 +13,10 @@ export type WebSocketEventType =
   | 'trade.stream'
   | 'book.update'
   | 'agent.cycle'
-  | 'agent.step';
+  | 'agent.step'
+  | 'profit.goal'
+  | 'strategy.performance'
+  | 'trailing.stop';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

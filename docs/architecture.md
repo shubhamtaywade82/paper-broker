@@ -38,7 +38,9 @@
 
 1. **Only `PaperBroker` mutates trading state.** Account balance, orders, fills and positions are owned exclusively by the broker. No strategy, signal executor, scheduler or API handler writes to them directly.
 2. **Market data owns price truth.** All fills are priced off the current market state (bid/ask/last/mark). A stale or missing market causes orders to be rejected with `NO_MARKET_STATE` / `STALE_MARKET_DATA` rather than being filled at invented prices.
-3. **Strategies own signals.** Strategies emit typed signals on candle close. The engine routes them verbatim to the `SignalExecutor`, which owns sizing and risk — the engine never re-interprets strategy intent.
+3. **Strategies own signals.** Strategies emit typed signals on candle close. The engine routes them verbatim to the `SignalExecutor`. Sizing and risk are decided upstream by `TradeIntentEngine`/`RiskEngine`, which put `quantity` and `leverage` on `signal.features`; `SignalExecutor` no longer computes sizing itself.
+5. **All order writes go through `ExecutionRouter`.** `SignalExecutor` accepts `ExecutionBroker`, not a concrete broker. The router applies the mode profile and `LiveTradingGuard`, and refuses to simulate fills for an armed live profile with no usable adapter.
+6. **Observers cannot break execution.** `PaperBroker.onFill` notifies profit goals and performance tracking; a throwing observer is isolated and never aborts a fill.
 4. **The database owns audit.** The broker broadcasts every transition through an event sink; `EventLog` appends to the immutable `events` table and the JSONL stream, while `BrokerPersister` keeps the queryable `orders` / `fills` / `positions` tables in sync. Broker memory is live state; the DB is persistent history.
 
 ## Component responsibilities
@@ -69,15 +71,30 @@
 ### `strategy/` — signals & execution
 
 - `StrategyEngine` — registers strategies, applies per-strategy cooldowns, validates signals (schema + conflict rules + expiry), forwards accepted signals to the executor.
-- `SignalExecutor` — sizes OPEN signals with `SizingEngine` (risk-per-trade vs stop distance, capped by max notional), closes at position size with reduce-only, attaches STOP_MARKET brackets when a stop price is present, and updates signal status (`EXECUTED` / `REJECTED`).
+- `SignalExecutor` — submits pre-sized signals through `ExecutionBroker` (the router), closes at position size with reduce-only, attaches STOP_MARKET / TAKE_PROFIT_MARKET brackets, and updates signal status (`EXECUTED` / `REJECTED`). It reports failure rather than success when a signal is skipped.
+- `StrategyPerformanceTracker` / `StrategyPerformanceStore` — per-strategy realized PnL, win rate and peak-to-trough drawdown built from broker fills. A strategy breaching its thresholds is quarantined and `StrategyEngine` stops routing candles and ticks to it. Persisted; released only by an operator.
 - `strategies/` — the pluggable strategy set (see `docs/strategies.md`).
 - `indicators.ts` — EMA, SMA, RSI, ATR implemented on close arrays / candle arrays.
+
+### `execution/` — routing & live safety
+
+- `ExecutionRouter` — implements `ExecutionBroker` and sits on every order submission. Selects the paper broker or the live venue adapter based on the runtime profile, and rejects with `NO_LIVE_EXECUTION_ADAPTER` when the profile demands real orders but no adapter is usable.
+- `LiveTradingGuard` — arm-state and safe-mode enforcement.
+
+### `trading/` — intent, risk & goals
+
+- `TradeIntentEngine` — translates an execution plan into a `TradeSignal`, applying duplicate and cooldown rules, then `RiskEngine`.
+- `risk/RiskEngine` — daily loss, open-position, per-symbol, and account-risk limits; position sizing; profit-goal halt and risk multiplier.
+- `risk/TrailingStopManager` — pure calculation of where a stop should sit given the best favourable price.
+- `risk/TrailingStopController` — turns that calculation into broker state. Stops are resting reduce-only STOP_MARKET orders, so trailing means cancel-and-replace; the replacement is submitted **before** the original is cancelled so the position is never left unprotected.
+- `goals/ProfitGoalManager` + `ProfitGoalStore` — daily/weekly/monthly targets, cooldowns, risk multiplier, persisted across restarts and reset on calendar boundaries by `Scheduler`.
 
 ### `scheduler/` — periodic jobs
 
 - 1s — mark stale markets; write 1s market ticks.
 - 1m — account snapshots; (cron) daily rollover.
 - 5s — signal expiry; funding application (per-symbol, deduplicated via `nextFundingTimeUtc`).
+- cron `0 0 * * *` / `0 0 * * 1` / `0 0 1 * *` — profit-goal daily / weekly / monthly window resets, rebasing on current equity.
 
 ### `persistence/` — durable state
 
@@ -90,9 +107,17 @@
 
 Fastify server exposing the REST API, Prometheus metrics, and engine lifecycle endpoints. It reads broker memory and the signal repository; it never mutates trading state directly (except by calling broker/engine methods).
 
-### `ai/` — LLM signals
+### `ai/` — multi-agent pipeline
 
-`OllamaSignalGenerator` wraps `@nemesis-oss/ollama-sdk`: `ping()` verifies the configured model exists; `generateSignal()` produces a structured BUY/SELL/HOLD recommendation consumed by `ollama-trend-5m`.
+`TradingAgentsPipeline` wraps `@nemesis-oss/ollama-sdk` (local daemon plus an optional cloud key pool with failover) and runs a seven-stage cycle.
+
+**LLM-backed stages:** analyst team, bull/bear debate researchers, debate verdict, trader decision.
+
+**Deterministic stages:** risk team and fund manager. These are policy code, not model calls, and deliberately so — CONTRACTS.md §5 forbids the LLM from overriding risk checks. The risk team evaluates SAFE/NEUTRAL/RISKY personas against configured leverage, size and confidence ceilings, rejects missing or wrong-side stops, and limits size to free margin. The fund manager takes the most conservative surviving values and blocks on any single persona rejection.
+
+Every emitted `AgentCycleStep` carries `engine: 'llm' | 'deterministic'` so no consumer can present policy code as model output.
+
+The pipeline's authority is **advisory**: `smc-agent.ts` discards the cycle unless the agent direction matches a candidate the deterministic SMC engine already produced. The LLM cannot originate a trade, choose a symbol, set a stop, or size a position.
 
 ## Target 4-Plane Platform Architecture (ADR 0003)
 

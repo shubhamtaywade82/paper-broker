@@ -13,6 +13,20 @@ Quick reference for navigating this codebase.
 | `CLAUDE.md` | Claude-specific adapter pointing to authoritative sources |
 | `CODEX.md` | Codex-specific adapter pointing to authoritative sources |
 | `README.md` | Project overview and quick start |
+| `docs/` | Architecture, API, configuration, strategies references |
+
+## Research Transcripts (not specifications)
+
+These are captured design conversations and research notes, kept for
+provenance. They are **not** maintained descriptions of current behaviour —
+check `PROJECT_STATE.md` and the source before trusting anything in them.
+
+| File | Subject |
+|------|---------|
+| `SYSTEM_DASHBOARD.md` | Dashboard design exploration |
+| `TRADING_AGENTS.md` | TradingAgents paper walkthrough |
+| `paper-exchange.md` | Binance SDK endpoint coverage notes |
+| `ADAPTIVE_SUPERTREND.md` | Adaptive Supertrend design exploration |
 
 ## Skills (`skills/`)
 
@@ -49,7 +63,7 @@ IDE-level enforcement:
 
 | Directory | Purpose | Key Files |
 |-----------|---------|-----------|
-| `ai/` | LLM integration | `ollama-signal-generator.ts` |
+| `ai/` | Multi-agent LLM pipeline | `tradingAgents.ts`, `schemas.ts` |
 | `api/` | REST API server | `server.ts` |
 | `binance/` | Market data ingestion | `streams.ts`, `client.ts`, `normalizers.ts` |
 | `broker/` | Paper execution | `PaperBroker.ts` |
@@ -57,7 +71,12 @@ IDE-level enforcement:
 | `market/` | Market state management | `state.ts`, `candles.ts`, `kline.ts` |
 | `persistence/` | SQLite persistence | `db.ts`, `EventLog.ts`, `BrokerPersister.ts` |
 | `scheduler/` | Periodic jobs | Funding, snapshots, staleness checks |
-| `strategy/` | Strategy engine | `engine.ts`, `executor.ts`, `strategies/` |
+| `strategy/` | Strategy engine | `StrategyEngine.ts`, `SignalExecutor.ts`, `StrategyPerformanceTracker.ts`, `strategies/` |
+| `execution/` | Order routing & live safety | `ExecutionRouter.ts`, `LiveTradingGuard.ts` |
+| `coindcx/` | Live venue adapter | `CoinDCXBroker.ts` |
+| `trading/` | Intent, risk, goals | `TradeIntentEngine.ts`, `risk/RiskEngine.ts`, `risk/TrailingStopController.ts`, `goals/ProfitGoalManager.ts` |
+| `research/` | Backtest & replay | `replay/ReplayEngine.ts`, `dataset/HistoricalDatasetPaginator.ts` |
+| `telemetry/` | Metrics & logging | `metrics.ts`, `logger.ts` |
 | `telemetry/` | Observability | Logging and metrics |
 
 ### Entry Points

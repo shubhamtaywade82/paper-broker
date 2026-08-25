@@ -2,7 +2,7 @@
 
 Crypto **futures paper trading engine** powered by live Binance market data. It streams real-time order books and klines from Binance Futures (testnet by default), simulates a USDT-margined futures account with realistic fills, fees, slippage and funding, runs a pluggable set of trading strategies, and persists every event to SQLite as an audit-trail event log.
 
-No real money is ever at risk — all execution is simulated by the `PaperBroker`, which reproduces exchange semantics (fees, mark-price funding, reduce-only rules, leverage, liquidation checks, order brackets).
+**By default no real money is at risk** — execution is simulated by the `PaperBroker`, which reproduces exchange semantics (fees, mark-price funding, reduce-only rules, leverage, liquidation checks, order brackets). A live CoinDCX execution path exists and is wired, but it is inert unless you set `TRADING_MODE=live`, `LIVE_TRADING_ARMED=true`, **and** supply CoinDCX credentials. See [Trading modes](#trading-modes).
 
 ---
 
@@ -10,13 +10,36 @@ No real money is ever at risk — all execution is simulated by the `PaperBroker
 
 - **Real-Time Web Dashboard** — built-in interactive control console at `http://localhost:8080/` with TradingView Lightweight Charts, live position monitor, setup radar, provider matrix, and emergency kill-switch.
 - **WebSocket Streaming Gateway** — push streaming at `ws://localhost:8080/ws` for live ticks, order updates, position PnL, incident alerts, and mode changes.
-- **Multi-Feed Market Supervisor** — concurrent Binance (primary) and CoinDCX (fallback) feeds with latency tracking, staleness detection, and cross-exchange price divergence guards.
-- **Paper, Shadow & Live Modes** — single-flag profile resolution (`TRADING_MODE=paper|shadow|live`) with two-step live arming (`LiveTradingGuard`) and venue execution routing (`ExecutionRouter` $\to$ `CoinDCXBroker`).
+- **Paper, Shadow & Live Modes** — single-flag profile resolution (`TRADING_MODE=paper|shadow|live`) with two-step live arming (`LiveTradingGuard`) and venue execution routing (`ExecutionRouter` → `CoinDCXBroker`). An armed live profile with no usable adapter **rejects** orders rather than silently simulating them.
+- **Profit goals** — daily/weekly/monthly targets that throttle risk or halt trading once hit, persisted across restarts (opt-in via `PROFIT_GOALS_ENABLED`).
+- **Trailing stops** — real cancel-and-replace on resting stop orders as price moves in favour (opt-in via `TRAILING_STOPS_ENABLED`).
+- **Strategy performance feedback** — per-strategy PnL, win rate and drawdown; a strategy breaching its limits is quarantined and stops receiving candles (opt-in via `STRATEGY_FEEDBACK_ENABLED`).
 - **Realistic paper execution** — taker/maker fees, slippage (bps), funding payments, reduce-only enforcement, min-notional, max-leverage, max-position risk limits.
 - **Incident Error Pipeline & Telegram Alerts** — centralized error normalization with incident IDs (`INC-YYYYMMDD-XXXXX`), deduplication, and Telegram notifications.
 - **Event-sourced persistence** — every order, fill, position, funding and system event is appended to a SQLite WAL database **and** a JSONL stream; relational `orders` / `fills` / `positions` tables are kept in sync for querying.
-- **7 built-in strategies** — EMA trend, Bollinger/ATR breakout, RSI mean reversion, momentum, grid, mean reversion, and an Ollama-driven LLM trend strategy (auto-enabled when Ollama is reachable).
+- **Two live strategies** — `smc-agent-v1` (SMC structure detection confirmed by a multi-agent LLM debate) and an adaptive Supertrend strategy with Q-learning parameter selection per market regime. The classic indicator strategies remain on disk behind `cli.ts --engine=indicators` but produce no trades; see PROJECT_STATE.md.
+- **Reinforcement learning** — the adaptive Supertrend strategy learns which parameter set suits which regime from realized trade outcomes, persisted to `data/adaptive_supertrend_qtable.json`.
 - **Docker Background Deployment** — multi-stage Alpine image + `docker-compose` with persistent data volumes.
+
+---
+
+## Trading modes
+
+| Mode | Execution | What it takes |
+| --- | --- | --- |
+| `paper` (default) | `PaperBroker` simulation | Nothing. |
+| `shadow` | `PaperBroker` simulation, account treated as read-only | `TRADING_MODE=shadow`. |
+| `live` | `CoinDCXBroker`, real funds | `TRADING_MODE=live` **and** `LIVE_TRADING_ARMED=true` **and** `COINDCX_API_KEY`/`COINDCX_API_SECRET`. |
+
+Every order submission goes through `ExecutionRouter`. If the profile is armed
+for live but no usable adapter is present, orders are rejected with
+`NO_LIVE_EXECUTION_ADAPTER` — the router will not fall back to paper fills while
+reporting live execution.
+
+Binance credentials are used for **market data only**, never for order placement.
+
+> The live path has never been validated against a real CoinDCX account in this
+> repository. Treat it as implemented but unproven.
 
 ---
 
@@ -88,6 +111,10 @@ Base URL `http://localhost:8080`. Full reference: [`docs/api.md`](docs/api.md).
 | GET | `/api/v1/health/providers` | Binance & CoinDCX latency and status matrix |
 | GET | `/api/v1/incidents` | Incident reports stream |
 | POST | `/api/v1/mode/arm` | Arm live trading mode |
+| GET | `/api/v1/risk` | Live risk limits, exposure, profit-goal state, quarantined strategies |
+| GET | `/api/v1/profit-goals` | Profit-goal config, state, progress and metrics |
+| GET | `/api/v1/strategies/performance` | Per-strategy PnL, win rate, drawdown, quarantine state |
+| POST | `/api/v1/strategies/:id/release` | Lift a strategy quarantine (operator action) |
 | GET | `/health` | Liveness + uptime |
 | GET | `/account` | Wallet balance, equity, fees, daily P&L |
 | GET | `/positions` | Open positions |
@@ -104,7 +131,7 @@ Base URL `http://localhost:8080`. Full reference: [`docs/api.md`](docs/api.md).
 
 ```text
 src/
-  ai/            Ollama LLM signal generator
+  ai/            TradingAgentsPipeline (multi-agent debate) + schemas
   api/           Fastify server, routes, WebSocketGateway, dashboardHtml
   binance/       Binance SDK wiring, stream subscriptions, normalizers
   broker/        PaperBroker + execution interfaces & domain types
@@ -117,5 +144,9 @@ src/
   persistence/   DatabaseManager, EventLog, SnapshotStore, BrokerPersister
   scheduler/     Periodic jobs (funding, snapshots, staleness, signals)
   strategy/      StrategyEngine, SignalExecutor, indicators, strategies/
+                 StrategyPerformanceTracker + Store (quarantine feedback loop)
+  trading/       TradeIntentEngine, RiskEngine, PositionSizer
+    goals/       ProfitGoalManager + Store (targets, cooldowns, risk multiplier)
+    risk/        TrailingStopManager + TrailingStopController
   telemetry/     Prometheus metrics and logger
 ```

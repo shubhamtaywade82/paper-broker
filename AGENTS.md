@@ -145,11 +145,22 @@ The LLM may:
 - recommend WAIT / NO_TRADE / HOLD;
 - assist position-management decisions.
 
+This rule is why `TradingAgentsPipeline`'s risk-team and fund-manager stages are
+deterministic policy rather than model calls. Converting them to LLM calls would
+hand the LLM authority over risk approval, violating 6.1 and CONTRACTS.md §5.
+Each `AgentCycleStep` carries `engine: 'llm' | 'deterministic'` so the two kinds
+of stage cannot be confused downstream.
+
 Final execution path:
 
 ```
-LLM/Strategy -> Signal -> SignalExecutor -> RiskCheck -> PaperBroker -> EventLog
+LLM/Strategy -> Signal -> TradeIntentEngine/RiskEngine -> SignalExecutor
+             -> ExecutionRouter (+LiveTradingGuard) -> Broker -> EventLog
 ```
+
+`ExecutionRouter` sits on every order submission and selects the paper broker or
+the live venue adapter from the runtime profile. An armed live profile with no
+usable adapter rejects the order — it never falls back to simulated fills.
 
 ## 6.2 Risk
 

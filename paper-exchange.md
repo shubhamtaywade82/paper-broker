@@ -1,3 +1,12 @@
+> **Status: research transcript, not a specification.**
+>
+> This file is a captured design conversation, kept for provenance. It does
+> **not** describe current behaviour and is not maintained against the code.
+> For what the system actually does today see `PROJECT_STATE.md`,
+> `KNOWN_LIMITATIONS.md`, and the source.
+
+---
+
 **Yes, `@shubhamtaywade82/binance-client-ts` provides near 1:1 coverage of the entire Binance USDⓈ-M Futures API catalog you listed.**
 
 The SDK was explicitly designed to wrap these exact endpoints with Zod-validated TypeScript schemas. For your local paper engine, this means you will rarely need to write raw HTTP requests or use `binance-cli` for programmatic execution—the SDK handles the complexity under the hood.

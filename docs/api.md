@@ -316,7 +316,116 @@ Arm live trading mode (enables order routing to CoinDCX when `TRADING_MODE=live`
 
 ---
 
+## GET /api/v1/risk
+
+Live risk state. All limits reflect the `RiskConfig` actually in force — they are
+no longer hardcoded literals.
+
+```json
+{
+  "riskRating": "LOW",
+  "exposurePct": 12.4,
+  "marginUsagePct": 2.5,
+  "openPositionsCount": 1,
+  "maxOpenPositions": 3,
+  "dailyLossLimitPct": 3.0,
+  "dailyLossRemainingPct": 3.0,
+  "safeMode": false,
+  "liveArmed": false,
+  "mode": "paper",
+  "limits": {
+    "maxLeverage": 10,
+    "maxRiskPerTradePct": 1.0,
+    "maxAccountRiskPct": 5.0,
+    "maxPositionsPerSymbol": 1,
+    "maxNotionalPerTrade": 50000
+  },
+  "profitGoals": { "enabled": false },
+  "quarantinedStrategies": []
+}
+```
+
+---
+
+## GET /api/v1/profit-goals
+
+Returns `{ "enabled": false }` when `PROFIT_GOALS_ENABLED` is not set. Otherwise:
+
+```json
+{
+  "enabled": true,
+  "config": { "dailyTargetPct": 0.02, "targetAchievedAction": "REDUCE_RISK", "...": "..." },
+  "state": { "dailyPnL": 250, "dailyTargetAchieved": true, "currentRiskMultiplier": 0.5, "...": "..." },
+  "progress": { "dailyPct": 100, "weeklyPct": 31.25, "monthlyPct": 0 },
+  "riskMultiplier": 0.5,
+  "tradingAllowed": false,
+  "metrics": { "daysTargetAchieved": 1, "totalDaysTraded": 1, "...": "..." }
+}
+```
+
+`tradingAllowed: false` means `RiskEngine` will reject new signals with
+`PROFIT_GOAL_TRADING_HALTED` until the cooldown expires or the window resets.
+
+---
+
+## GET /api/v1/strategies/performance
+
+```json
+{
+  "enabled": true,
+  "quarantined": ["adaptive-supertrend"],
+  "strategies": [
+    {
+      "strategyId": "adaptive-supertrend",
+      "trades": 24,
+      "wins": 6,
+      "losses": 18,
+      "winRate": 0.25,
+      "realizedPnl": -320.5,
+      "peakPnl": 110.0,
+      "drawdown": 430.5,
+      "quarantined": true,
+      "quarantineReason": "WIN_RATE_BELOW_FLOOR: 25.0% < 30.0%",
+      "lastTradeAtUtc": "2026-08-25T14:02:11.000Z"
+    }
+  ]
+}
+```
+
+A quarantined strategy stops receiving candles and ticks from `StrategyEngine`.
+
+---
+
+## POST /api/v1/strategies/:id/release
+
+Requires `API_KEY` when configured. Lifts a quarantine and rebases the drawdown
+baseline on current realized PnL. Release is always an operator action — the
+system never re-enables a strategy on its own.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/strategies/adaptive-supertrend/release \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+```json
+{ "released": true, "strategyId": "adaptive-supertrend" }
+```
+
+`404` if performance tracking is disabled, or if the strategy is not quarantined.
+
+---
+
 ## WebSocket Stream: `ws://localhost:8080/ws`
+
+Event types include `market.tick`, `kline.closed`, `book.update`,
+`trade.stream`, `order.updated`, `order.filled`, `position.updated`,
+`signal.created`, `health.updated`, `incident.reported`, `mode.changed`,
+`mode.aggressive`, `kill_switch.activated`, `agent.cycle`, `agent.step`,
+`profit.goal`, `strategy.performance`, and `trailing.stop`.
+
+`agent.step` payloads carry `engine: "llm" | "deterministic"` — the risk team
+and fund manager stages are deterministic policy, not model output.
+
 
 Real-time push events for the dashboard:
 

@@ -39,6 +39,13 @@ export interface StrategyEngineConfig {
 
 export interface StrategyEngineDeps {
   onSubmitSignal: (signal: Signal) => Promise<boolean>;
+  /**
+   * Performance feedback gate. When supplied, a strategy that returns true is
+   * skipped entirely — it receives no candles and no ticks, so it cannot emit
+   * further signals. Used by StrategyPerformanceTracker to quarantine a
+   * strategy that has breached its drawdown or win-rate limits.
+   */
+  isQuarantined?: (strategyId: string) => boolean;
 }
 
 export interface StrategyEngineListeners {
@@ -166,7 +173,15 @@ export class StrategyEngine {
   private getStrategiesForSymbol(symbol: string): Strategy[] {
     return Array.from(this.strategies.values())
       .filter((s) => s.enabled && s.symbols.includes(symbol))
+      .filter((s) => !this.deps.isQuarantined?.(s.id))
       .sort((a, b) => a.priority - b.priority);
+  }
+
+  /** Strategies currently held back by the performance gate. */
+  listQuarantined(): string[] {
+    return Array.from(this.strategies.values())
+      .filter((s) => this.deps.isQuarantined?.(s.id) === true)
+      .map((s) => s.id);
   }
 
   private async processSignal(strategy: Strategy, rawInput: unknown): Promise<void> {
