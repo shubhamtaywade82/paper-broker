@@ -454,24 +454,33 @@ export class ApiServer {
     });
 
     this.app.get('/api/v1/win-rate', async () => {
-      const fills = this.events.getEvents({ type: 'FILL_CREATED', limit: 500 });
-      let wins = 0;
-      let losses = 0;
+      try {
+        const fills = this.events?.getEvents({ type: 'FILL_CREATED', limit: 500 }) ?? [];
+        let wins = 0;
+        let losses = 0;
 
-      for (const fill of fills) {
-        const p = fill.payload as Record<string, unknown>;
-        const realizedPnl = Number(p['realizedPnl'] || 0);
-        if (realizedPnl > 0) wins++;
-        else if (realizedPnl < 0) losses++;
+        for (const fill of fills) {
+          const p = (fill?.payload ?? {}) as Record<string, unknown>;
+          const realizedPnl = Number(p['realizedPnl'] || 0);
+          if (realizedPnl > 0) wins++;
+          else if (realizedPnl < 0) losses++;
+        }
+
+        const total = wins + losses;
+        return {
+          wins,
+          losses,
+          total,
+          winRate: total > 0 ? (wins / total) * 100 : 0,
+        };
+      } catch {
+        return {
+          wins: 0,
+          losses: 0,
+          total: 0,
+          winRate: 0,
+        };
       }
-
-      const total = wins + losses;
-      return {
-        wins,
-        losses,
-        total,
-        winRate: total > 0 ? (wins / total) * 100 : 0,
-      };
     });
 
     this.app.get('/api/v1/orderbook', async (request, reply) => {

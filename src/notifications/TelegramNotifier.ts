@@ -5,6 +5,8 @@ import type {
 } from './types.js';
 import { logger } from '../telemetry/logger.js';
 
+import { TokenBucket } from './TelegramLimiter.js';
+
 export interface TelegramConfig {
   enabled: boolean;
   botToken?: string;
@@ -18,15 +20,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Medium finding ("HTML injection in Telegram message templates"): every
-// notifyX() method interpolates dynamic strings (symbols, error messages,
-// incident text, reasons) directly into `<b>...</b>` templates sent with
-// parse_mode: 'HTML'. An unescaped '<', '>', or '&' either breaks Telegram's
-// HTML parser (silently failing delivery — a 400 "can't parse entities") or,
-// for Telegram's supported tags like <a>, could let attacker-influenced text
-// (e.g. an exchange error message) inject a rendered link/formatting into
-// the alert. Escape before interpolating, same as escaping for any other
-// HTML-rendering sink.
 function esc(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -40,12 +33,7 @@ export class TelegramNotifier {
   private chatId?: string;
   private timeoutMs: number;
   private readonly minSendIntervalMs: number;
-  // H-10: Telegram documents ~1 msg/sec/chat and will 429 above that,
-  // especially likely during volatile markets when several notifyX() calls
-  // (trade fills, position updates, incidents) can fire back-to-back without
-  // being awaited by callers. Every send() is chained onto this queue so
-  // concurrent, unawaited callers still get serialized with a minimum gap,
-  // rather than all racing to fetch() simultaneously.
+  private tokenBucket = new TokenBucket(20, 0.5);
   private sendQueue: Promise<void> = Promise.resolve();
   private lastSendAt = 0;
 
@@ -63,6 +51,11 @@ export class TelegramNotifier {
 
   public async send(text: string): Promise<boolean> {
     if (!this.enabled || !this.botToken || !this.chatId) {
+      return false;
+    }
+
+    if (!this.tokenBucket.tryTake()) {
+      logger.warn({ chatId: this.chatId }, '[TelegramNotifier] rate limit bucket exhausted, dropping notification');
       return false;
     }
 

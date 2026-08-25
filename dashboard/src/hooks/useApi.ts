@@ -342,9 +342,14 @@ export function usePerformance(period = '30d') {
   return useQuery({
     queryKey: ['performance', period],
     queryFn: async () => {
-      const winRateData = await fetchJson<{ winRate: number; wins: number; losses: number }>(
-        '/api/v1/win-rate'
-      );
+      let winRateData = { winRate: 0, wins: 0, losses: 0 };
+      try {
+        winRateData = await fetchJson<{ winRate: number; wins: number; losses: number }>(
+          '/api/v1/win-rate'
+        );
+      } catch {
+        // Fallback when server is offline or starting
+      }
       const data: PerformanceMetrics = {
         period,
         totalTrades: (winRateData.wins || 0) + (winRateData.losses || 0),

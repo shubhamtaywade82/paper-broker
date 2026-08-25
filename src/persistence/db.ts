@@ -249,6 +249,26 @@ export class DatabaseManager {
       );
 
       CREATE INDEX IF NOT EXISTS idx_backtest_runs_time ON backtest_runs(created_at_utc);
+
+      CREATE TABLE IF NOT EXISTS metrics_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        value REAL NOT NULL,
+        ts INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_name_ts ON metrics_snapshots(name, ts);
+
+      CREATE TABLE IF NOT EXISTS incidents (
+        id TEXT PRIMARY KEY,
+        level TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT,
+        resolved BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
     `);
   }
 

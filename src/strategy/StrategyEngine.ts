@@ -1,4 +1,3 @@
-import { ulid } from 'ulid';
 import type {
   AccountState,
   Instrument,
@@ -283,8 +282,4 @@ export class StrategyEngine {
 
     return expired;
   }
-}
-
-export function createSignalId(): string {
-  return ulid();
 }

@@ -73,9 +73,11 @@ export class PaperBroker implements ExecutionBroker {
   private isLiquidating = false;
 
   constructor(config: PaperBrokerConfig) {
-    this.walletBalance = config.startingUsdt;
-    this.dayStartEquity = config.startingUsdt;
-    this.peakEquity = config.startingUsdt;
+    const fallback = (config as unknown as Record<string, unknown>)['initialBalance'];
+    const startBalance = config.startingUsdt ?? (typeof fallback === 'number' ? fallback : 10_000);
+    this.walletBalance = startBalance;
+    this.dayStartEquity = startBalance;
+    this.peakEquity = startBalance;
     this.currentUtcDay = new Date().toISOString().slice(0, 10);
     this.marketState = config.marketState;
     this.eventLog = config.eventLog;
@@ -98,7 +100,7 @@ export class PaperBroker implements ExecutionBroker {
       ...config.risk,
     };
 
-    for (const instrument of config.instruments) {
+    for (const instrument of config.instruments ?? []) {
       this.instruments.set(instrument.symbol, instrument);
     }
 
@@ -758,14 +760,14 @@ export class PaperBroker implements ExecutionBroker {
     }
 
     if (order.quantity <= 0) return { ok: false, reason: 'INVALID_QTY' };
-    if (D(order.quantity).lt(D(instrument.minQty))) return { ok: false, reason: 'MIN_QTY_NOT_MET' };
+    if (instrument.minQty !== undefined && D(order.quantity).lt(D(instrument.minQty))) return { ok: false, reason: 'MIN_QTY_NOT_MET' };
     if (order.leverage > this.risk.maxLeverage) return { ok: false, reason: 'MAX_LEVERAGE_EXCEEDED' };
 
     const estimatedPrice = this.estimatePrice(order, market);
     if (!Number.isFinite(estimatedPrice) || estimatedPrice <= 0) return { ok: false, reason: 'NO_VALID_PRICE' };
 
     const notional = D(order.quantity).mul(estimatedPrice);
-    if (notional.lt(D(instrument.minNotional))) return { ok: false, reason: 'MIN_NOTIONAL_NOT_MET' };
+    if (instrument.minNotional !== undefined && notional.lt(D(instrument.minNotional))) return { ok: false, reason: 'MIN_NOTIONAL_NOT_MET' };
     // A reduce-only order can only ever shrink exposure, never grow it — the
     // per-order and per-position notional caps below exist to stop exposure
     // from growing, so they must never apply here. Without this exemption, a

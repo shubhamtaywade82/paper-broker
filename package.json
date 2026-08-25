@@ -20,6 +20,10 @@
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "typecheck": "tsc --noEmit",
+    "test:financial": "vitest run test/unit/broker",
+    "test:frontend": "pnpm --filter trading-agents-dashboard test",
+    "test:all": "pnpm test && pnpm test:frontend",
+    "dead-code:check": "knip --include files,exports",
     "verify:complete": "bash scripts/verify-complete.sh"
   },
   "dependencies": {
@@ -43,6 +47,8 @@
     "@types/node-cron": "^3.0.11",
     "@types/ws": "^8.18.1",
     "eslint": "^9.0.0",
+    "fast-check": "^4.9.0",
+    "knip": "^6.32.2",
     "pino-pretty": "^11.0.0",
     "prettier": "^3.2.5",
     "tsx": "^4.10.0",

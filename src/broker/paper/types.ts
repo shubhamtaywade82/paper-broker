@@ -1,7 +1,8 @@
 import type { TradeSignal } from '../../trading/signal/types.js';
+import type { OrderStatus, OrderType } from '../core/types.js';
 
-export type PaperOrderType = 'MARKET' | 'LIMIT' | 'STOP' | 'TAKE_PROFIT';
-export type PaperOrderStatus = 'NEW' | 'PENDING' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELLED' | 'REJECTED' | 'EXPIRED';
+export type PaperOrderType = OrderType;
+export type PaperOrderStatus = OrderStatus;
 export type PaperPositionState = 'FLAT' | 'OPEN' | 'CLOSING' | 'CLOSED';
 
 export type PaperTradeLifecycle =
@@ -138,7 +139,7 @@ export interface PaperTradeRecord {
   durationMs?: number;
   plannedRiskReward: number;
   realizedRiskReward?: number;
-  status: 'OPEN' | 'CLOSED' | 'STOPPED' | 'TAKE_PROFIT' | 'LIQUIDATED' | 'CANCELLED';
+  status: 'OPEN' | 'CLOSED' | 'STOPPED' | 'TAKE_PROFIT' | 'LIQUIDATED' | 'CANCELED';
   lifecycle: PaperTradeLifecycle[];
 }
 

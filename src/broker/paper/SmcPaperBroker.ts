@@ -75,7 +75,7 @@ export class SmcPaperBroker {
       filledQuantity: 0,
       price: signal.entryPrice,
       reduceOnly: false,
-      status: 'PENDING',
+      status: 'NEW',
       createdAt: asOf,
       updatedAt: asOf,
       signalKey: signal.signalKey,
@@ -88,14 +88,25 @@ export class SmcPaperBroker {
     this.journal.recordEvent({
       timestamp: asOf,
       symbol: signal.symbol,
-      orderId,
-      signalKey: signal.signalKey,
       eventType: 'ORDER_ACCEPTED',
-      price: signal.entryPrice,
+      orderId: order.id,
+      price: order.price,
       quantity: order.quantity,
+      signalKey: signal.signalKey,
     });
 
-    return { accepted: true, orderId };
+    return { accepted: true, orderId: order.id };
+  }
+
+  cancelSignalOrder(signalKey: string): boolean {
+    const orderId = `ORD:${signalKey}`;
+    const order = this.orders.get(orderId);
+    if (!order || order.status !== 'NEW') {
+      return false;
+    }
+    order.status = 'CANCELED';
+    order.updatedAt = Date.now();
+    return true;
   }
 
   processCandle(candle: Candle): void {
@@ -114,7 +125,6 @@ export class SmcPaperBroker {
     this.journal.recordEvent({
       timestamp,
       symbol,
-      positionId: pos.id,
       eventType: 'FUNDING_APPLIED',
       price: fundingRate,
       quantity: payment,
@@ -123,7 +133,7 @@ export class SmcPaperBroker {
 
   private processPendingOrders(candle: Candle): void {
     for (const order of this.orders.values()) {
-      if (order.symbol !== candle.symbol || order.status !== 'PENDING' || order.reduceOnly) continue;
+      if (order.symbol !== candle.symbol || order.status !== 'NEW' || order.reduceOnly) continue;
       const fill = PaperFillEngine.evaluateOrderFill(order, candle, this.config);
       if (fill) {
         this.executeEntryFill(order, fill, candle);
@@ -183,7 +193,7 @@ export class SmcPaperBroker {
       filledQuantity: 0,
       stopPrice: pos.stopLossPrice,
       reduceOnly: true,
-      status: 'PENDING',
+      status: 'NEW',
       createdAt: pos.openedAt,
       updatedAt: pos.openedAt,
       signalKey: pos.signalKey,
@@ -205,7 +215,7 @@ export class SmcPaperBroker {
         filledQuantity: 0,
         price: tp.price,
         reduceOnly: true,
-        status: 'PENDING',
+        status: 'NEW',
         createdAt: pos.openedAt,
         updatedAt: pos.openedAt,
         signalKey: pos.signalKey,
@@ -230,7 +240,7 @@ export class SmcPaperBroker {
 
   private processExitFills(pos: PaperPosition, candle: Candle): void {
     const slOrder = this.orders.get(`SL:${pos.id}`);
-    if (slOrder && slOrder.status === 'PENDING') {
+    if (slOrder && slOrder.status === 'NEW') {
       const slFill = PaperFillEngine.evaluateOrderFill(slOrder, candle, this.config);
       if (slFill) {
         this.executeStopLoss(pos, slOrder, slFill, candle);
@@ -240,7 +250,7 @@ export class SmcPaperBroker {
 
     for (let i = 1; i <= 3; i++) {
       const tpOrder = this.orders.get(`TP:${pos.id}:${i}`);
-      if (tpOrder && tpOrder.status === 'PENDING') {
+      if (tpOrder && tpOrder.status === 'NEW') {
         const tpFill = PaperFillEngine.evaluateOrderFill(tpOrder, candle, this.config);
         if (tpFill) {
           this.executeTakeProfit(pos, tpOrder, tpFill, i, candle);
@@ -332,7 +342,7 @@ export class SmcPaperBroker {
   private cancelOutstandingTps(posId: string): void {
     for (let i = 1; i <= 3; i++) {
       const tp = this.orders.get(`TP:${posId}:${i}`);
-      if (tp && tp.status === 'PENDING') tp.status = 'CANCELLED';
+      if (tp && (tp.status === 'NEW' || (tp.status as string) === 'PENDING')) tp.status = 'CANCELED';
     }
   }
 

@@ -29,11 +29,11 @@ warn() {
 }
 
 echo "1. Type Checking..."
-if pnpm typecheck > /dev/null 2>&1; then
+if pnpm typecheck > /dev/null 2>&1 && pnpm --filter trading-agents-dashboard typecheck > /dev/null 2>&1; then
     pass "TypeScript compilation: PASS"
 else
     fail "TypeScript compilation: FAIL"
-    echo "   Run 'pnpm typecheck' for details"
+    echo "   Run 'pnpm typecheck' or 'pnpm --filter trading-agents-dashboard typecheck' for details"
 fi
 
 echo ""
@@ -46,12 +46,12 @@ else
 fi
 
 echo ""
-echo "3. Unit Tests..."
-if pnpm test > /dev/null 2>&1; then
-    pass "Unit tests: PASS"
+echo "3. Unit & Integration Tests (Backend + Frontend)..."
+if pnpm test:all > /dev/null 2>&1; then
+    pass "Unit & Frontend tests: PASS"
 else
-    fail "Unit tests: FAIL"
-    echo "   Run 'pnpm test' for details"
+    fail "Unit & Frontend tests: FAIL"
+    echo "   Run 'pnpm test:all' for details"
 fi
 
 echo ""
