@@ -22,6 +22,22 @@ This file records confirmed limitations of the current implementation.
 - The divergence guard is armed and has only one price source, so `checkDivergence()` always returns `isDivergent: false`.
 - Work required: add a CoinDCX market-data feed and call `supervisor.processTick('COINDCX', ...)` from it. No other change is needed.
 
+### ⚠️ CoinDCX Adapter Order Semantics
+
+`CoinDCXBroker` routes each `OrderCommand` onto the primitive that actually
+expresses it: brackets to `createTPSL`, full exits to `exitPosition`, entries to
+`createOrder`. Anything with no faithful representation is REJECTED with an
+explicit reason rather than approximated.
+
+Still limited by what the venue API offers:
+- **Partial reduce-only is not expressible.** `exitPosition` closes the whole
+  position, so a partial reduce is rejected rather than over-closing.
+- **`getOpenOrders()` reads the adapter's own in-memory map**, not the venue, so
+  order-level reconciliation stays weaker than position-level.
+- **Bracket ids are not cancellable as orders** — brackets are position
+  attributes, so `cancelOrder` on a `tpsl-*` id has no venue effect.
+- The adapter has **never been exercised against a real CoinDCX account.**
+
 ### ⚠️ Exchange Position Reconciliation Implemented, Orders Only Partly Covered
 
 `ExchangeReconciler` runs on startup and on websocket reconnect when a live
@@ -527,6 +543,8 @@ When you complete work that addresses a limitation:
 | 2026-08-25 | `StrategyEngine` had no performance feedback; strategies ran always-on regardless of PnL | `StrategyPerformanceTracker` + quarantine gate, persisted across restarts, operator-released |
 | 2026-08-25 | Agent risk team evaluated 2 of 3 declared personas and its only rule was `leverage > 5`; the fund manager rubber-stamped on confidence alone | Complete deterministic policy across SAFE/NEUTRAL/RISKY with real ceilings, stop validation, free-margin limits, and every `RiskOpinionSchema` verdict reachable. Kept deterministic per CONTRACTS.md §5 — not converted to LLM calls |
 | 2026-08-25 | All seven agent stages were presented identically as "agents" despite two being hardcoded policy | `AgentCycleStep` now carries `engine: 'llm' \| 'deterministic'` |
+| 2026-08-25 | `CoinDCXBroker` coerced `TAKE_PROFIT_MARKET` to `market_order`, so a take-profit bracket would have executed immediately and closed the position the instant it opened | Brackets now route to `createTPSL` against the open position; unsupported entry types rejected explicitly |
+| 2026-08-25 | `reduceOnly` was set on the returned `Order` but never sent to the venue (`createOrder` has no `reduce_only` field), so a close against a flat position would have opened a new opposite position | Reduce-only closes route to `exitPosition`; closing while flat and partial reduces are both rejected |
 
 ---
 
