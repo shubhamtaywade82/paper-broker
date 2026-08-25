@@ -24,6 +24,11 @@ import { logger } from '../telemetry/logger.js';
 import { ReplayEngine } from '../research/replay/ReplayEngine.js';
 import { BinanceHistoricalFetcher } from '../research/replay/BinanceHistoricalFetcher.js';
 import type { ReplayConfig } from '../research/replay/types.js';
+import type { ProfitGoalManager } from '../trading/goals/ProfitGoalManager.js';
+import type { StrategyPerformanceTracker } from '../strategy/StrategyPerformanceTracker.js';
+import type { LiveTradingGuard } from '../execution/LiveTradingGuard.js';
+import type { RiskConfig } from '../trading/risk/types.js';
+import { DEFAULT_RISK_CONFIG } from '../trading/risk/RiskLimits.js';
 
 const CreateOrderSchema = z.object({
   symbol: z.string().min(1),
@@ -95,6 +100,14 @@ export interface ApiServerOptions {
   apiKey?: string;
   /** When set, `/api/v1/mode/arm` requires a matching `passcode` in the request body. */
   armPasscode?: string;
+  /** Profit-goal state, surfaced read-only at `/api/v1/profit-goals`. */
+  profitGoals?: ProfitGoalManager;
+  /** Per-strategy performance, surfaced at `/api/v1/strategies/performance`. */
+  strategyPerformance?: StrategyPerformanceTracker;
+  /** The live guard actually in force, so `/api/v1/risk` reports real safe-mode state. */
+  liveGuard?: LiveTradingGuard;
+  /** The risk limits actually in force, so `/api/v1/risk` stops reporting hardcoded values. */
+  riskConfig?: RiskConfig;
 }
 
 export class ApiServer {
@@ -305,29 +318,94 @@ export class ApiServer {
       const exposurePct = equity > 0 ? (totalNotional / equity) * 100 : 0;
       const marginUsagePct = equity > 0 ? (totalMarginUsed / equity) * 100 : 0;
 
-      const dailyLossLimitPct = 5.0;
+      // These used to be hardcoded literals that drifted from the limits the
+      // RiskEngine actually enforces (a documented Medium finding). Report the
+      // configuration in force instead.
+      const riskConfig = this.options.riskConfig ?? DEFAULT_RISK_CONFIG;
+      const dailyLossLimitPct = riskConfig.maxDailyLossPct * 100;
       const dailyLossPct = equity > 0 ? Math.max(0, -(account?.dailyRealizedPnl ?? 0)) / equity * 100 : 0;
       const dailyLossRemainingPct = Math.max(0, dailyLossLimitPct - dailyLossPct);
+      const profitGoals = this.options.profitGoals;
 
       return {
         riskRating: exposurePct > 75 ? 'HIGH' : exposurePct > 40 ? 'MEDIUM' : 'LOW',
         exposurePct: Number(exposurePct.toFixed(2)),
         marginUsagePct: Number(marginUsagePct.toFixed(2)),
         openPositionsCount: positions.filter((p) => p.qty !== 0).length,
-        maxOpenPositions: 3,
-        dailyLossLimitPct,
+        maxOpenPositions: riskConfig.maxOpenPositions,
+        dailyLossLimitPct: Number(dailyLossLimitPct.toFixed(2)),
         dailyLossRemainingPct: Number(dailyLossRemainingPct.toFixed(2)),
-        safeMode: false,
+        safeMode: this.options.liveGuard?.isSafeMode() ?? false,
         liveArmed: this.profile?.liveArmed ?? false,
         mode: this.profile?.mode ?? 'paper',
         limits: {
-          maxLeverage: 10,
-          maxRiskPerTradePct: 2.0,
-          maxDrawdownPct: 10.0,
-          divergenceLimitPct: 0.15,
+          maxLeverage: riskConfig.maxLeverage,
+          maxRiskPerTradePct: Number((riskConfig.riskPerTradePct * 100).toFixed(2)),
+          maxAccountRiskPct: Number((riskConfig.maxAccountRiskPct * 100).toFixed(2)),
+          maxPositionsPerSymbol: riskConfig.maxPositionsPerSymbol,
+          maxNotionalPerTrade: riskConfig.maxNotionalPerTrade,
         },
+        profitGoals: profitGoals
+          ? {
+              enabled: true,
+              riskMultiplier: profitGoals.getCurrentRiskMultiplier(),
+              tradingAllowed: profitGoals.isTradingAllowed(Date.now()),
+              achieved: profitGoals.getAchievedTargets(),
+            }
+          : { enabled: false },
+        quarantinedStrategies: this.engine.listQuarantined(),
       };
     });
+
+    this.app.get('/api/v1/profit-goals', async () => {
+      const profitGoals = this.options.profitGoals;
+      if (!profitGoals) {
+        return { enabled: false };
+      }
+      return {
+        enabled: true,
+        config: profitGoals.getConfig(),
+        state: profitGoals.getState(),
+        progress: {
+          dailyPct: Number(profitGoals.getDailyProgressPercent().toFixed(2)),
+          weeklyPct: Number(profitGoals.getWeeklyProgressPercent().toFixed(2)),
+          monthlyPct: Number(profitGoals.getMonthlyProgressPercent().toFixed(2)),
+        },
+        riskMultiplier: profitGoals.getCurrentRiskMultiplier(),
+        tradingAllowed: profitGoals.isTradingAllowed(Date.now()),
+        metrics: profitGoals.getMetrics(),
+      };
+    });
+
+    this.app.get('/api/v1/strategies/performance', async () => {
+      const tracker = this.options.strategyPerformance;
+      return {
+        enabled: Boolean(tracker),
+        quarantined: this.engine.listQuarantined(),
+        strategies: tracker?.listStats() ?? [],
+      };
+    });
+
+    this.app.post<{ Params: { id: string } }>(
+      '/api/v1/strategies/:id/release',
+      { preHandler: this.requireApiKey },
+      async (request, reply) => {
+        const tracker = this.options.strategyPerformance;
+        if (!tracker) {
+          return reply.code(404).send({ error: 'Strategy performance tracking is not enabled' });
+        }
+        const released = tracker.release(request.params.id);
+        if (!released) {
+          return reply.code(404).send({ error: `Strategy ${request.params.id} is not quarantined` });
+        }
+        this.wsGateway.broadcast('strategy.performance', {
+          strategyId: request.params.id,
+          released: true,
+          stats: tracker.getStats(request.params.id),
+        });
+        return { released: true, strategyId: request.params.id };
+      }
+    );
 
     this.app.get('/api/v1/dashboard', async () => {
       const [account, positions, recentSignals] = await Promise.all([

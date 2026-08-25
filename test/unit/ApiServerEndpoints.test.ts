@@ -45,6 +45,8 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn(),
     isRunning: vi.fn().mockReturnValue(true),
+    listStrategies: vi.fn().mockReturnValue([]),
+    listQuarantined: vi.fn().mockReturnValue([]),
   } as unknown as StrategyEngine;
 
   const mockSignals = {

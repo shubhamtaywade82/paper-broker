@@ -42,6 +42,49 @@ const EnvSchema = z.object({
 
   PAPER_STARTING_USDT: z.coerce.number().positive().default(10000),
 
+  // Profit goals (src/trading/goals). Disabled by default so existing
+  // deployments keep their current always-trading behaviour until opted in.
+  PROFIT_GOALS_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  PROFIT_GOAL_DAILY_TARGET_PCT: z.coerce.number().min(0).max(1).default(0.02),
+  PROFIT_GOAL_WEEKLY_TARGET_PCT: z.coerce.number().min(0).max(1).default(0.08),
+  PROFIT_GOAL_MONTHLY_TARGET_PCT: z.coerce.number().min(0).max(1).default(0.2),
+  PROFIT_GOAL_ACTION: z.enum(['REDUCE_RISK', 'STOP_TRADING', 'TRAIL_STOPS']).default('REDUCE_RISK'),
+  PROFIT_GOAL_RISK_REDUCTION_FACTOR: z.coerce.number().min(0).max(1).default(0.5),
+  PROFIT_GOAL_COOLDOWN_MS: z.coerce.number().int().min(0).default(3_600_000),
+  PROFIT_GOAL_ENABLE_DAILY: z
+    .string()
+    .optional()
+    .transform((val) => val !== 'false'),
+  PROFIT_GOAL_ENABLE_WEEKLY: z
+    .string()
+    .optional()
+    .transform((val) => val !== 'false'),
+  PROFIT_GOAL_ENABLE_MONTHLY: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+
+  // Trailing stops (src/trading/risk/TrailingStopManager).
+  TRAILING_STOPS_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  TRAILING_ACTIVATION_PCT: z.coerce.number().min(0).max(1).default(0.02),
+  TRAILING_DISTANCE_PCT: z.coerce.number().min(0).max(1).default(0.015),
+  TRAILING_BREAKEVEN_PCT: z.coerce.number().min(0).max(1).default(0.01),
+
+  // Per-strategy performance feedback (src/strategy/StrategyPerformanceTracker).
+  STRATEGY_FEEDBACK_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  STRATEGY_FEEDBACK_MIN_TRADES: z.coerce.number().int().positive().default(20),
+  STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT: z.coerce.number().positive().default(500),
+  STRATEGY_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
+
   DB_FILE: z.string().default('data/paper.sqlite3'),
   EVENT_LOG_FILE: z.string().default('data/events.jsonl'),
   SNAPSHOT_DIR: z.string().default('data/snapshots'),

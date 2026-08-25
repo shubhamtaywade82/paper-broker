@@ -22,6 +22,16 @@ import { SmcLocationEngine } from './market/smc/SmcLocationEngine.js';
 import { SetupEngine } from './market/setup/SetupEngine.js';
 import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
+import { ExecutionRouter } from './execution/ExecutionRouter.js';
+import { DEFAULT_RISK_CONFIG } from './trading/risk/RiskLimits.js';
+import { LiveTradingGuard } from './execution/LiveTradingGuard.js';
+import type { ProfitGoalManager } from './trading/goals/ProfitGoalManager.js';
+import { ProfitGoalStore } from './trading/goals/ProfitGoalStore.js';
+import type { ProfitGoalConfig } from './trading/goals/ProfitGoalTypes.js';
+import { TrailingStopManager } from './trading/risk/TrailingStopManager.js';
+import { TrailingStopController } from './trading/risk/TrailingStopController.js';
+import { StrategyPerformanceTracker } from './strategy/StrategyPerformanceTracker.js';
+import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
@@ -79,6 +89,56 @@ export async function startEngine(): Promise<EngineHandle> {
 
   const marketState = new MarketStateManager(instruments);
 
+  // Declared before the broker because the broker's onFill hook broadcasts
+  // profit-goal updates through it.
+  const wsGateway = new WebSocketGateway();
+
+  // --- Profit goals -------------------------------------------------------
+  // Restored from disk so a target hit before a restart still throttles risk
+  // afterwards. Disabled by default: PROFIT_GOALS_ENABLED=true opts in.
+  const profitGoalConfig: ProfitGoalConfig = {
+    dailyTargetPct: env.PROFIT_GOAL_DAILY_TARGET_PCT,
+    weeklyTargetPct: env.PROFIT_GOAL_WEEKLY_TARGET_PCT,
+    monthlyTargetPct: env.PROFIT_GOAL_MONTHLY_TARGET_PCT,
+    targetAchievedAction: env.PROFIT_GOAL_ACTION,
+    riskReductionFactor: env.PROFIT_GOAL_RISK_REDUCTION_FACTOR,
+    cooldownAfterTargetMs: env.PROFIT_GOAL_COOLDOWN_MS,
+    enableDailyGoals: env.PROFIT_GOAL_ENABLE_DAILY,
+    enableWeeklyGoals: env.PROFIT_GOAL_ENABLE_WEEKLY,
+    enableMonthlyGoals: env.PROFIT_GOAL_ENABLE_MONTHLY,
+  };
+  const profitGoalStore = new ProfitGoalStore(path.join(dataDir, 'profit_goals.json'));
+  const profitGoals: ProfitGoalManager | undefined = env.PROFIT_GOALS_ENABLED
+    ? profitGoalStore.load(env.PAPER_STARTING_USDT, profitGoalConfig)
+    : undefined;
+  if (!profitGoals) {
+    logger.info('Profit goals disabled (set PROFIT_GOALS_ENABLED=true to enable)');
+  }
+
+  // --- Per-strategy performance feedback ----------------------------------
+  const strategyPerformanceStore = new StrategyPerformanceStore(
+    path.join(dataDir, 'strategy_performance.json')
+  );
+  const strategyPerformance = new StrategyPerformanceTracker({
+    thresholds: {
+      minTradesBeforeAction: env.STRATEGY_FEEDBACK_MIN_TRADES,
+      maxDrawdownUsdt: env.STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT,
+      minWinRate: env.STRATEGY_FEEDBACK_MIN_WIN_RATE,
+    },
+    onQuarantine: ({ strategyId, reason, stats }) => {
+      events.appendSystemEvent({
+        eventType: 'STRATEGY_QUARANTINED',
+        payload: { strategyId, reason, stats },
+        createdAtUtc: new Date().toISOString(),
+      });
+      strategyPerformanceStore.save(strategyPerformance.listStats());
+    },
+  });
+  strategyPerformance.restore(strategyPerformanceStore.load());
+  if (!env.STRATEGY_FEEDBACK_ENABLED) {
+    logger.info('Strategy performance feedback is observe-only (set STRATEGY_FEEDBACK_ENABLED=true to quarantine)');
+  }
+
   const broker = new PaperBroker({
     dataDir,
     accountId: 'paper-main',
@@ -87,7 +147,53 @@ export async function startEngine(): Promise<EngineHandle> {
     marketState,
     eventLog: events,
     persister: new SQLiteBrokerPersister(db.raw),
+    onFill: (fill) => {
+      // Only closing fills realize PnL; opening fills realize 0 and are
+      // ignored by both consumers.
+      if (fill.realizedPnl === 0) return;
+
+      if (fill.strategyId) {
+        strategyPerformance.recordRealizedPnl(fill.strategyId, fill.realizedPnl, fill.fillTsUtc);
+        strategyPerformanceStore.save(strategyPerformance.listStats());
+      }
+
+      if (profitGoals) {
+        const account = broker.getAccount();
+        profitGoals.updatePnL({
+          realizedPnl: fill.realizedPnl,
+          currentEquity: account.equity,
+          timestamp: new Date(fill.fillTsUtc).getTime(),
+        });
+        profitGoalStore.save(profitGoals);
+        wsGateway.broadcast('profit.goal', {
+          state: profitGoals.getState(),
+          dailyProgressPct: profitGoals.getDailyProgressPercent(),
+          weeklyProgressPct: profitGoals.getWeeklyProgressPercent(),
+        });
+      }
+    },
   });
+
+  // --- Execution routing --------------------------------------------------
+  // CONTRACTS.md Section 7: TRADING_MODE is the single operational profile
+  // selector. Everything that submits an order goes through the router so the
+  // mode profile and the live guard are actually applied, instead of the
+  // engine talking to PaperBroker directly regardless of mode.
+  //
+  // No live venue adapter ships in this repository, so an armed live profile
+  // is rejected by the router rather than silently paper-filled.
+  const liveGuard = new LiveTradingGuard();
+  const executionBroker = new ExecutionRouter({
+    profile: runtimeProfile,
+    paperBroker: broker,
+    guard: liveGuard,
+  });
+  if (runtimeProfile.mode === 'live' && runtimeProfile.realOrders) {
+    logger.error(
+      'TRADING_MODE=live is armed but no live execution adapter is registered — all orders will be REJECTED'
+    );
+  }
+
   const klines = new KlineStore(500);
 
   // Preload historical klines to allow strategies to evaluate immediately
@@ -119,9 +225,36 @@ export async function startEngine(): Promise<EngineHandle> {
     }
   }
 
+  // --- Trailing stops -----------------------------------------------------
+  // Stops are resting reduce-only STOP_MARKET orders, so trailing them means
+  // cancel-and-replace at the broker; TrailingStopController owns that.
+  const trailingStops = env.TRAILING_STOPS_ENABLED
+    ? new TrailingStopController({
+        broker: executionBroker,
+        manager: new TrailingStopManager({
+          activationThresholdPct: env.TRAILING_ACTIVATION_PCT,
+          trailingDistancePct: env.TRAILING_DISTANCE_PCT,
+          breakevenTriggerPct: env.TRAILING_BREAKEVEN_PCT,
+          enableBreakeven: true,
+          enableTrailing: true,
+        }),
+        onStopMoved: (moved) => {
+          wsGateway.broadcast('trailing.stop', moved);
+          events.appendSystemEvent({
+            eventType: 'TRAILING_STOP_MOVED',
+            payload: { ...moved },
+            createdAtUtc: new Date().toISOString(),
+          });
+        },
+      })
+    : undefined;
+  if (!trailingStops) {
+    logger.info('Trailing stops disabled (set TRAILING_STOPS_ENABLED=true to enable)');
+  }
+
   const orderFactory = new OrderFactory({ defaultLeverage: 5 });
   const signalExecutor = new SignalExecutor({
-    broker,
+    broker: executionBroker,
     orderFactory,
     signals: db.signals,
     getMarketState: (symbol) => marketState.getState(symbol),
@@ -139,6 +272,8 @@ export async function startEngine(): Promise<EngineHandle> {
       getPosition: (symbol) => broker.getPosition(symbol),
       getOpenOrders: (symbol) => broker.getOpenOrders(symbol),
       getInstrument: (symbol) => broker.getInstrument(symbol),
+      // Reads stay on the paper broker (it owns the simulated ledger); the
+      // write path goes through the router so mode + guard apply.
       submitOrder: (order) => broker.submitOrder(order),
     },
     {
@@ -147,6 +282,8 @@ export async function startEngine(): Promise<EngineHandle> {
         metrics.inc('signals_received_total');
         return signalExecutor.execute(signal);
       },
+      isQuarantined: (strategyId) =>
+        env.STRATEGY_FEEDBACK_ENABLED && strategyPerformance.isQuarantined(strategyId),
     },
     {
       onSignal: (signal) => {
@@ -165,7 +302,11 @@ export async function startEngine(): Promise<EngineHandle> {
   const mtfEngine = new MtfStateEngine(klines, marketState);
   const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
   const planEngine = new ExecutionPlanEngine();
-  const tradeIntentEngine = new TradeIntentEngine();
+  // Profit-goal state reaches risk validation here: RiskEngine consults it for
+  // both the trading-halt check and the position-size risk multiplier.
+  const tradeIntentEngine = new TradeIntentEngine(
+    profitGoals ? { profitGoalManager: profitGoals } : undefined
+  );
   const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
   const tradingAgentsPipeline = new TradingAgentsPipeline({
     model: env.OLLAMA_MODEL,
@@ -183,8 +324,6 @@ export async function startEngine(): Promise<EngineHandle> {
       logger.warn({ baseUrl: env.OLLAMA_BASE_URL }, 'Ollama unreachable at startup — agent debate will fall back to NEUTRAL (no trades) until it recovers');
     }
   });
-
-  const wsGateway = new WebSocketGateway();
 
   strategyEngine.register(
     createSmcAgentStrategy({
@@ -320,6 +459,10 @@ export async function startEngine(): Promise<EngineHandle> {
     port: env.PORT,
     apiKey: env.API_KEY,
     armPasscode: env.LIVE_ARM_PASSCODE,
+    profitGoals,
+    strategyPerformance,
+    liveGuard,
+    riskConfig: DEFAULT_RISK_CONFIG,
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
       aggressiveMode = enabled;
@@ -421,6 +564,11 @@ export async function startEngine(): Promise<EngineHandle> {
     },
     onAggTrade: (symbol, price, qty, isBuyerMaker, eventTime) => {
       broker.onMarket({ symbol, last: price });
+      // Self-throttling and a no-op when there is no open position or no
+      // resting stop, so it is safe on the raw trade stream.
+      void trailingStops?.onPrice(symbol, price).catch((error) => {
+        logger.error({ error, symbol }, 'Trailing stop update failed');
+      });
       const ts = eventTime || Date.now();
       for (const interval of timeframes) {
         const candle = klines.applyTick(
@@ -457,12 +605,23 @@ export async function startEngine(): Promise<EngineHandle> {
     engine: strategyEngine,
     events,
     staleMarketMaxAgeMs: 5000,
+    profitGoals,
+    onProfitGoalsReset: () => {
+      if (!profitGoals) return;
+      profitGoalStore.save(profitGoals);
+      wsGateway.broadcast('profit.goal', {
+        state: profitGoals.getState(),
+        dailyProgressPct: profitGoals.getDailyProgressPercent(),
+        weeklyProgressPct: profitGoals.getWeeklyProgressPercent(),
+      });
+    },
   });
 
   scheduler.start();
 
   metrics.setGauge('instruments_total', instruments.length);
   metrics.setGauge('strategies_total', strategyEngine.listStrategies().length);
+  metrics.setGauge('strategies_quarantined_total', strategyEngine.listQuarantined().length);
 
   const telegram = new TelegramNotifier({
     enabled: runtimeProfile.telegramEnabled,
@@ -485,6 +644,8 @@ export async function startEngine(): Promise<EngineHandle> {
     stop: async (): Promise<void> => {
       logger.info('Stopping paper-broker');
       scheduler.stop();
+      if (profitGoals) profitGoalStore.save(profitGoals);
+      strategyPerformanceStore.save(strategyPerformance.listStats());
       await api.stop();
       streams.disconnect();
       broker.shutdown();

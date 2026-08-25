@@ -1,11 +1,16 @@
-import type { PaperBroker } from '../broker/PaperBroker.js';
-import type { MarketState } from '../broker/types.js';
+import type { ExecutionBroker, MarketState } from '../broker/types.js';
 import type { Signal } from './signal.js';
 import type { OrderFactory } from './OrderFactory.js';
 import type { SignalRepository } from '../persistence/repositories/SignalRepository.js';
 
 export interface SignalExecutorDeps {
-  broker: PaperBroker;
+  /**
+   * Widened from PaperBroker to ExecutionBroker so orders can be routed
+   * through ExecutionRouter, which applies the mode profile and the live
+   * trading guard before anything reaches a venue. The executor must not know
+   * or care which broker is behind the interface.
+   */
+  broker: ExecutionBroker;
   orderFactory: OrderFactory;
   signals: SignalRepository;
   getMarketState: (symbol: string) => MarketState | undefined;
@@ -33,7 +38,7 @@ export class SignalExecutor {
       return true;
     }
 
-    const position = broker.getPosition(signal.symbol);
+    const position = await broker.getPosition(signal.symbol);
     const market = getMarketState(signal.symbol);
 
     const entryPrice =
@@ -80,7 +85,7 @@ export class SignalExecutor {
     } as const;
 
     try {
-      const order = broker.submitOrder(orderCommand);
+      const order = await broker.submitOrder(orderCommand);
 
       if (order.status === 'REJECTED') {
         log.warn(`[Signal] Order rejected: ${order.rejectReason ?? 'unknown'}`);
@@ -94,7 +99,7 @@ export class SignalExecutor {
         if (signal.stopLossPrice) {
           const stop = orderFactory.buildStopLossOrder(signal, quantity, leverage);
           if (stop) {
-            const stopOrder = broker.submitOrder(stop);
+            const stopOrder = await broker.submitOrder(stop);
             if (stopOrder.status === 'REJECTED') {
               log.warn(`[Signal] Stop order rejected: ${stopOrder.rejectReason ?? 'unknown'}`);
             }
@@ -103,7 +108,7 @@ export class SignalExecutor {
         if (signal.takeProfitPrice) {
           const tp = orderFactory.buildTakeProfitOrder(signal, quantity, leverage);
           if (tp) {
-            const tpOrder = broker.submitOrder(tp);
+            const tpOrder = await broker.submitOrder(tp);
             if (tpOrder.status === 'REJECTED') {
               log.warn(`[Signal] TP order rejected: ${tpOrder.rejectReason ?? 'unknown'}`);
             }

@@ -30,19 +30,44 @@ export class ExecutionRouter implements ExecutionBroker {
   }
 
   public getActiveBroker(): ExecutionBroker {
-    if (
-      this.profile.executionVenue === 'COINDCX' &&
-      this.coindcxBroker &&
-      this.profile.liveArmed &&
-      this.profile.realOrders
-    ) {
+    if (this.wantsRealOrders() && this.coindcxBroker) {
       return this.coindcxBroker;
     }
     return this.paperBroker;
   }
 
+  /** True when the profile is asking for orders to reach a real venue. */
+  private wantsRealOrders(): boolean {
+    return (
+      this.profile.executionVenue === 'COINDCX' &&
+      this.profile.liveArmed &&
+      this.profile.realOrders
+    );
+  }
+
+  /**
+   * The profile demands real orders but no live venue adapter was supplied.
+   *
+   * Falling through to the paper broker here would be the worst possible
+   * outcome: the operator has explicitly set TRADING_MODE=live and armed it,
+   * the dashboard reports "REAL ORDERS: YES (ARMED)", and the fills would be
+   * simulated. Every downstream number — PnL, equity, risk state — would be
+   * fiction presented as live trading. Reject instead, loudly.
+   */
+  private isMissingLiveAdapter(): boolean {
+    return this.wantsRealOrders() && !this.coindcxBroker;
+  }
+
   public async submitOrder(command: OrderCommand): Promise<Order> {
-    const check = this.guard.canExecute(this.profile);
+    const check = this.isMissingLiveAdapter()
+      ? {
+          allowed: false,
+          reason:
+            'NO_LIVE_EXECUTION_ADAPTER: TRADING_MODE=live is armed but no live venue adapter is registered. ' +
+            'Refusing to simulate fills while reporting live execution.',
+        }
+      : this.guard.canExecute(this.profile);
+
     if (!check.allowed) {
       const nowIso = new Date().toISOString();
       return {

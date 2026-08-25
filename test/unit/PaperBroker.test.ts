@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PaperBroker } from '../../src/broker/PaperBroker.js';
-import type { Instrument, OrderEventSink } from '../../src/broker/types.js';
+import type { Fill, Instrument, OrderEventSink } from '../../src/broker/types.js';
 
 const BTC: Instrument = {
   symbol: 'BTCUSDT',
@@ -653,5 +653,74 @@ describe('PaperBroker', () => {
       );
       expect(liqFill?.orderId).toBeDefined();
     });
+  });
+});
+describe('PaperBroker onFill hook', () => {
+  function brokerWithHook(onFill: (fill: Fill) => void) {
+    const b = new PaperBroker({
+      dataDir: '/tmp/paper-broker-test',
+      accountId: 'test-account',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      makerFeeRate: 0.0002,
+      onFill,
+    });
+    b.onMarket({ symbol: 'BTCUSDT', bid: 59_990, ask: 60_010, last: 60_000, mark: 60_000 });
+    return b;
+  }
+
+  it('fires on every fill and carries realized PnL and strategyId', () => {
+    const fills: Fill[] = [];
+    const b = brokerWithHook((f) => fills.push(f));
+
+    b.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: 0.01,
+      strategyId: 'alpha',
+    });
+
+    expect(fills).toHaveLength(1);
+    expect(fills[0]?.strategyId).toBe('alpha');
+    // An opening fill realizes nothing.
+    expect(fills[0]?.realizedPnl).toBe(0);
+
+    // Close into a higher mark — this one realizes.
+    b.onMarket({ symbol: 'BTCUSDT', bid: 60_990, ask: 61_010, last: 61_000, mark: 61_000 });
+    b.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: 0.01,
+      strategyId: 'alpha',
+      reduceOnly: true,
+    });
+
+    expect(fills).toHaveLength(2);
+    expect(fills[1]?.realizedPnl).toBeGreaterThan(0);
+  });
+
+  it('isolates a throwing listener so the fill still completes', () => {
+    const b = brokerWithHook(() => {
+      throw new Error('observer exploded');
+    });
+
+    expect(() =>
+      b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.01 })
+    ).not.toThrow();
+
+    // The ledger is intact despite the listener failing.
+    const position = b.getPosition('BTCUSDT');
+    expect(position?.qty).toBeCloseTo(0.01, 8);
+  });
+
+  it('is optional — a broker with no hook behaves exactly as before', () => {
+    const b = createBroker();
+    b.onMarket({ symbol: 'BTCUSDT', bid: 59_990, ask: 60_010, last: 60_000, mark: 60_000 });
+
+    const order = b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.01 });
+    expect(order.status).toBe('FILLED');
   });
 });

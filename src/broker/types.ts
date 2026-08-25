@@ -343,6 +343,13 @@ export interface PaperBrokerConfig {
   marketState?: MarketStateProvider;
   eventLog?: OrderEventSink;
   persister?: BrokerPersister;
+  /**
+   * Called after every fill is recorded and the account has been
+   * recalculated. Carries the realized PnL and originating strategyId, which
+   * is what profit-goal tracking and per-strategy performance feedback are
+   * driven from. Never throws into the fill path — the broker isolates it.
+   */
+  onFill?: (fill: Fill) => void;
 }
 
 export interface RiskCheckResult {
@@ -385,7 +392,11 @@ export interface SystemEventType {
     | 'SNAPSHOT_CREATED'
     | 'ENGINE_STARTED'
     | 'ENGINE_STOPPED'
-    | 'CLOCK_DRIFT_WARNING';
+    | 'CLOCK_DRIFT_WARNING'
+    | 'STRATEGY_QUARANTINED'
+    | 'PROFIT_GOAL_ACHIEVED'
+    | 'PROFIT_GOAL_RESET'
+    | 'TRAILING_STOP_MOVED';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
 }
