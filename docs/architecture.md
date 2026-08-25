@@ -80,6 +80,7 @@
 
 - `ExecutionRouter` — implements `ExecutionBroker` and sits on every order submission. Selects the paper broker or the live venue adapter based on the runtime profile, and rejects with `NO_LIVE_EXECUTION_ADAPTER` when the profile demands real orders but no adapter is usable.
 - `LiveTradingGuard` — arm-state and safe-mode enforcement.
+- `ExchangeReconciler` — compares venue positions against local positions on startup and reconnect. Any material mismatch, or an unreadable venue, trips the guard into safe mode so the router rejects further submissions. Recovery is `POST /api/v1/reconcile`, which resumes only on a clean re-run.
 
 ### `trading/` — intent, risk & goals
 
@@ -104,6 +105,8 @@
 - `SnapshotStore.ts` — periodic account snapshots and market ticks.
 
 ### `api/` — interface
+
+- `RateLimiter` — two-tier token bucket per client IP, registered as an `onRequest` hook so unmatched paths are covered too. Reads and control endpoints have independent budgets.
 
 Fastify server exposing the REST API, Prometheus metrics, and engine lifecycle endpoints. It reads broker memory and the signal repository; it never mutates trading state directly (except by calling broker/engine methods).
 

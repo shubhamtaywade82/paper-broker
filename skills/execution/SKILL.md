@@ -64,6 +64,11 @@ profile and `LiveTradingGuard`. An armed live profile with no usable adapter
 rejects with `NO_LIVE_EXECUTION_ADAPTER` — it must never fall back to a
 simulated fill.
 
+`ExchangeReconciler` runs on startup and reconnect against a live venue. A
+position mismatch, or a venue that cannot be read, trips the guard into safe
+mode and every submission is rejected with `SAFE_MODE_ACTIVE` until an operator
+clears it via `POST /api/v1/reconcile`. Never clear safe mode from code.
+
 ## Never
 
 - ❌ Retry an uncertain live write blindly

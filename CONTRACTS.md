@@ -112,12 +112,16 @@ make every downstream number (PnL, equity, risk state) fiction presented as
 real, which is worse than refusing to trade.
 
 Reconciliation with exchange state is mandatory after:
-- Startup
-- Reconnect
-- Timeout on write
-- Provider recovery
+- Startup ✅ enforced by `ExchangeReconciler`
+- Reconnect ✅ enforced by `ExchangeReconciler`
+- Timeout on write ⚠️ trigger defined (`WRITE_TIMEOUT`), not yet called
+- Provider recovery ⚠️ trigger defined (`PROVIDER_RECOVERY`), not yet called
 
-Unknown order state blocks duplicate submission.
+Unknown order state blocks duplicate submission: a failed or mismatched
+reconciliation trips `LiveTradingGuard` into safe mode, and `ExecutionRouter`
+rejects every submission while it is set. Safe mode clears only through
+`POST /api/v1/reconcile` on a clean re-run — never automatically, because the
+system cannot know which side of a disagreement was right.
 
 ---
 
@@ -309,7 +313,21 @@ Observers MUST NOT mutate broker state.
 
 ---
 
-## 20. Performance Feedback Contract
+## 20. Rate Limiting Contract
+
+**Read and control budgets are independent.**
+
+A client exhausting the read budget MUST still be able to reach control
+endpoints. An operator hitting the kill switch during an incident is exactly
+when the dashboard is polling hardest, and a shared bucket would lock them out
+at the worst possible moment.
+
+The limiter MUST fail open on its own internal error. A rate limiter that takes
+the API down is worse than no rate limiter.
+
+---
+
+## 21. Performance Feedback Contract
 
 **Quarantine is automatic; release is not.**
 
