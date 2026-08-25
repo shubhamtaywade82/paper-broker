@@ -65,6 +65,36 @@ describe('Phase 8 — Paper Position Manager', () => {
     expect(pos.state).toBe('OPEN');
   });
 
+  it('preserves prior realized PnL when liquidation follows a partial close (P0 #4)', () => {
+    const entryFill: PaperFill = {
+      id: 'F1',
+      orderId: 'O1',
+      clientOrderId: 'C1',
+      symbol: 'SOLUSDT',
+      side: 'BUY',
+      price: 100.0,
+      quantity: 50.0,
+      fee: 1.0,
+      slippage: 0,
+      isMaker: true,
+      timestamp: 1000,
+    };
+    const pos = PaperPositionManager.openPosition(entryFill, 'LONG', 5, 95.0, [105, 110, 115], 'k1', 's1', 'p1');
+
+    // TP1 already realized +82.5 before the position gets liquidated.
+    const tpFill: PaperFill = { ...entryFill, id: 'F2', side: 'SELL', price: 105.0, quantity: 16.5, fee: 0.35 };
+    PaperPositionManager.applyPartialClose(pos, tpFill);
+    expect(pos.realizedPnl).toBe(82.5);
+
+    PaperPositionManager.updateMarkPrice(pos, pos.liquidationPrice);
+    const liquidated = PaperPositionManager.checkLiquidation(pos);
+
+    expect(liquidated).toBe(true);
+    // Must be the prior +82.5 minus the lost margin, not a bare -usedMargin
+    // overwrite that discards the earlier TP1 gain.
+    expect(pos.realizedPnl).toBe(Number((82.5 - pos.usedMargin).toFixed(4)));
+  });
+
   it('moves stop to breakeven without loosening', () => {
     const entryFill: PaperFill = {
       id: 'F1',

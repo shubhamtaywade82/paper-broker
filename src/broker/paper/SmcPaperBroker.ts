@@ -283,10 +283,16 @@ export class SmcPaperBroker {
     const closeResult = PaperPositionManager.applyPartialClose(pos, fill);
     this.account.creditRealizedPnl(closeResult.realizedGross);
 
-    if (level === 1 && this.config.breakevenEnabled) {
-      PaperPositionManager.moveStopToBreakeven(pos, this.config.breakevenOffsetTicks);
-      const sl = this.orders.get(`SL:${pos.id}`);
-      if (sl) sl.stopPrice = pos.stopLossPrice;
+    const sl = this.orders.get(`SL:${pos.id}`);
+    if (sl && pos.state === 'OPEN') {
+      // Keep the resting stop sized to what's actually left — otherwise a
+      // later stop-out overcharges fee and overstates fill quantity against
+      // the pre-TP position size (P0 #3).
+      sl.quantity = pos.remainingQuantity;
+      if (level === 1 && this.config.breakevenEnabled) {
+        PaperPositionManager.moveStopToBreakeven(pos, this.config.breakevenOffsetTicks);
+        sl.stopPrice = pos.stopLossPrice;
+      }
     }
 
     if (pos.remainingQuantity <= 0) {
@@ -307,7 +313,9 @@ export class SmcPaperBroker {
   }
 
   private handleLiquidation(pos: PaperPosition, candle: Candle): void {
-    this.account.chargeFee(pos.usedMargin);
+    // The lost margin is a realized loss, not a fee — booking it via chargeFee
+    // inflated totalFees and hid the loss from realizedPnl (P0 #4/P2 #20).
+    this.account.creditRealizedPnl(-pos.usedMargin);
     this.cancelOutstandingTps(pos.id);
     this.ledger.finalizeTrade(pos, pos.liquidationPrice, 'LIQUIDATED', candle.closeTime ?? candle.openTime);
 

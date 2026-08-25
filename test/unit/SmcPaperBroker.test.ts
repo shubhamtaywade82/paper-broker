@@ -150,6 +150,55 @@ describe('Phase 8 — SmcPaperBroker Execution Simulation', () => {
     expect(ledger[0]?.grossPnl).toBe(-100.0); // (100 - 105) * 20 = -100
   });
 
+  it('resizes the resting stop after a partial TP close, so a later stop-out charges fee/quantity against what is actually left (P0 #3)', () => {
+    const broker = new SmcPaperBroker(10_000);
+    const sig = makeReadyLongSignal();
+    const t0 = 1700000000000;
+
+    broker.submitTradeSignal(sig, t0);
+    // Candle 1: fills entry at 93.0
+    broker.processCandle(makeCandle(92.5, 96.0, 95.0, t0 + 300_000));
+    // Candle 2: hits TP1 (102.0) -> closes 33% (6.6 SOL), remaining 13.4, stop -> breakeven 93.02
+    broker.processCandle(makeCandle(94.0, 103.0, 101.0, t0 + 600_000));
+    const pos = broker.getPosition('SOLUSDT');
+    expect(pos?.remainingQuantity).toBe(13.4);
+
+    // Candle 3: dips through the breakeven stop instead of hitting TP2.
+    broker.processCandle(makeCandle(90.0, 94.0, 92.0, t0 + 900_000));
+    expect(pos?.state).toBe('CLOSED');
+    expect(pos?.lifecycle).toBe('STOPPED');
+
+    const ledger = broker.getLedger();
+    const trace = broker.getTradeTrace(ledger[0]!.tradeId);
+    const slFill = trace?.fills.find((f) => f.orderId.startsWith('SL:'));
+
+    // Resized to the 13.4 actually remaining, not the original 20.
+    expect(slFill?.quantity).toBe(13.4);
+    expect(slFill?.fee).toBeCloseTo(93.02 * 13.4 * 0.0004, 4);
+  });
+
+  it('books liquidation as a realized loss, not a fee (P0 #4 / P2 #20)', () => {
+    const broker = new SmcPaperBroker(10_000);
+    const sig = makeReadyLongSignal();
+    const t0 = 1700000000000;
+
+    broker.submitTradeSignal(sig, t0);
+    broker.processCandle(makeCandle(92.5, 96.0, 95.0, t0 + 300_000));
+    const pos = broker.getPosition('SOLUSDT')!;
+    const usedMargin = pos.usedMargin;
+
+    // Crash straight through the liquidation price.
+    broker.processCandle(makeCandle(1, 96.0, 1, t0 + 600_000));
+    expect(pos.state).toBe('CLOSED');
+    expect(pos.lifecycle).toBe('LIQUIDATED');
+
+    const account = broker.getAccount();
+    // The lost margin shows up as a realized loss...
+    expect(account.realizedPnl).toBeCloseTo(-usedMargin, 4);
+    // ...not inflating totalFees (only the entry fee should be there).
+    expect(account.totalFees).toBeLessThan(usedMargin);
+  });
+
   it('rejects duplicate signal submissions idempotently', () => {
     const broker = new SmcPaperBroker(10_000);
     const sig = makeReadyLongSignal();

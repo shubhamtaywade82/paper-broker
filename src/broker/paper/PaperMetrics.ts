@@ -54,6 +54,7 @@ export class PaperMetrics {
     const netPnL = Number((grossProfit - grossLoss).toFixed(4));
     const profitFactor = grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : grossProfit > 0 ? Infinity : 0;
     const winRate = Number((winningCount / closed.length).toFixed(4));
+    const maxDrawdown = this.calculateMaxDrawdown(closed);
 
     return {
       totalTrades: closed.length,
@@ -66,7 +67,7 @@ export class PaperMetrics {
       totalFees: Number(totalFees.toFixed(4)),
       profitFactor,
       averageR: Number((totalR / closed.length).toFixed(2)),
-      maxDrawdown: 0,
+      maxDrawdown,
       averageTrade: Number((netPnL / closed.length).toFixed(4)),
       averageWinner: winningCount > 0 ? Number((grossProfit / winningCount).toFixed(4)) : 0,
       averageLoser: losingCount > 0 ? Number((grossLoss / losingCount).toFixed(4)) : 0,
@@ -74,6 +75,22 @@ export class PaperMetrics {
       largestLoser: Number(largestLoser.toFixed(4)),
       averageHoldingTimeMs: Math.round(totalDuration / closed.length),
     };
+  }
+
+  // Walks closed trades in exit order, tracking the running peak of cumulative
+  // netPnl and the largest drop from that peak — the standard equity-curve
+  // drawdown definition. Was previously hardcoded to 0 (P0 #7).
+  private static calculateMaxDrawdown(closed: PaperTradeRecord[]): number {
+    const sorted = [...closed].sort((a, b) => (a.exitTimestamp ?? 0) - (b.exitTimestamp ?? 0));
+    let cumulative = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+    for (const t of sorted) {
+      cumulative += t.netPnl;
+      peak = Math.max(peak, cumulative);
+      maxDrawdown = Math.max(maxDrawdown, peak - cumulative);
+    }
+    return Number(maxDrawdown.toFixed(4));
   }
 
   private static emptyMetrics(): PerformanceMetrics {

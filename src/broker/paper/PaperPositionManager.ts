@@ -99,7 +99,9 @@ export class PaperPositionManager {
     if (isLiq) {
       pos.state = 'CLOSED';
       pos.lifecycle = 'LIQUIDATED';
-      pos.realizedPnl = -pos.usedMargin;
+      // Increment, not overwrite — a liquidation following partial TP closes
+      // must not erase PnL already realized on this position (P0 #4).
+      pos.realizedPnl = Number((pos.realizedPnl - pos.usedMargin).toFixed(4));
       return true;
     }
     return false;
