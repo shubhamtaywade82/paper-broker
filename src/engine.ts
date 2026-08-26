@@ -35,6 +35,7 @@ import { TrailingStopManager } from './trading/risk/TrailingStopManager.js';
 import { TrailingStopController } from './trading/risk/TrailingStopController.js';
 import { StrategyPerformanceTracker } from './strategy/StrategyPerformanceTracker.js';
 import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js';
+import { SetupOutcomeTracker } from './strategy/SetupOutcomeTracker.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
@@ -158,6 +159,37 @@ export async function startEngine(): Promise<EngineHandle> {
     logger.info('Strategy performance feedback is observe-only (set STRATEGY_FEEDBACK_ENABLED=true to quarantine)');
   }
 
+  // --- Self-learning: per-setup-archetype performance feedback for the SMC
+  // agent (smc-agent.ts) ----------------------------------------------------
+  // Reuses StrategyPerformanceTracker as-is, keyed by setup archetype (e.g.
+  // 'SSL_SWEEP_REVERSAL_LONG') instead of strategy id — same quarantine
+  // semantics, narrower scope. Closes the gap PROJECT_STATE.md records under
+  // Agent/LLM Learning: previously only adaptive-supertrend's Q-table learned
+  // from outcomes, and the LLM debate had no memory across cycles.
+  const setupPerformanceStore = new StrategyPerformanceStore(
+    path.join(dataDir, 'setup_performance.json')
+  );
+  const setupPerformance = new StrategyPerformanceTracker({
+    thresholds: {
+      minTradesBeforeAction: env.SETUP_FEEDBACK_MIN_TRADES,
+      maxDrawdownUsdt: env.SETUP_FEEDBACK_MAX_DRAWDOWN_USDT,
+      minWinRate: env.SETUP_FEEDBACK_MIN_WIN_RATE,
+    },
+    onQuarantine: ({ strategyId: setupType, reason, stats }) => {
+      events.appendSystemEvent({
+        eventType: 'SETUP_TYPE_QUARANTINED',
+        payload: { setupType, reason, stats },
+        createdAtUtc: new Date().toISOString(),
+      });
+      setupPerformanceStore.save(setupPerformance.listStats());
+    },
+  });
+  setupPerformance.restore(setupPerformanceStore.load());
+  const setupOutcomeTracker = new SetupOutcomeTracker();
+  if (!env.SETUP_FEEDBACK_ENABLED) {
+    logger.info('Setup-archetype performance feedback is observe-only (set SETUP_FEEDBACK_ENABLED=true to quarantine)');
+  }
+
   const broker = new PaperBroker({
     dataDir,
     accountId: 'paper-main',
@@ -174,6 +206,14 @@ export async function startEngine(): Promise<EngineHandle> {
       if (fill.strategyId) {
         strategyPerformance.recordRealizedPnl(fill.strategyId, fill.realizedPnl, fill.fillTsUtc);
         strategyPerformanceStore.save(strategyPerformance.listStats());
+      }
+
+      if (fill.strategyId === 'smc-agent-v1') {
+        const setupType = setupOutcomeTracker.resolveOnClose(fill.symbol);
+        if (setupType) {
+          setupPerformance.recordRealizedPnl(setupType, fill.realizedPnl, fill.fillTsUtc);
+          setupPerformanceStore.save(setupPerformance.listStats());
+        }
       }
 
       if (profitGoals) {
@@ -396,6 +436,9 @@ export async function startEngine(): Promise<EngineHandle> {
       symbols,
       getAllPositions: () => broker.getPositions(),
       getAllOpenOrders: () => broker.getOpenOrders(),
+      setupPerformance,
+      setupOutcomeTracker,
+      enforceSetupQuarantine: env.SETUP_FEEDBACK_ENABLED,
       onCycleCompleted: (cycle) => {
         events.logAgentCycle(cycle);
         wsGateway.broadcast('agent.cycle', cycle);
@@ -521,6 +564,7 @@ export async function startEngine(): Promise<EngineHandle> {
     armPasscode: env.LIVE_ARM_PASSCODE,
     profitGoals,
     strategyPerformance,
+    setupPerformance,
     liveGuard,
     reconciler,
     riskConfig: DEFAULT_RISK_CONFIG,

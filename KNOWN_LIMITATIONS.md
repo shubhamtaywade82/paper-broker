@@ -77,6 +77,39 @@ Work required:
 - Skill system integration
 - Structured output schema
 
+### ✅ Setup-Archetype Performance Memory Implemented (Self-Learning, Scoped)
+
+Previously the only thing in the system that learned from outcomes was
+`AdaptiveParameterAI`'s Q-table for Supertrend parameters — the LLM debate had
+no memory across cycles. `smc-agent-v1` now also learns from its own realized
+outcomes, per setup archetype:
+
+- `StrategyPerformanceTracker` (already used for whole-strategy quarantine) is
+  reused as-is, keyed by setup type (e.g. `SSL_SWEEP_REVERSAL_LONG`) instead
+  of strategy id — no parallel class was written for this.
+- `SetupOutcomeTracker` (new, `src/strategy/SetupOutcomeTracker.ts`) attributes
+  a closing fill back to the setup archetype that opened the position, via an
+  in-memory per-symbol map (in-memory only — a position open at restart loses
+  its setup-type attribution for that one trade, nothing else).
+- The archetype's track record reaches the LLM analyst/trader prompts as a
+  one-line advisory `setupMemory` summary (`MarketFactContext.setupMemory`) —
+  informational only, never passed to the deterministic risk/fund-manager
+  stages, per CONTRACTS.md Section 5.
+- A quarantined archetype is skipped deterministically **before** the LLM
+  pipeline is invoked when `SETUP_FEEDBACK_ENABLED=true` (off by default;
+  stats still accumulate either way, same "observe vs enforce" split as
+  `STRATEGY_FEEDBACK_ENABLED`).
+- Persisted to `data/setup_performance.json`; surfaced at
+  `GET /api/v1/setups/performance`; released via
+  `POST /api/v1/setups/:id/release` (release is always an operator action,
+  never automatic — CONTRACTS.md Section 21).
+
+Not implemented: the LLM stages themselves (analyst/debate/trader) still carry
+no memory beyond this one summarized line — no RAG-style trade post-mortem
+synthesis, no dynamically rewritten prompts, no cross-cycle chat history. That
+remains out of scope; MCP tool orchestration above is the larger prerequisite
+for anything richer.
+
 ### ✅ Risk Engine Implemented
 
 `RiskEngine` (`src/trading/risk/RiskEngine.ts`) validates every signal before an
@@ -447,20 +480,34 @@ Work required:
 
 ## Market Data
 
-### ❌ Multi-Timeframe Structure Engine Incomplete
+### ✅ Multi-Timeframe Structure Engine Implemented
 
-Advanced market structure analysis is in progress.
+This section previously described MTF/HTF structure as incomplete. That was
+stale relative to the code as of this pass (2026-08-26) — `MtfStateEngine.ts`,
+`MarketStructureEngine.ts`, `SmcLocationEngine.ts` (order blocks, FVGs,
+liquidity sweeps), and `SetupEngine.ts`/`ConfluenceScorer.ts` were added
+2026-08-22, three days before the previous revision of this file, and were
+never reconciled against it. Corrected per AGENTS.md Section 4 (evidence
+first — inspect the implementation, don't trust prior doc text).
 
-Current status:
-- Single-timeframe candles processed
-- Multi-timeframe structure (HTF/LTF) not complete
-- SMC concepts (sweeps, CHoCH, BOS) partially implemented
+Verified in code (`test/unit/MtfStateEngine.test.ts`,
+`test/unit/SetupEngine.test.ts`, `test/unit/SmcAgentPipeline.integration.test.ts`):
+- `MtfStateEngine` synchronizes 4h/1h/15m/5m candle state per symbol with an
+  explicit sync-status classification (`SYNCHRONIZED`/`DEGRADED`/`STALE`/
+  `MISSING_DATA`/`NOT_READY`).
+- `MarketStructureEngine`/`StructureClassifier` detect swing points, BOS, and
+  CHoCH per timeframe.
+- `SmcLocationEngine` detects order blocks, fair value gaps, and liquidity
+  sweeps (SSL/BSL/equal highs-lows) per timeframe.
+- `SetupEngine`/`ConfluenceScorer` require and score real HTF alignment
+  (4h regime + 1h bias, `htfWeight: 20` of `minConfluenceScore: 65`) before a
+  setup can reach `READY` — HTF confluence is enforced, not merely recorded.
+- Wired live: `smc-agent-v1` (`src/strategy/strategies/smc-agent.ts`) is one
+  of the two strategies `engine.ts` registers with `StrategyEngine`.
 
-Work required:
-- MTF candle synchronization
-- Structure point detection
-- Liquidity pool tracking
-- Displacement detection
+Not claiming more than this: displacement is inferred implicitly through FVG
+formation, not scored as an independent factor; only 4h/1h/15m/5m are
+canonical timeframes (`CANONICAL_TIMEFRAMES`), no 1m/1d support exists.
 
 ---
 
@@ -545,9 +592,11 @@ When you complete work that addresses a limitation:
 | 2026-08-25 | All seven agent stages were presented identically as "agents" despite two being hardcoded policy | `AgentCycleStep` now carries `engine: 'llm' \| 'deterministic'` |
 | 2026-08-25 | `CoinDCXBroker` coerced `TAKE_PROFIT_MARKET` to `market_order`, so a take-profit bracket would have executed immediately and closed the position the instant it opened | Brackets now route to `createTPSL` against the open position; unsupported entry types rejected explicitly |
 | 2026-08-25 | `reduceOnly` was set on the returned `Order` but never sent to the venue (`createOrder` has no `reduce_only` field), so a close against a flat position would have opened a new opposite position | Reduce-only closes route to `exitPosition`; closing while flat and partial reduces are both rejected |
+| 2026-08-26 | "Multi-Timeframe Structure Engine Incomplete" section was stale — `MtfStateEngine`, `MarketStructureEngine`, `SmcLocationEngine`, `SetupEngine`/`ConfluenceScorer` were added 2026-08-22 and already wired live via `smc-agent-v1`, but the doc was never reconciled | Corrected to ✅ with verification pointers |
+| 2026-08-26 | `smc-agent-v1`'s LLM debate had no memory across cycles — only `AdaptiveParameterAI`'s Supertrend Q-table learned from outcomes | `StrategyPerformanceTracker` reused, keyed by setup archetype; `SetupOutcomeTracker` attributes closing fills to the setup type that opened them; track record surfaced to the LLM as advisory `setupMemory` context and deterministically gates quarantined archetypes (`SETUP_FEEDBACK_ENABLED`) |
 
 ---
 
-**Last Updated**: 2026-08-25
+**Last Updated**: 2026-08-26
 
 **Agent Reminder**: If you discover a capability claimed in documentation that doesn't match implementation, add it here before proceeding.

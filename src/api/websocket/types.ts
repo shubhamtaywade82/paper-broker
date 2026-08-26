@@ -16,6 +16,7 @@ export type WebSocketEventType =
   | 'agent.step'
   | 'profit.goal'
   | 'strategy.performance'
+  | 'setup.performance'
   | 'trailing.stop'
   | 'reconciliation.report';
 

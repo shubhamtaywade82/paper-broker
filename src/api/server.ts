@@ -106,6 +106,14 @@ export interface ApiServerOptions {
   profitGoals?: ProfitGoalManager;
   /** Per-strategy performance, surfaced at `/api/v1/strategies/performance`. */
   strategyPerformance?: StrategyPerformanceTracker;
+  /**
+   * Per-setup-archetype performance for the SMC agent's self-learning
+   * memory (src/strategy/strategies/smc-agent.ts), surfaced read-only at
+   * `/api/v1/setups/performance` and releasable at
+   * `/api/v1/setups/:id/release`. Same tracker class as strategyPerformance,
+   * keyed by setup type instead of strategy id.
+   */
+  setupPerformance?: StrategyPerformanceTracker;
   /** The live guard actually in force, so `/api/v1/risk` reports real safe-mode state. */
   liveGuard?: LiveTradingGuard;
   /** The risk limits actually in force, so `/api/v1/risk` stops reporting hardcoded values. */
@@ -493,6 +501,35 @@ export class ApiServer {
           stats: tracker.getStats(request.params.id),
         });
         return { released: true, strategyId: request.params.id };
+      }
+    );
+
+    this.app.get('/api/v1/setups/performance', async () => {
+      const tracker = this.options.setupPerformance;
+      return {
+        enabled: Boolean(tracker),
+        setups: tracker?.listStats() ?? [],
+      };
+    });
+
+    this.app.post<{ Params: { id: string } }>(
+      '/api/v1/setups/:id/release',
+      { preHandler: this.requireApiKey },
+      async (request, reply) => {
+        const tracker = this.options.setupPerformance;
+        if (!tracker) {
+          return reply.code(404).send({ error: 'Setup performance tracking is not enabled' });
+        }
+        const released = tracker.release(request.params.id);
+        if (!released) {
+          return reply.code(404).send({ error: `Setup type ${request.params.id} is not quarantined` });
+        }
+        this.wsGateway.broadcast('setup.performance', {
+          setupType: request.params.id,
+          released: true,
+          stats: tracker.getStats(request.params.id),
+        });
+        return { released: true, setupType: request.params.id };
       }
     );
 
