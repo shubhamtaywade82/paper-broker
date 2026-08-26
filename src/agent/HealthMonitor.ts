@@ -139,17 +139,22 @@ export class HealthMonitor {
       });
     }
 
-    // 4. Recent WS disconnect — only flag if disconnect was > 3 minutes ago
-    //    (normal Binance WS reconnections are brief and shouldn't trip the breaker).
-    const recentDisconnects = this.deps.eventLog.getEvents({ type: 'WS_DISCONNECTED', limit: 1 });
-    if (recentDisconnects.length > 0) {
-      const ev = recentDisconnects[0]!;
-      const ts = typeof ev.ts === 'number' ? ev.ts : Date.parse(String(ev.ts));
-      const disconnectAgeMs = now - ts;
-      if (Number.isFinite(ts) && disconnectAgeMs > 180_000 && disconnectAgeMs < 600_000) {
+    // 4. WebSocket health — only flag if WS is currently disconnected
+    //    (reconnected WS after a brief disconnect is healthy).
+    const recentWsEvents = this.deps.eventLog.getEvents({ type: 'WS_DISCONNECTED', limit: 1 });
+    const recentConnects = this.deps.eventLog.getEvents({ type: 'WS_CONNECTED', limit: 1 });
+    if (recentWsEvents.length > 0) {
+      const lastDisconnect = recentWsEvents[0]!;
+      const disconnectTs = typeof lastDisconnect.ts === 'number' ? lastDisconnect.ts : Date.parse(String(lastDisconnect.ts));
+      const lastConnectTs = recentConnects.length > 0
+        ? (typeof recentConnects[0]!.ts === 'number' ? recentConnects[0]!.ts : Date.parse(String(recentConnects[0]!.ts)))
+        : 0;
+      // Only flag if disconnect is more recent than last connect (WS currently down)
+      // AND the disconnect happened at least 30 seconds ago (avoid startup noise)
+      if (Number.isFinite(disconnectTs) && disconnectTs > lastConnectTs && (now - disconnectTs) > 30_000) {
         issues.push({
           kind: 'WS_DISCONNECT_RECENT',
-          detail: `WebSocket disconnect at ${new Date(ts).toISOString()} (${Math.round(disconnectAgeMs / 1000)}s ago)`,
+          detail: `WebSocket currently disconnected at ${new Date(disconnectTs).toISOString()} (${Math.round((now - disconnectTs) / 1000)}s ago)`,
         });
       }
     }
