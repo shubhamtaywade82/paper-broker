@@ -8,8 +8,20 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
 
-  API_KEY: z.string().min(16).optional(),
-  LIVE_ARM_PASSCODE: z.string().min(4).optional(),
+  API_KEY: z
+    .string()
+    .optional()
+    .transform((val) => (val && val.trim() !== '' ? val.trim() : undefined))
+    .refine((val) => val === undefined || val.length >= 16, {
+      message: 'String must contain at least 16 character(s)',
+    }),
+  LIVE_ARM_PASSCODE: z
+    .string()
+    .optional()
+    .transform((val) => (val && val.trim() !== '' ? val.trim() : undefined))
+    .refine((val) => val === undefined || val.length >= 4, {
+      message: 'String must contain at least 4 character(s)',
+    }),
 
   TRADING_MODE: z.enum(['paper', 'shadow', 'live']).default('paper'),
   LIVE_TRADING_ARMED: z

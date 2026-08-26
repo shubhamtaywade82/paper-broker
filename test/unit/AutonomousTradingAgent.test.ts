@@ -148,7 +148,7 @@ function makeBrainModules(opts: {
       maxDailyLossPct: 0.03,
       maxConsecutiveLosses: 3,
       maxDrawdownPct: 0.08,
-      cooldownMs: 1_000,
+      cooldownMs: 60_000,
       requireHealthyMarket: false, // don't trip on test-fixture stale data
     },
     {
