@@ -128,7 +128,7 @@ const EnvSchema = z.object({
   AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.03),
   AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES: z.coerce.number().int().min(1).default(5),
   AUTONOMOUS_CB_MAX_DRAWDOWN_PCT: z.coerce.number().min(0).max(1).default(0.08),
-  AUTONOMOUS_CB_COOLDOWN_MS: z.coerce.number().int().min(1_000).default(900_000),
+  AUTONOMOUS_CB_COOLDOWN_MS: z.coerce.number().int().min(1_000).default(300_000),
   AUTONOMOUS_CB_REQUIRE_HEALTHY_MARKET: z
     .string()
     .optional()

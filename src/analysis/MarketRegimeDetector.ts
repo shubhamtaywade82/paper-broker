@@ -176,7 +176,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.015,
           trailingDistancePct: 0.012,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 7,
+          maxLeverage: 10,
           rationale:
             'ADX>35 with aligned momentum — let winners run, trail looser to avoid shake-outs.',
         };
@@ -190,7 +190,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.02,
           trailingDistancePct: 0.015,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 5,
+          maxLeverage: 8,
           rationale:
             'ADX 20-35 — standard trend-following profile, balanced RR and trailing distance.',
         };
@@ -204,7 +204,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.012,
           trailingDistancePct: 0.008,
           breakevenTriggerPct: 0.008,
-          maxLeverage: 3,
+          maxLeverage: 5,
           rationale:
             'Low band-width, weak ADX — favour mean-reversion, tight stops, smaller size.',
         };
@@ -218,7 +218,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.018,
           trailingDistancePct: 0.014,
           breakevenTriggerPct: 0.012,
-          maxLeverage: 2,
+          maxLeverage: 3,
           rationale:
             'Range-bound but volatile — wider stops, much smaller size, avoid overtrading.',
         };
@@ -232,7 +232,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.025,
           trailingDistancePct: 0.02,
           breakevenTriggerPct: 0.015,
-          maxLeverage: 4,
+          maxLeverage: 6,
           rationale:
             'High band-width + expanding ATR — wider stops to survive noise, smaller size, favour breakout setups.',
         };
@@ -247,7 +247,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.015,
           trailingDistancePct: 0.012,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 3,
+          maxLeverage: 4,
           rationale:
             'Regime unclear / conflicting signals — defensive size, hold for clearer context.',
         };
