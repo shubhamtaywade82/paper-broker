@@ -85,6 +85,19 @@ const EnvSchema = z.object({
   STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT: z.coerce.number().positive().default(500),
   STRATEGY_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
 
+  // Per-setup-archetype performance feedback for the SMC agent
+  // (src/strategy/strategies/smc-agent.ts, reuses StrategyPerformanceTracker
+  // keyed by setup type instead of strategy id). Lower default trade count
+  // than STRATEGY_FEEDBACK_MIN_TRADES because a single symbol sees fewer
+  // occurrences of one specific setup archetype than the whole strategy does.
+  SETUP_FEEDBACK_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  SETUP_FEEDBACK_MIN_TRADES: z.coerce.number().int().positive().default(10),
+  SETUP_FEEDBACK_MAX_DRAWDOWN_USDT: z.coerce.number().positive().default(300),
+  SETUP_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
+
   DB_FILE: z.string().default('data/paper.sqlite3'),
   EVENT_LOG_FILE: z.string().default('data/events.jsonl'),
   SNAPSHOT_DIR: z.string().default('data/snapshots'),

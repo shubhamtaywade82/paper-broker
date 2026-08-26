@@ -36,7 +36,7 @@ Every order submission goes through `ExecutionRouter`, which is constructed in
 | Agent authority | advisory only | The pipeline **confirms or vetoes** a candidate the deterministic SMC engine already produced (`smc-agent.ts`: a NEUTRAL or mismatched direction returns null). It cannot originate a trade, pick a symbol, set a stop, or size a position. |
 | Ollama reachability | soft dependency | If unreachable, the debate resolves to NEUTRAL and no SMC trades occur. `engine.ts` logs a startup warning; startup is not gated. |
 | MCP             | not implemented | No tool orchestration. Agents are prompt-in / JSON-out. |
-| Learning        | implemented, narrow | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. Nothing else in the system learns; the LLM has no memory across cycles. |
+| Learning        | implemented | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. **Also:** per-SMC-setup-archetype performance memory (`StrategyPerformanceTracker` reused, keyed by setup type e.g. `SSL_SWEEP_REVERSAL_LONG`, persisted to `data/setup_performance.json`). Closing fills from `smc-agent-v1` are attributed to the setup archetype that opened them via `SetupOutcomeTracker` (in-memory, per-symbol correlation). A setup archetype's realized track record is (a) surfaced to the LLM analyst/trader prompts as advisory `setupMemory` context — informational only, never routed to the deterministic risk/fund-manager stages — and (b) deterministically gates future entries of that archetype when quarantined, same mechanism as strategy-level quarantine but scoped narrower. Off by default (`SETUP_FEEDBACK_ENABLED=true` to enforce; stats accumulate either way). Operator-releasable via `POST /api/v1/setups/:id/release`, observable via `GET /api/v1/setups/performance`. The LLM debate/analyst/trader stages themselves still have no memory beyond this one summarized line — no broader agentic memory or MCP-tool-based recall exists. |
 
 ## Persistence
 
@@ -89,6 +89,7 @@ These must NOT change without an ADR:
 - ✅ Profit goals (`ProfitGoalManager`) feeding `RiskEngine`'s trading halt and position-size multiplier, persisted, with calendar resets in `Scheduler`
 - ✅ Trailing stops (`TrailingStopController`) doing real cancel-and-replace on resting STOP_MARKET orders
 - ✅ Per-strategy performance feedback (`StrategyPerformanceTracker`) with drawdown/win-rate quarantine, persisted, operator-released
+- ✅ Per-setup-archetype performance feedback for `smc-agent-v1` (same tracker, keyed by setup type), feeding advisory memory into the LLM prompts and gating quarantined archetypes deterministically, persisted, operator-released
 - ✅ SQLite event persistence (append-only + queryable tables)
 - ✅ Fastify REST + WebSocket gateway, API key auth on control endpoints
 - ✅ Incident normalization (`ErrorNormalizer`) with Telegram alerts
@@ -128,7 +129,7 @@ These must NOT change without an ADR:
 
 ## Last Updated
 
-2026-08-25
+2026-08-26
 
 ---
 

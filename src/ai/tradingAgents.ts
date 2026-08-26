@@ -96,6 +96,14 @@ export interface MarketFactContext {
   candlesSummary?: string;
   accountEquity?: number;
   availableBalance?: number;
+  /**
+   * Self-learning memory: a one-line summary of this setup archetype's
+   * realized track record, supplied by the strategy layer (see
+   * smc-agent.ts's buildSetupMemory). Advisory context only — it informs the
+   * analyst/trader prompts, never the deterministic risk/fund-manager stages,
+   * per CONTRACTS.md Section 5 (LLM Authority Contract).
+   */
+  setupMemory?: string;
 }
 
 export class TradingAgentsPipeline {
@@ -234,6 +242,7 @@ export class TradingAgentsPipeline {
       `Last Price: ${ctx.lastPrice}, Bid: ${ctx.bid}, Ask: ${ctx.ask}, Spread: ${ctx.spread}`,
       `Mark Price: ${ctx.mark}, Funding: ${ctx.fundingRate ?? 0.0001}, OI: ${ctx.openInterest ?? 0}`,
       ctx.candlesSummary ? `Price Action:\n${ctx.candlesSummary}` : '',
+      ctx.setupMemory ? `Historical track record for this setup: ${ctx.setupMemory}` : '',
     ].filter(Boolean).join('\n');
 
     try {
@@ -349,6 +358,7 @@ export class TradingAgentsPipeline {
       `Debate Verdict: ${verdict.prevailingSide} (Conviction: ${verdict.conviction})`,
       `Rationale: ${verdict.rationale}`,
       `Reports: ${JSON.stringify(reports)}`,
+      ctx.setupMemory ? `Historical track record for this setup: ${ctx.setupMemory} Weigh a poor track record toward lower confidence or NEUTRAL.` : '',
       'Formulate a trade decision. Output valid JSON with exactly these fields:',
       '- action: "LONG", "SHORT", or "NEUTRAL"',
       '- leverage: number between 1 and 20',
@@ -356,7 +366,7 @@ export class TradingAgentsPipeline {
       '- confidence: a number between 0 and 1 (e.g. 0.7, NOT 70)',
       '- stopLoss, takeProfit: price levels (numbers)',
       '- rationale: short string',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     try {
       const decision = await this.client.generateWithSchema<TraderDecision>(
