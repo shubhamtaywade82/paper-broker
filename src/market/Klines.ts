@@ -47,6 +47,7 @@ export class KlineStore {
         low: parseFloat(item[3]),
         close: parseFloat(item[4]),
         volume: parseFloat(item[5]),
+        isClosed: true,
       }));
 
       for (const candle of candles) {

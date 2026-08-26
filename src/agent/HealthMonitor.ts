@@ -139,15 +139,17 @@ export class HealthMonitor {
       });
     }
 
-    // 4. Recent WS disconnect.
+    // 4. Recent WS disconnect — only flag if disconnect was > 3 minutes ago
+    //    (normal Binance WS reconnections are brief and shouldn't trip the breaker).
     const recentDisconnects = this.deps.eventLog.getEvents({ type: 'WS_DISCONNECTED', limit: 1 });
     if (recentDisconnects.length > 0) {
       const ev = recentDisconnects[0]!;
       const ts = typeof ev.ts === 'number' ? ev.ts : Date.parse(String(ev.ts));
-      if (Number.isFinite(ts) && now - ts < this.config.staleMs * 4) {
+      const disconnectAgeMs = now - ts;
+      if (Number.isFinite(ts) && disconnectAgeMs > 180_000 && disconnectAgeMs < 600_000) {
         issues.push({
           kind: 'WS_DISCONNECT_RECENT',
-          detail: `WebSocket disconnect at ${new Date(ts).toISOString()}`,
+          detail: `WebSocket disconnect at ${new Date(ts).toISOString()} (${Math.round(disconnectAgeMs / 1000)}s ago)`,
         });
       }
     }

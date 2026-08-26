@@ -414,7 +414,8 @@ export interface SystemEventType {
     | 'AUTONOMOUS_EXIT_SIGNAL'
     | 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED'
     | 'AUTONOMOUS_SCALE_IN'
-    | 'AUTONOMOUS_SCALE_OUT';
+    | 'AUTONOMOUS_SCALE_OUT'
+    | 'AUTONOMOUS_LLM_VETO';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
 }

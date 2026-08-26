@@ -145,6 +145,8 @@ export const AutonomousRegimeSchema = z.object({
   from: z.string(),
   to: z.string(),
   confidence: z.number(),
+  /** Per-regime confirmation bars that were required to commit this change (Finding 6). */
+  confirmations: z.number().optional(),
 });
 
 export const AutonomousSignalSchema = z.object({

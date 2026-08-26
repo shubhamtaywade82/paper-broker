@@ -4,10 +4,11 @@
 **Scope**: `src/agent/AutonomousTradingAgent.ts`, `src/agent/ExitManager.ts`, `src/agent/CircuitBreaker.ts`, `src/agent/PerformanceTracker.ts`, `src/agent/HealthMonitor.ts`, `src/risk/AdaptiveRiskManager.ts`, `src/analysis/MarketRegimeDetector.ts`
 **Question**: Does the autonomous agent make self-directed entry / exit / risk decisions, or is it a thin wrapper around the existing `StrategyEngine` pipeline?
 
-> **Implementation status (2026-08-26, follow-up commit)**: Findings **7**, **4**, **3**, and **2** are
-> now IMPLEMENTED. See "Implemented follow-ups" at the bottom of this document for
-> what shipped, plus one bonus bug found and fixed on the way
-> (`StrategyEngine.submitSignal` outcome reporting). Remaining open findings: 1, 5, 6, 8.
+> **Implementation status (2026-08-26, follow-up commits)**: ALL 8 findings
+> are now IMPLEMENTED. Findings 7, 4, 3, 2 shipped in the first follow-up
+> commit; findings 1, 5, 6, 8 in the second (see "Implemented follow-ups" at
+> the bottom of this document, plus one bonus bug found and fixed on the way
+> — `StrategyEngine.submitSignal` outcome reporting).
 
 ## Verdict: ✅ The agent IS its own brain
 
@@ -81,8 +82,8 @@ This is correct because:
 
 These are not bugs; they're enhancements. Each is annotated with impact and effort.
 
-### Finding 1 — `probeConfidence` is passive, not consultative
-**Impact**: Medium | **Effort**: Medium
+### Finding 1 — `probeConfidence` is passive, not consultative — ✅ IMPLEMENTED
+**Impact**: Medium | **Effort**: Medium | **Status**: shipped (debate-driven veto — see "Implemented follow-ups")
 
 The agent calls `probeConfidence(symbol, direction, setup, plan)` to get a confidence number from the LLM, but it doesn't ask the LLM to **veto** the trade. The existing `TradingAgentsPipeline` (multi-agent LLM debate) does this for SMC setups — `Bull Researcher` vs `Bear Researcher` vs `Debate Judge`. The autonomous agent could subscribe to the same debate for any setup, not just SMC.
 
@@ -119,13 +120,13 @@ const regimeBias = regimeStats ? Math.max(0.5, Math.min(1.5, regimeStats.winRate
 const adjustedRiskMultiplier = adaptation.riskMultiplier * regimeBias;
 ```
 
-### Finding 5 — HTF alignment is binary, not weighted
-**Impact**: Low | **Effort**: Low
+### Finding 5 — HTF alignment is binary, not weighted — ✅ IMPLEMENTED
+**Impact**: Low | **Effort**: Low | **Status**: shipped (weighted alignment — see "Implemented follow-ups")
 
 The current alignment check is binary: pass / fail. A more nuanced approach would weight confluence by alignment strength — e.g., a long setup with 4h strongly bullish + 1h bullish gets full confluence; 4h range + 1h bullish gets 0.7× confluence; 4h bearish + 1h bullish (counter-trend) gets 0.3× confluence unless it's a reversal archetype.
 
-### Finding 6 — `regimeConfirmationBars` is global, not per-regime
-**Impact**: Low | **Effort**: Low
+### Finding 6 — `regimeConfirmationBars` is global, not per-regime — ✅ IMPLEMENTED
+**Impact**: Low | **Effort**: Low | **Status**: shipped (per-regime offset table — see "Implemented follow-ups")
 
 A transition out of `VOLATILE` (high noise) should require more observations than a transition out of `RANGING` (low noise). Currently `regimeConfirmationBars` is a single global threshold (default 3). Per-regime thresholds would reduce false regime flips in choppy markets.
 
@@ -142,8 +143,8 @@ This means `getRegimeStats(regime)` (Finding 4) won't work properly until this i
 
 **Concrete fix**: query the `AUTONOMOUS_AGENT_SIGNAL` event by `symbol + entry-time bracket` to recover the regime and setupType at entry time, and populate `TradeOutcome.regime` / `TradeOutcome.setupType` properly. This unlocks Finding 4.
 
-### Finding 8 — No correlation-aware portfolio risk
-**Impact**: Medium | **Effort**: High
+### Finding 8 — No correlation-aware portfolio risk — ✅ IMPLEMENTED
+**Impact**: Medium | **Effort**: High | **Status**: shipped (PortfolioCorrelationGuard — see "Implemented follow-ups")
 
 The agent checks `openPositions.length >= maxOpenPositions` (count-based) but doesn't check correlation. If BTC, ETH, and SOL are all long and BTC dumps, all three positions will lose simultaneously. A correlation-aware cap (`total_correlated_exposure < threshold`) would prevent this.
 
@@ -153,8 +154,11 @@ The agent checks `openPositions.length >= maxOpenPositions` (count-based) but do
 2. ~~**Finding 4**~~ ✅ done (per-regime learning bias in `computeTradePlan`).
 3. ~~**Finding 3**~~ ✅ done (symbol lock in `StrategyEngine` + agent pre-check).
 4. ~~**Finding 2**~~ ✅ done (`SCALE_IN` / `SCALE_OUT` in the ExitManager).
-5. **Finding 1** (medium effort, medium impact) — wire `TradingAgentsPipeline.runTrader` into `probeConfidence` for veto power.
-6. **Findings 5, 6, 8** — defer until the above are done.
+5. ~~**Finding 1**~~ ✅ done (debate-driven LLM veto in the entry path).
+6. ~~**Findings 5, 6, 8**~~ ✅ done (weighted HTF alignment, per-regime
+   confirmation bars, correlation-aware portfolio cap).
+
+All 8 findings closed.
 
 ## Tests covering the autonomy contract
 
@@ -176,7 +180,91 @@ The agent is genuinely autonomous. It runs on its own clock (30s default), surve
 
 The 8 findings above are enhancements, not blockers. The most impactful quick wins are Findings 7 + 4 (wire per-regime learning into the plan computation).
 
-## Implemented follow-ups (2026-08-26)
+## Implemented follow-ups (2026-08-26, second batch — findings 1, 5, 6, 8)
+
+### Finding 1 — debate-driven LLM veto
+`TradingAgentsPipeline` gained a public `runVetoConsultation(ctx, direction)`:
+it runs the pipeline's LLM stages (analyst team → bull/bear debate → judge →
+trader) and **deliberately skips** the deterministic risk-team / fund-manager
+stages — the agent has its own `AdaptiveRiskManager`, `CircuitBreaker` and the
+canonical `RiskEngine` behind every signal, and CONTRACTS.md §5 keeps risk
+authority out of model hands. The consultation returns
+`{ action, prevailingSide, confidence, degraded, rationale }` where
+`degraded` is true whenever any LLM stage emitted `failed` (i.e. we're on a
+deterministic fallback). The agent's `probeConfidence` became
+`probeEntryConfidence`: with the veto enabled (default,
+`AUTONOMOUS_LLM_VETO_ENABLED`) and the pipeline wired, a **genuine** trader
+verdict of NEUTRAL or the opposing direction **vetoes** the entry — a
+`REJECTED` cycle decision with the debate rationale, a durable
+`AUTONOMOUS_LLM_VETO` system event, and an `autonomous_llm_veto_total`
+metric. A **degraded** consultation never vetoes and never blesses: the agent
+uses its deterministic confidence and keeps trading (the "never blocks on
+Ollama availability" property survives). An agreeing debate contributes its
+trader confidence through the same 60/40 blend as the plain probe. The veto
+runs inside the confidence-probe gate (18) — after every cheap deterministic
+gate including the correlation cap (17.5), so a capped candidate never burns
+LLM latency — and before signal construction.
+New system event `AUTONOMOUS_LLM_VETO`.
+
+### Finding 5 — weighted HTF alignment
+The binary pass/fail gate (long needs BULLISH 4h, etc.) is now a weight on
+confluence: aligned ×1.0, 4h RANGE/UNKNOWN ×`AUTONOMOUS_HTF_RANGE_WEIGHT`
+(0.7), counter-trend ×`AUTONOMOUS_HTF_COUNTER_WEIGHT` (0.3) — with reversal
+archetypes countering the 4h trend getting the range weight, since countering
+the prior trend is their job. The weighted score must still clear
+`AUTONOMOUS_MIN_CONFLUENCE`, so in practice counter-trend entries remain
+unreachable at realistic scores (a 100/100 setup scores 30 at ×0.3 vs min
+65) while very-high-conviction range-trend setups are no longer locked out.
+The effective score feeds the deterministic confidence base, and every
+submitted signal carries `features.alignmentWeight` +
+`features.effectiveConfluence` for the audit trail.
+`AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED=false` restores the legacy binary gate.
+
+### Finding 6 — per-regime confirmation bars
+`regimeConfirmationBarsFor(prev, next, base, overrides?)` (exported from
+`MarketRegimeDetector.ts`) keys the confirmation threshold on the regime
+being LEFT, ranked by classification noise: leaving `RANGING_LOW_VOL` needs
+base − 1, trending regimes need base, `RANGING_HIGH_VOL`/`TRANSITIONING`
+need base + 1, `VOLATILE_BREAKOUT` needs base + 2. Transitions INTO
+`TRANSITIONING` are never delayed — standing aside early is the safe
+direction. Explicit per-regime overrides (config
+`regimeConfirmationBarsByRegime`) replace the offset table and clamp to ≥ 1.
+Committed regime changes now carry `confirmations: <bars required>` in both
+the `AUTONOMOUS_REGIME_CHANGE` event and the `agent.autonomous.regime`
+broadcast (dashboard contract updated with an optional field), so operators
+can see why a change took longer to commit.
+
+### Finding 8 — correlation-aware portfolio risk
+New `src/risk/PortfolioCorrelationGuard.ts`. The entry path gained gate
+17.5: the candidate's planned margin (`notional / leverage`, from the same
+`positionSizing` helper that builds the signal — so the exposure the guard
+approves is exactly the exposure submitted) is checked against its
+**correlated cluster** — same-direction open positions whose rolling 1h
+close-to-close log-return Pearson correlation with the candidate (≥ 30
+closed candles on both sides, `AUTONOMOUS_CORRELATION_LOOKBACK` window)
+clears `AUTONOMOUS_CORRELATION_FLOOR` (0.7). Cluster exposure is
+margin-weighted (broker's `initialMargin` for open positions) and capped at
+`AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT` (0.25) of equity. The effective
+correlation is ρ × direction-agreement, so hedges (opposite direction on
+positively-correlated symbols, or same direction on negatively-correlated
+symbols) are never counted. Pairs with insufficient history are treated as
+uncorrelated and flagged `insufficientData`. Pyramid adds evaluate the same
+cap through a `correlationCheck` callback on `ExitManager.evaluateScaleIn`
+(with `includeSameSymbol` so the base position counts, ρ = 1 by definition)
+— adds can no longer hide exposure underneath the gate. The gate runs
+before any model call. `AUTONOMOUS_CORRELATION_ENABLED=false` makes the
+guard a pass-through (count-based `maxOpenPositions` remains, as before).
+
+### Verification (second batch)
+Backend: typecheck ✓, lint ✓, build ✓, **587/587 tests** (+33 new in
+`test/unit/AutonomyFollowups.test.ts`: guard unit tests including the ρ = −1
+hedge fixture, ExitManager scale-in gate, agent-level veto / degraded /
+blend / disabled / throwing-consultation tests, weighted-alignment matrix,
+per-regime confirmation behaviour through `runCycle`, and the
+correlation-capped entry + hedge exemption). Dashboard: typecheck ✓, 32/32
+tests (regime contract gained optional `confirmations`).
+
+## Implemented follow-ups (2026-08-26, first batch — findings 4, 3, 2)
 
 ### Finding 4 — per-regime learning bias in the trade plan
 `AdaptiveRiskManagerDeps` gained an optional `getRegimeStats(regime)` lookup, wired in

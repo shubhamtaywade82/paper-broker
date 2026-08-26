@@ -70,6 +70,42 @@ export interface RegimeAdaptation {
 }
 
 /**
+ * Confirmation bars required to commit a regime transition FROM `prev` TO
+ * `next` (AUTONOMY_AUDIT Finding 6).
+ *
+ * The threshold is keyed on the regime being LEFT, ranked by how noisy its
+ * classifications are: RANGING_LOW_VOL is quiet (−1 bar), trending regimes
+ * are stable (±0), RANGING_HIGH_VOL / TRANSITIONING are choppy (+1), and
+ * VOLATILE_BREAKOUT is the noisiest (+2). Transitions INTO TRANSITIONING are
+ * never delayed — standing aside early is the safe direction, and delaying
+ * it would keep the agent trading a regime that already ended.
+ *
+ * An explicit `overrides` entry for the source regime replaces the offset
+ * table entirely (clamped to ≥ 1). With the default base of 3 this yields:
+ * leaving RANGING_LOW_VOL needs 2 observations, leaving VOLATILE_BREAKOUT
+ * needs 5.
+ */
+export function regimeConfirmationBarsFor(
+  prev: MarketRegime | undefined,
+  next: MarketRegime,
+  base: number,
+  overrides?: Partial<Record<MarketRegime, number>>
+): number {
+  if (next === 'TRANSITIONING') return base;
+  const override = prev ? overrides?.[prev] : undefined;
+  if (typeof override === 'number') return Math.max(1, Math.round(override));
+  const offsets: Record<MarketRegime, number> = {
+    RANGING_LOW_VOL: -1,
+    TRENDING_STRONG: 0,
+    TRENDING_NORMAL: 0,
+    RANGING_HIGH_VOL: 1,
+    TRANSITIONING: 1,
+    VOLATILE_BREAKOUT: 2,
+  };
+  return Math.max(1, base + (prev ? offsets[prev] : 0));
+}
+
+/**
  * Detect market regime per symbol from the MTF state.
  *
  * Reuses the existing {@link extractMarketFeatures} function (ADX, Bollinger
@@ -140,7 +176,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.015,
           trailingDistancePct: 0.012,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 7,
+          maxLeverage: 10,
           rationale:
             'ADX>35 with aligned momentum — let winners run, trail looser to avoid shake-outs.',
         };
@@ -154,7 +190,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.02,
           trailingDistancePct: 0.015,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 5,
+          maxLeverage: 8,
           rationale:
             'ADX 20-35 — standard trend-following profile, balanced RR and trailing distance.',
         };
@@ -168,7 +204,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.012,
           trailingDistancePct: 0.008,
           breakevenTriggerPct: 0.008,
-          maxLeverage: 3,
+          maxLeverage: 5,
           rationale:
             'Low band-width, weak ADX — favour mean-reversion, tight stops, smaller size.',
         };
@@ -182,7 +218,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.018,
           trailingDistancePct: 0.014,
           breakevenTriggerPct: 0.012,
-          maxLeverage: 2,
+          maxLeverage: 3,
           rationale:
             'Range-bound but volatile — wider stops, much smaller size, avoid overtrading.',
         };
@@ -196,7 +232,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.025,
           trailingDistancePct: 0.02,
           breakevenTriggerPct: 0.015,
-          maxLeverage: 4,
+          maxLeverage: 6,
           rationale:
             'High band-width + expanding ATR — wider stops to survive noise, smaller size, favour breakout setups.',
         };
@@ -211,7 +247,7 @@ export class MarketRegimeDetector {
           trailingActivationPct: 0.015,
           trailingDistancePct: 0.012,
           breakevenTriggerPct: 0.01,
-          maxLeverage: 3,
+          maxLeverage: 4,
           rationale:
             'Regime unclear / conflicting signals — defensive size, hold for clearer context.',
         };

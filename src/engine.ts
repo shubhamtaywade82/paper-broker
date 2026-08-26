@@ -24,6 +24,7 @@ import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
 import { ExecutionRouter } from './execution/ExecutionRouter.js';
 import { DEFAULT_RISK_CONFIG } from './trading/risk/RiskLimits.js';
+import { PortfolioCorrelationGuard } from './risk/PortfolioCorrelationGuard.js';
 import { LiveTradingGuard } from './execution/LiveTradingGuard.js';
 import { CoinDCXBroker } from './coindcx/CoinDCXBroker.js';
 import { MarketDataSupervisor } from './market/supervisor/MarketDataSupervisor.js';
@@ -590,6 +591,29 @@ export async function startEngine(): Promise<EngineHandle> {
       }
     );
 
+    // Correlation-aware portfolio cap (AUTONOMY_AUDIT Finding 8): the
+    // count-based maxOpenPositions gate can't see that BTC + ETH + SOL all
+    // long is one bet. The guard estimates pairwise correlations from
+    // recent 1h candles and caps the margin the candidate adds to its
+    // correlated cluster. Optional dep — absent (or disabled via env) the
+    // agent falls back to the count-based gate only.
+    const correlationGuard = new PortfolioCorrelationGuard(
+      {
+        enabled: env.AUTONOMOUS_CORRELATION_ENABLED,
+        correlationFloor: env.AUTONOMOUS_CORRELATION_FLOOR,
+        maxCorrelatedExposurePct: env.AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT,
+        lookbackCandles: env.AUTONOMOUS_CORRELATION_LOOKBACK,
+        timeframe: '1h',
+        minCandlesForEstimate: 30,
+      },
+      {
+        getCandles: (symbol, timeframe, count) => {
+          const all = klines.getCandles(symbol, timeframe as KlineInterval, count);
+          return all.filter((c) => c.isClosed).slice(-count);
+        },
+      }
+    );
+
     autonomousAgent = new AutonomousTradingAgent(
       {
         symbols,
@@ -602,6 +626,12 @@ export async function startEngine(): Promise<EngineHandle> {
         strategyId: env.AUTONOMOUS_STRATEGY_ID,
         minConfidence: env.AUTONOMOUS_MIN_CONFIDENCE,
         regimeConfirmationBars: env.AUTONOMOUS_REGIME_CONFIRMATION_BARS,
+        // AUTONOMY_AUDIT Finding 1: debate-driven LLM veto.
+        llmVetoEnabled: env.AUTONOMOUS_LLM_VETO_ENABLED,
+        // AUTONOMY_AUDIT Finding 5: weighted HTF alignment.
+        htfAlignmentWeighted: env.AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED,
+        htfRangeWeight: env.AUTONOMOUS_HTF_RANGE_WEIGHT,
+        htfCounterTrendWeight: env.AUTONOMOUS_HTF_COUNTER_WEIGHT,
       },
       {
         setupEngine,
@@ -619,6 +649,12 @@ export async function startEngine(): Promise<EngineHandle> {
         circuitBreaker,
         exitManager,
         healthMonitor,
+        // Finding 1: the agent's entries now face the same bull/bear debate
+        // the SMC strategy uses — a genuine opposing verdict vetoes.
+        tradingAgents: tradingAgentsPipeline,
+        getMarketState: (symbol) => marketState.getState(symbol),
+        // Finding 8: correlation-aware portfolio cap.
+        correlationGuard,
       }
     );
     logger.info(
@@ -634,6 +670,10 @@ export async function startEngine(): Promise<EngineHandle> {
         scalingEnabled: env.AUTONOMOUS_SCALING_ENABLED,
         symbolLockEnabled: env.SYMBOL_LOCK_ENABLED,
         symbolLockTtlMs: env.SYMBOL_LOCK_TTL_MS,
+        llmVetoEnabled: env.AUTONOMOUS_LLM_VETO_ENABLED,
+        htfAlignmentWeighted: env.AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED,
+        correlationCapPct: env.AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT,
+        correlationFloor: env.AUTONOMOUS_CORRELATION_FLOOR,
       },
       'Autonomous trading agent enabled and will run on its own clock'
     );
