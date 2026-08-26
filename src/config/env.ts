@@ -147,6 +147,17 @@ const EnvSchema = z.object({
   AUTONOMOUS_HEALTH_STALE_MS: z.coerce.number().int().min(1_000).default(15_000),
   AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
 
+  // --- Startup self-test (src/agent/StartupSelfTest.ts) -------------------
+  // Runs once at startup before the agent's first cycle. When true (default),
+  // any CRITICAL check failure halts the engine so the operator sees the
+  // problem immediately instead of discovering silent degradation hours
+  // later. Set to false to continue anyway (e.g. for dev / debugging).
+  AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL: z
+    .string()
+    .optional()
+    // Default true (fail-fast). Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+
   // Per-setup-archetype performance feedback for the SMC agent
   // (src/strategy/strategies/smc-agent.ts, reuses StrategyPerformanceTracker
   // keyed by setup type instead of strategy id). Lower default trade count

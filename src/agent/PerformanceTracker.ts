@@ -184,18 +184,54 @@ export class PerformanceTracker {
     // Pull recent fills for this strategy that realized PnL. The EventLog
     // stores them as FILL_CREATED events with the fill payload.
     const events = this.deps.eventLog.getEvents({ type: 'FILL_CREATED', limit: 500 });
+    // Also pull the agent's signal events — these carry regime + setupType
+    // at entry time, which the fill itself does not. We index them by
+    // symbol + entry-time bracket so we can recover the regime under which
+    // each trade was entered, which unlocks per-regime learning
+    // (Finding 7 in AUTONOMY_AUDIT.md).
+    const signalEvents = this.deps.eventLog.getEvents({
+      type: 'AUTONOMOUS_AGENT_SIGNAL',
+      limit: 500,
+    });
+    // Index by symbol → descending-by-ts list, for binary-search-style
+    // "find the most recent signal at or before this fill time" lookup.
+    const signalsBySymbol = new Map<string, Array<{ ts: number; regime: string; setupType: string; direction: string }>>();
+    for (const ev of signalEvents) {
+      const p = ev.payload as
+        | { symbol?: string; regime?: string; setupType?: string; action?: string; submittedAt?: number }
+        | undefined;
+      if (!p?.symbol || !p.regime || !p.setupType) continue;
+      const action = p.action ?? '';
+      const direction = action.startsWith('OPEN_SHORT') ? 'SHORT' : 'LONG';
+      const list = signalsBySymbol.get(p.symbol) ?? [];
+      list.push({ ts: p.submittedAt ?? ev.ts, regime: p.regime, setupType: p.setupType, direction });
+      signalsBySymbol.set(p.symbol, list);
+    }
+    // Sort each symbol's signals descending by ts so the most recent match
+    // is found first via find().
+    for (const list of signalsBySymbol.values()) {
+      list.sort((a, b) => b.ts - a.ts);
+    }
+
     const outcomes: TradeOutcome[] = [];
     for (const ev of events) {
       const fill = ev.payload as Fill;
       if (!fill || fill.strategyId !== this.config.strategyId) continue;
       if (!fill.realizedPnl || fill.realizedPnl === 0) continue;
-      // Parse regime + setupType from the fill's strategy context. The fill
-      // itself doesn't carry the agent's reasoning — but the agent emitted a
-      // matching AUTONOMOUS_AGENT_SIGNAL event at entry time. We look that
-      // up by symbol + entry-time bracket. If we can't find it, fall back.
-      const regime = 'UNKNOWN';
-      const setupType = 'UNKNOWN';
-      const direction: 'LONG' | 'SHORT' = fill.side === 'BUY' ? 'LONG' : 'SHORT';
+      // Find the most recent AUTONOMOUS_AGENT_SIGNAL for this symbol at or
+      // before the fill time. If found, recover regime + setupType + the
+      // entry direction (which may differ from the fill's side in close
+      // fills — a CLOSE_LONG fills as SELL but the trade direction is LONG).
+      const fillTs = Date.parse(fill.fillTsUtc);
+      const signals = signalsBySymbol.get(fill.symbol) ?? [];
+      const match = signals.find((s) => s.ts <= fillTs);
+      const regime = match?.regime ?? 'UNKNOWN';
+      const setupType = match?.setupType ?? 'UNKNOWN';
+      // Direction at entry is more meaningful than fill.side — a closing
+      // fill for a long position fills as SELL but the trade was a LONG.
+      const inferredDirection: 'LONG' | 'SHORT' = fill.side === 'BUY' ? 'LONG' : 'SHORT';
+      const direction: 'LONG' | 'SHORT' =
+        match?.direction === 'LONG' || match?.direction === 'SHORT' ? match.direction : inferredDirection;
       outcomes.push({
         strategyId: fill.strategyId!,
         symbol: fill.symbol,

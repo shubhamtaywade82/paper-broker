@@ -14,6 +14,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { AdaptiveSupertrendInspector } from './AdaptiveSupertrendInspector';
+import { AutonomousAgentPanel } from './AutonomousAgentPanel';
 
 // Models confirmed present on the local Ollama instance (`GET /api/tags`) as of this
 // dashboard build. The engine's autonomous loop always uses OLLAMA_MODEL from the
@@ -297,7 +298,7 @@ export function AgentControlCenterView() {
       {/* Navigation Sub-Tabs & Manual Run Trigger */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-[#0f1623] border border-[#1b2537] p-4 rounded-xl">
         <div className="flex flex-wrap items-center gap-2">
-          {(['overview', 'pipeline', 'adaptive-supertrend', 'runs', 'fleet'] as const).map((tab) => (
+          {(['overview', 'pipeline', 'adaptive-supertrend', 'autonomous', 'runs', 'fleet'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -310,7 +311,7 @@ export function AgentControlCenterView() {
                   : 'bg-[#080c14] text-gray-400 hover:text-white border border-[#1b2537]'
               }`}
             >
-              {tab === 'adaptive-supertrend' ? '⚡ Adaptive Supertrend' : tab}
+              {tab === 'adaptive-supertrend' ? '⚡ Adaptive Supertrend' : tab === 'autonomous' ? '🧠 Autonomous Agent' : tab}
             </button>
           ))}
         </div>
@@ -615,6 +616,9 @@ export function AgentControlCenterView() {
 
       {/* Sub-View: Adaptive Supertrend Inspector */}
       {agentTab === 'adaptive-supertrend' && <AdaptiveSupertrendInspector />}
+
+      {/* Sub-View: Autonomous Agent Panel (live brain activity) */}
+      {agentTab === 'autonomous' && <AutonomousAgentPanel />}
     </div>
   );
 }

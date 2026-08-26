@@ -126,6 +126,13 @@ export class AutonomousTradingAgent {
   private readonly deps: AutonomousTradingAgentDeps;
   /** Most recent runtime risk multiplier suggested by the learning loop. */
   private runtimeRiskMultiplier = 1.0;
+  /**
+   * Cache of the most recently completed cycle summary. Surfaced via
+   * {@link getSnapshot} for the REST endpoint `/api/v1/autonomous/snapshot`
+   * so the dashboard can bootstrap initial state on mount instead of
+   * waiting up to one full cycle (default 30s) for the first broadcast.
+   */
+  private lastCycleSummary: AutonomousCycleSummary | null = null;
 
   constructor(config: AutonomousTradingAgentConfig, deps: AutonomousTradingAgentDeps) {
     this.config = config;
@@ -677,6 +684,9 @@ export class AutonomousTradingAgent {
       payload: summary as unknown as Record<string, unknown>,
       createdAtUtc: new Date().toISOString(),
     });
+    // Cache for the REST snapshot endpoint so the dashboard can hydrate on
+    // mount without waiting for the next WS broadcast.
+    this.lastCycleSummary = summary;
     this.deps.wsGateway.broadcast('agent.autonomous.cycle', summary);
     metrics.setGauge('autonomous_forming_setups', formingSetups);
     metrics.setGauge('autonomous_ready_setups', readySetups);
@@ -684,6 +694,40 @@ export class AutonomousTradingAgent {
     metrics.setGauge('autonomous_runtime_risk_multiplier', Math.round(this.runtimeRiskMultiplier * 1000));
 
     return summary;
+  }
+
+  /**
+   * Read-only snapshot of the agent's current state — used by the REST
+   * endpoint GET /api/v1/autonomous/snapshot so the dashboard can hydrate
+   * on mount instead of waiting up to one full cycle for the first WS
+   * broadcast. Returns the same payload shape the WS events emit so the
+   * dashboard can feed it straight into the autonomous store.
+   *
+   * Not a deep copy — callers must not mutate. The brain-module sub-objects
+   * (breaker state, health, rolling stats) are themselves immutable
+   * snapshots from their respective classes.
+   */
+  public getSnapshot(): {
+    latestCycle: AutonomousCycleSummary | null;
+    runtimeRiskMultiplier: number;
+    rollingWinRate: number;
+    rollingSampleSize: number;
+    breaker: ReturnType<CircuitBreaker['getState']>;
+    health: ReturnType<HealthMonitor['getState']>;
+    running: boolean;
+    perSymbol: Array<PerSymbolState>;
+  } {
+    const rolling = this.deps.performanceTracker.getRollingStats();
+    return {
+      latestCycle: this.lastCycleSummary,
+      runtimeRiskMultiplier: this.runtimeRiskMultiplier,
+      rollingWinRate: rolling.winRate,
+      rollingSampleSize: rolling.trades,
+      breaker: this.deps.circuitBreaker.getState(),
+      health: this.deps.healthMonitor.getState(),
+      running: this.running,
+      perSymbol: Array.from(this.perSymbol.values()),
+    };
   }
 
   /**

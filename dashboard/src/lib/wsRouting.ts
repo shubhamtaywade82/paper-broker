@@ -1,23 +1,79 @@
 import { wsManager } from './wsConnection.js';
 import { useTradingStore } from '../stores/tradingStore.js';
 import { useSystemStore } from '../stores/systemStore.js';
+import { useAutonomousStore } from '../stores/autonomousStore.js';
 
+/**
+ * Wire every backend WebSocket broadcast into the appropriate Zustand store.
+ *
+ * Backend message shape: `{ type: '<event>', payload: {...}, timestampUtc }`.
+ * The discriminated union in `wsContracts.ts` narrows `payload` per `type`,
+ * so each case below sees a typed payload.
+ *
+ * Autonomous agent events (8 types) all flow into `useAutonomousStore`,
+ * which keeps bounded ring buffers per event kind so the dashboard panel
+ * can render a live picture of the agent's brain activity.
+ */
 export function setupWsRouting(): () => void {
   return wsManager.on('*', (m) => {
-    switch (m.channel) {
+    switch (m.type) {
+      // --- Trading -------------------------------------------------------
       case 'position.updated':
-        useTradingStore.getState().upsertPosition(m.data);
+        useTradingStore.getState().upsertPosition(m.payload);
         break;
       case 'order.updated':
-        useTradingStore.getState().upsertOrder(m.data);
+        useTradingStore.getState().upsertOrder(m.payload);
         break;
       case 'signal.created':
-        useTradingStore.getState().pushSignal(m.data);
+        useTradingStore.getState().pushSignal(m.payload);
         break;
+
+      // --- System --------------------------------------------------------
       case 'incident.alert':
         useSystemStore.getState().setSystem({
           incidentCount: useSystemStore.getState().incidentCount + 1,
         });
+        break;
+
+      // --- Autonomous agent (8 event types) ------------------------------
+      case 'agent.autonomous.cycle':
+        useAutonomousStore.getState().pushCycle(m.payload);
+        // The cycle summary carries the current health snapshot inline —
+        // sync the standalone health field too so the brain-module card
+        // updates on every cycle, not just on dedicated health broadcasts.
+        useAutonomousStore.getState().setHealth(m.payload.health);
+        break;
+      case 'agent.autonomous.forming':
+        useAutonomousStore.getState().pushForming(m.payload);
+        break;
+      case 'agent.autonomous.regime':
+        useAutonomousStore.getState().pushRegime(m.payload);
+        break;
+      case 'agent.autonomous.signal':
+        useAutonomousStore.getState().pushSignal(m.payload);
+        break;
+      case 'agent.autonomous.rejected':
+        useAutonomousStore.getState().pushRejection(m.payload);
+        break;
+      case 'agent.autonomous.circuit_breaker':
+        useAutonomousStore.getState().setCircuitBreaker(m.payload);
+        break;
+      case 'agent.autonomous.health':
+        useAutonomousStore.getState().setHealth(m.payload);
+        break;
+      case 'agent.autonomous.exit':
+        useAutonomousStore.getState().pushExit(m.payload);
+        break;
+      case 'agent.autonomous.learning':
+        useAutonomousStore.getState().pushLearning(m.payload);
+        break;
+
+      // Other event types (market.tick, mode.changed, kill_switch.activated,
+      // reconciliation.report, strategy.performance, setup.performance,
+      // trailing.stop, etc.) are not consumed by the new Zustand stores yet.
+      // They're handled by the legacy `useStore` (see store/useStore.ts) via
+      // its own wsManager.on('*') subscription in hooks/useWebSocket.ts.
+      default:
         break;
     }
   });

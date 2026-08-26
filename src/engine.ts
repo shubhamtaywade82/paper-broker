@@ -756,6 +756,7 @@ export async function startEngine(): Promise<EngineHandle> {
     profitGoals,
     strategyPerformance,
     setupPerformance,
+    autonomousAgent,
     liveGuard,
     reconciler,
     riskConfig: DEFAULT_RISK_CONFIG,
@@ -952,6 +953,34 @@ export async function startEngine(): Promise<EngineHandle> {
   });
 
   scheduler.start();
+
+  // --- Startup self-test for the autonomous agent ------------------------
+  // Verifies every brain module + external dep is wired before the agent
+  // starts its 30s cycle. When AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL is true
+  // (default), critical failures halt the engine so the operator sees the
+  // problem immediately instead of discovering silent degradation hours
+  // later (e.g. Ollama unreachable → agent falls back to NEUTRAL → no
+  // trades, dashboard shows zero activity, operator assumes market is
+  // just quiet).
+  if (autonomousAgent) {
+    const { runStartupSelfTest } = await import('./agent/StartupSelfTest.js');
+    const selfTestResult = await runStartupSelfTest({
+      autonomousAgent,
+      modelManager,
+      supervisor,
+      broker,
+      failOnCritical: env.AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL,
+    }).catch((err) => {
+      logger.error({ err }, '[StartupSelfTest] CRITICAL failure — see check log above. Halting engine startup.');
+      throw err;
+    });
+    if (selfTestResult.criticalFailures > 0) {
+      logger.warn(
+        { critical: selfTestResult.criticalFailures, warnings: selfTestResult.warnings },
+        `[StartupSelfTest] Continuing despite ${selfTestResult.criticalFailures} critical failure(s) — AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL=false. The agent may behave unexpectedly.`
+      );
+    }
+  }
 
   // Start the autonomous trading agent LAST — it needs strategyEngine
   // running (for submitSignal), market data flowing (for klines and

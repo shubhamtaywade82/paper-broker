@@ -149,7 +149,11 @@ export class WsConnectionManager {
   }
 
   private dispatch(m: WsMessage): void {
-    this.messageListeners.get(m.channel)?.forEach((fn) => fn(m));
+    // Backend broadcasts { type, payload, timestampUtc }. The discriminated
+    // union in wsContracts.ts narrows on `type`, so `m.type` is the channel
+    // name we route on. The generic `on(channel, fn)` API below accepts any
+    // string — listeners register under the event name they care about.
+    this.messageListeners.get(m.type)?.forEach((fn) => fn(m));
     this.messageListeners.get('*')?.forEach((fn) => fn(m));
   }
 

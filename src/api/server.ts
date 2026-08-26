@@ -26,6 +26,7 @@ import { BinanceHistoricalFetcher } from '../research/replay/BinanceHistoricalFe
 import type { ReplayConfig } from '../research/replay/types.js';
 import type { ProfitGoalManager } from '../trading/goals/ProfitGoalManager.js';
 import type { StrategyPerformanceTracker } from '../strategy/StrategyPerformanceTracker.js';
+import type { AutonomousTradingAgent } from '../agent/AutonomousTradingAgent.js';
 import type { LiveTradingGuard } from '../execution/LiveTradingGuard.js';
 import type { ExchangeReconciler } from '../execution/ExchangeReconciler.js';
 import type { RiskConfig } from '../trading/risk/types.js';
@@ -114,6 +115,14 @@ export interface ApiServerOptions {
    * keyed by setup type instead of strategy id.
    */
   setupPerformance?: StrategyPerformanceTracker;
+  /**
+   * The autonomous trading agent instance (if enabled), surfaced read-only
+   * at `/api/v1/autonomous/snapshot` so the dashboard can bootstrap its UI
+   * on mount instead of waiting up to one full cycle (default 30s) for the
+   * first WS broadcast. Returns the latest cycle summary, breaker state,
+   * health snapshot, runtime risk multiplier, and rolling win rate.
+   */
+  autonomousAgent?: AutonomousTradingAgent;
   /** The live guard actually in force, so `/api/v1/risk` reports real safe-mode state. */
   liveGuard?: LiveTradingGuard;
   /** The risk limits actually in force, so `/api/v1/risk` stops reporting hardcoded values. */
@@ -564,6 +573,33 @@ export class ApiServer {
       binance: this.supervisor?.health.getHealth('BINANCE'),
       coindcx: this.supervisor?.health.getHealth('COINDCX'),
     }));
+
+    // Read-only snapshot of the autonomous trading agent's current state.
+    // Returns the latest cycle summary (or null if no cycle has run yet),
+    // brain-module state (breaker + health), and the learning loop's
+    // runtime dial. The dashboard calls this once on mount to bootstrap
+    // before the first WS broadcast arrives — see autonomousStore.ts.
+    this.app.get('/api/v1/autonomous/snapshot', async () => {
+      const agent = this.options.autonomousAgent;
+      if (!agent) {
+        return {
+          enabled: false,
+          reason: 'AUTONOMOUS_AGENT_ENABLED=false or agent not wired',
+        };
+      }
+      const snap = agent.getSnapshot();
+      return {
+        enabled: true,
+        running: snap.running,
+        latestCycle: snap.latestCycle,
+        runtimeRiskMultiplier: snap.runtimeRiskMultiplier,
+        rollingWinRate: snap.rollingWinRate,
+        rollingSampleSize: snap.rollingSampleSize,
+        breaker: snap.breaker,
+        health: snap.health,
+        perSymbol: snap.perSymbol,
+      };
+    });
 
     this.app.get('/api/v1/incidents', async () => ({
       incidents: this.errorNormalizer?.getRecentIncidents(50) ?? [],
