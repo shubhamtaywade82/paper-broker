@@ -418,3 +418,63 @@ export const useStore = create<StoreState>((set) => ({
   setTickers: (tickers) => set({ tickers }),
   setOrderbook: (orderbook) => set({ orderbook }),
 }));
+
+export interface PositionPnlDetails {
+  markPrice: number;
+  unrealizedPnl: number;
+  roe: number;
+}
+
+export function calculatePositionPnl(
+  pos: Position,
+  livePriceMap: Record<string, number | undefined> = {},
+  tickersMap: Record<string, { price?: number; markPrice?: number } | undefined> = {}
+): PositionPnlDetails {
+  const entry = pos.entryPrice ?? 0;
+  const qty = pos.quantity ?? Math.abs(Number((pos as unknown as Record<string, unknown>).qty ?? 0));
+  const side =
+    pos.side ?? (Number((pos as unknown as Record<string, unknown>).qty ?? 0) >= 0 ? 'LONG' : 'SHORT');
+  const lev = pos.leverage ?? 5;
+
+  const live = livePriceMap[pos.symbol];
+  const ticker = tickersMap[pos.symbol]?.price ?? tickersMap[pos.symbol]?.markPrice;
+  const mark =
+    live ??
+    ticker ??
+    pos.markPrice ??
+    (pos.unrealizedPnl && qty > 0
+      ? side === 'LONG'
+        ? entry + pos.unrealizedPnl / qty
+        : entry - pos.unrealizedPnl / qty
+      : entry);
+
+  const hasLiveOrTicker = live !== undefined || ticker !== undefined;
+  const unrealizedPnl =
+    hasLiveOrTicker && qty > 0
+      ? side === 'LONG'
+        ? (mark - entry) * qty
+        : (entry - mark) * qty
+      : (pos.unrealizedPnl ?? (side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty));
+
+  const margin = pos.margin ?? (qty > 0 && entry > 0 ? (entry * qty) / lev : 0);
+  const roe = margin > 0 ? (unrealizedPnl / margin) * 100 : 0;
+
+  return {
+    markPrice: mark,
+    unrealizedPnl,
+    roe,
+  };
+}
+
+export function calculateTotalUnrealizedPnl(
+  positions: Position[] | undefined,
+  livePriceMap: Record<string, number | undefined> = {},
+  tickersMap: Record<string, { price?: number; markPrice?: number } | undefined> = {},
+  fallbackPnl = 0
+): number {
+  if (!positions || positions.length === 0) return fallbackPnl;
+  return positions.reduce(
+    (acc, pos) => acc + calculatePositionPnl(pos, livePriceMap, tickersMap).unrealizedPnl,
+    0
+  );
+}

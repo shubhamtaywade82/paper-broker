@@ -12,8 +12,8 @@ import {
 } from 'lucide-react';
 
 export function AdaptiveSupertrendInspector() {
-  const { selectedSymbol, setSelectedSymbol, livePrice } = useStore();
-  const currentPrice = livePrice[selectedSymbol] || 150.0;
+  const { selectedSymbol, setSelectedSymbol, livePrice, tickers } = useStore();
+  const currentPrice = livePrice[selectedSymbol] || tickers[selectedSymbol]?.price || 150.0;
 
   // Real-time simulated indicators based on live ticker
   const mockAtrPeriod = 12;

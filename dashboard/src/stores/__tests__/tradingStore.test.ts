@@ -98,4 +98,54 @@ describe('Store isolation & TradingStore (God-store regression)', () => {
     expect(signals).toHaveLength(50);
     expect(signals[0]?.id).toBe('sig-59');
   });
+
+  it('PNL-01: calculatePositionPnl calculates accurate live PnL and ROE from livePrice', async () => {
+    const { calculatePositionPnl } = await import('../../store/useStore.js');
+    const pos = {
+      symbol: 'BTCUSDT',
+      side: 'LONG' as const,
+      quantity: 2,
+      entryPrice: 50_000,
+      markPrice: 50_000,
+      unrealizedPnl: 0,
+      leverage: 10,
+    };
+
+    const res = calculatePositionPnl(pos, { BTCUSDT: 52_000 });
+    expect(res.markPrice).toBe(52_000);
+    expect(res.unrealizedPnl).toBe(4_000); // (52000 - 50000) * 2 = 4000
+    expect(res.roe).toBe(40); // 4000 / (100000 / 10) = 40%
+  });
+
+  it('PNL-02: calculateTotalUnrealizedPnl aggregates live position PnLs across symbols', async () => {
+    const { calculateTotalUnrealizedPnl } = await import('../../store/useStore.js');
+    const positions = [
+      {
+        symbol: 'BTCUSDT',
+        side: 'LONG' as const,
+        quantity: 1,
+        entryPrice: 50_000,
+        markPrice: 50_000,
+        unrealizedPnl: 0,
+        leverage: 5,
+      },
+      {
+        symbol: 'ETHUSDT',
+        side: 'SHORT' as const,
+        quantity: 10,
+        entryPrice: 3_000,
+        markPrice: 3_000,
+        unrealizedPnl: 0,
+        leverage: 5,
+      },
+    ];
+
+    const livePrices = {
+      BTCUSDT: 51_000, // Long: +1000
+      ETHUSDT: 2_900,  // Short: +1000
+    };
+
+    const total = calculateTotalUnrealizedPnl(positions, livePrices);
+    expect(total).toBe(2_000);
+  });
 });

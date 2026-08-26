@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useTickers, useDashboard } from './hooks/useApi';
 import { useStore, type WorkspaceTab } from './store/useStore';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -25,6 +26,8 @@ const queryClient = new QueryClient({
 
 function AppContent() {
   useWebSocket();
+  useTickers();
+  useDashboard();
   const { activeTab, setActiveTab } = useStore();
 
   // Keyboard navigation shortcuts: 1-8 for workspace switching

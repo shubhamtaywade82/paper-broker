@@ -27,6 +27,7 @@ export const TickSchema = z.object({
       asks: z.array(z.tuple([z.number(), z.number()])),
     })
     .optional(),
+  candle: z.unknown().optional(),
 });
 
 export const PositionUpdatedSchema = z.object({

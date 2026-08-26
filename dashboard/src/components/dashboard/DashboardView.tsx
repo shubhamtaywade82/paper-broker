@@ -1,5 +1,10 @@
 import React from 'react';
-import { useStore, formatCurrency } from '../../store/useStore';
+import {
+  useStore,
+  formatCurrency,
+  calculatePositionPnl,
+  calculateTotalUnrealizedPnl,
+} from '../../store/useStore';
 import {
   useDashboard,
   useCycles,
@@ -32,6 +37,7 @@ export function DashboardView() {
     setTimeframe,
     liveEvents,
     livePrice,
+    tickers,
     openOrders,
   } = useStore();
 
@@ -40,6 +46,15 @@ export function DashboardView() {
   useRiskSummary();
   usePerformance('30d');
   useOpenOrders();
+
+  const totalUnrealizedPnl = calculateTotalUnrealizedPnl(
+    positions,
+    livePrice,
+    tickers,
+    account?.unrealizedPnl ?? 0
+  );
+  const rawBalance = account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 10000);
+  const liveEquity = account ? rawBalance + totalUnrealizedPnl : 10000;
 
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
   const triggerCycle = useTriggerCycle();
@@ -68,13 +83,13 @@ export function DashboardView() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard
           label="Account Equity"
-          value={`$${(account?.equity || 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          change={account?.unrealizedPnl || 0}
+          value={`$${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          change={totalUnrealizedPnl}
           icon={<DollarSign className="w-4 h-4 text-blue-400" />}
         />
         <MetricCard
           label="Unrealized PnL"
-          value={`${(account?.unrealizedPnl || 0) >= 0 ? '+' : ''}$${(account?.unrealizedPnl || 0).toFixed(2)}`}
+          value={`${totalUnrealizedPnl >= 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(2)}`}
           icon={<TrendingUp className="w-4 h-4 text-emerald-400" />}
         />
         <MetricCard
@@ -225,20 +240,11 @@ export function DashboardView() {
                     const qty = pos.quantity ?? Math.abs(Number((pos as unknown as Record<string, unknown>).qty ?? 0));
                     const side = pos.side ?? (Number((pos as unknown as Record<string, unknown>).qty ?? 0) >= 0 ? 'LONG' : 'SHORT');
                     const lev = pos.leverage ?? 5;
-                    const mark =
-                      livePrice[pos.symbol] ??
-                      pos.markPrice ??
-                      (pos.unrealizedPnl && qty > 0
-                        ? side === 'LONG'
-                          ? entry + pos.unrealizedPnl / qty
-                          : entry - pos.unrealizedPnl / qty
-                        : entry);
-                    const pnl =
-                      livePrice[pos.symbol] !== undefined
-                        ? side === 'LONG'
-                          ? (mark - entry) * qty
-                          : (entry - mark) * qty
-                        : pos.unrealizedPnl ?? (side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty);
+                    const { markPrice: mark, unrealizedPnl: pnl } = calculatePositionPnl(
+                      pos,
+                      livePrice,
+                      tickers
+                    );
                     // A reduce-only bracket only actually protects this position if its side
                     // can fill against it (SELL reduces LONG, BUY reduces SHORT) — a stale
                     // order left over from a prior direction on this symbol can never fire.

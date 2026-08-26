@@ -18,12 +18,15 @@ import {
   PowerOff,
   Zap,
 } from 'lucide-react';
+import { calculateTotalUnrealizedPnl } from '../store/useStore.js';
 
 export function Header() {
   const {
     wsConnected,
     account,
+    positions,
     livePrice,
+    tickers,
     operatingMode,
     liveArmed,
     aggressiveMode,
@@ -38,6 +41,16 @@ export function Header() {
   const engineControl = useEngineControl();
   const setAggressive = useSetAggressiveMode();
   const triggerEval = useTriggerEvaluation();
+
+  const totalUnrealizedPnl = calculateTotalUnrealizedPnl(
+    positions,
+    livePrice,
+    tickers,
+    account?.unrealizedPnl ?? 0
+  );
+  const rawBalance =
+    account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 10000);
+  const liveEquity = rawBalance + totalUnrealizedPnl;
 
   return (
     <>
@@ -139,9 +152,9 @@ export function Header() {
                 </option>
               ))}
             </select>
-            {livePrice[selectedSymbol] && (
+            {Boolean(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price) && (
               <span className="text-amber-400 font-bold text-xs border-l border-[#1b2537] pl-2">
-                ${livePrice[selectedSymbol].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                ${(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
               </span>
             )}
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -172,27 +185,25 @@ export function Header() {
         {/* Quick Actions & Account Metrics */}
         <div className="flex items-center gap-4">
           {/* Account Metrics */}
-          {account && (
-            <div className="hidden md:flex items-center gap-4 bg-[#080c14] px-3.5 py-1.5 rounded-xl border border-[#1b2537]">
-              <div>
-                <span className="text-gray-500 text-[10px] uppercase block">Equity</span>
-                <span className="text-white font-bold">
-                  ${account.equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-              </div>
-              <div className="border-l border-[#1b2537] pl-3">
-                <span className="text-gray-500 text-[10px] uppercase block">PnL</span>
-                <span
-                  className={`font-bold ${
-                    account.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
-                  }`}
-                >
-                  {account.unrealizedPnl >= 0 ? '+' : ''}$
-                  {account.unrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-              </div>
+          <div className="hidden md:flex items-center gap-4 bg-[#080c14] px-3.5 py-1.5 rounded-xl border border-[#1b2537]">
+            <div>
+              <span className="text-gray-500 text-[10px] uppercase block">Equity</span>
+              <span className="text-white font-bold">
+                ${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </div>
-          )}
+            <div className="border-l border-[#1b2537] pl-3">
+              <span className="text-gray-500 text-[10px] uppercase block">PnL</span>
+              <span
+                className={`font-bold ${
+                  totalUnrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {totalUnrealizedPnl >= 0 ? '+' : ''}$
+                {totalUnrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
 
           {/* Quick Buttons */}
           <div className="flex items-center gap-2">

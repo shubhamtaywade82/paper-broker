@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { useStore, formatCurrency, type Order } from '../../store/useStore';
+import {
+  useStore,
+  formatCurrency,
+  type Order,
+  calculatePositionPnl,
+} from '../../store/useStore';
 import {
   useDashboard,
   useOpenOrders,
@@ -34,6 +39,7 @@ export function TradingView() {
     selectedSymbol,
     setActiveTab,
     livePrice,
+    tickers,
   } = useStore();
 
   useDashboard();
@@ -151,20 +157,11 @@ export function TradingView() {
                         const entry = pos.entryPrice ?? 0;
                         const qty = pos.quantity ?? 0;
                         const side = pos.side ?? 'LONG';
-                        const mark =
-                          livePrice[pos.symbol] ??
-                          pos.markPrice ??
-                          (pos.unrealizedPnl && qty > 0
-                            ? side === 'LONG'
-                              ? entry + pos.unrealizedPnl / qty
-                              : entry - pos.unrealizedPnl / qty
-                            : entry);
-                        const pnl =
-                          livePrice[pos.symbol] !== undefined
-                            ? side === 'LONG'
-                              ? (mark - entry) * qty
-                              : (entry - mark) * qty
-                            : pos.unrealizedPnl ?? (side === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty);
+                        const { markPrice: mark, unrealizedPnl: pnl } = calculatePositionPnl(
+                          pos,
+                          livePrice,
+                          tickers
+                        );
                         // A reduce-only bracket only actually protects this position if its side
                         // can fill against it (SELL reduces LONG, BUY reduces SHORT) — a stale
                         // order left over from a prior direction on this symbol can never fire.

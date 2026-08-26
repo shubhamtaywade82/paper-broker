@@ -936,13 +936,16 @@ export async function startEngine(): Promise<EngineHandle> {
         localTsUtc: Date.now(),
         stale: false,
       });
+      throttledBroadcast('market.tick', `tick:${symbol}`, { symbol, price: mid });
       throttledBroadcast('book.update', `book:${symbol}`, { symbol, bid, ask, bidQty, askQty });
     },
     onMarkPrice: (symbol, markPrice, indexPrice, fundingRate) => {
       broker.onMarket({ symbol, mark: markPrice, index: indexPrice, fundingRate });
+      throttledBroadcast('market.tick', `mark:${symbol}`, { symbol, price: markPrice, markPrice });
     },
     onAggTrade: (symbol, price, qty, isBuyerMaker, eventTime) => {
       broker.onMarket({ symbol, last: price });
+      throttledBroadcast('market.tick', `tick:${symbol}`, { symbol, price });
       // Self-throttling and a no-op when there is no open position or no
       // resting stop, so it is safe on the raw trade stream.
       void trailingStops?.onPrice(symbol, price).catch((error) => {

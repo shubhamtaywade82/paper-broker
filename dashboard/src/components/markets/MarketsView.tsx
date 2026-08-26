@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 export function MarketsView() {
-  const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers } = useStore();
+  const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers, livePrice } = useStore();
   const [depthLimit, setDepthLimit] = useState<number>(10);
 
   useTickers();
@@ -25,6 +25,7 @@ export function MarketsView() {
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 100);
 
   const activeTicker = tickers[selectedSymbol];
+  const activeLtp = livePrice[selectedSymbol] ?? activeTicker?.price ?? activeTicker?.markPrice ?? 0;
 
   return (
     <div className="space-y-5 font-mono text-xs select-none">
@@ -32,6 +33,7 @@ export function MarketsView() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {SUPPORTED_SYMBOLS.map((sym) => {
           const t = tickers[sym];
+          const price = livePrice[sym] ?? t?.price ?? 0;
           const isSelected = selectedSymbol === sym;
           const isPos = (t?.change24h || 0) >= 0;
 
@@ -54,7 +56,7 @@ export function MarketsView() {
                 )}
               </div>
               <div className="text-sm font-black text-white">
-                ${(t?.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
               </div>
               <div className={`text-[10px] font-bold mt-0.5 ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
                 {isPos ? '+' : ''}{(t?.change24h || 0).toFixed(2)}%
@@ -65,9 +67,9 @@ export function MarketsView() {
       </div>
 
       {/* Main Symbol Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
-        {/* Left: Chart & Market Structure (3 cols) */}
-        <div className="lg:col-span-3 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left: Chart & Market Structure (2 cols) */}
+        <div className="lg:col-span-2 space-y-4">
           {/* Active Symbol Header */}
           <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -80,7 +82,7 @@ export function MarketsView() {
             <div className="flex flex-wrap items-center gap-6 text-[11px]">
               <div>
                 <span className="text-gray-500 text-[10px] block">Mark Price</span>
-                <span className="font-bold text-white">${activeTicker?.markPrice || activeTicker?.price || 0}</span>
+                <span className="font-bold text-white">${activeLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-[10px] block">24h High</span>
@@ -141,51 +143,91 @@ export function MarketsView() {
               const asks = (orderbook?.asks || []).slice(0, depthLimit);
               const bids = (orderbook?.bids || []).slice(0, depthLimit);
               const maxQty = Math.max(...asks.map(([_, q]) => q), ...bids.map(([_, q]) => q), 0.001);
+              const rowCount = Math.max(asks.length, bids.length);
+              const baseAsset = selectedSymbol.replace('USDT', '');
 
               return (
                 <>
-                  <div className="flex items-center justify-between text-[9px] text-gray-500 pb-1 px-1 font-semibold">
-                    <span>PRICE ({selectedSymbol.replace('USDT', '')}/USDT)</span>
-                    <span>SIZE ({selectedSymbol.replace('USDT', '')})</span>
-                  </div>
-
-                  {/* Asks (Sells) */}
-                  <div className="space-y-0.5 text-[10px] mb-1.5 max-h-48 overflow-y-auto">
-                    {asks.slice().reverse().map(([p, q], idx) => (
-                      <div key={idx} className="flex justify-between relative py-0.5 px-1 hover:bg-[#141d2e] rounded">
-                        <div
-                          className="absolute right-0 top-0 bottom-0 bg-red-500/15 rounded"
-                          style={{ width: `${Math.min(100, (q / maxQty) * 100)}%` }}
-                        />
-                        <span className="text-red-400 font-bold relative z-10">{formatPrice(p, selectedSymbol)}</span>
-                        <span className="text-gray-300 relative z-10">{q.toLocaleString('en-US', { maximumFractionDigits: 3 })}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Mid Price Spread Bar */}
-                  <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold my-1">
+                  {/* Mid Price & Spread Header Bar */}
+                  <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-white">{formatCurrency(activeTicker?.price || orderbook?.last, selectedSymbol)}</span>
-                      <span className="text-[9px] text-gray-500">
+                      <span className="text-white font-mono">
+                        {formatCurrency(activeLtp || orderbook?.last, selectedSymbol)}
+                      </span>
+                      <span className="text-[9px] text-gray-500 font-mono">
                         Spread: {formatCurrency(orderbook?.spread, selectedSymbol)}
                       </span>
                     </div>
                     <span className="text-emerald-400 text-[9px] font-bold">MID PRICE</span>
                   </div>
 
-                  {/* Bids (Buys) */}
-                  <div className="space-y-0.5 text-[10px] mt-1.5 max-h-48 overflow-y-auto">
-                    {bids.map(([p, q], idx) => (
-                      <div key={idx} className="flex justify-between relative py-0.5 px-1 hover:bg-[#141d2e] rounded">
-                        <div
-                          className="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded"
-                          style={{ width: `${Math.min(100, (q / maxQty) * 100)}%` }}
-                        />
-                        <span className="text-emerald-400 font-bold relative z-10">{formatPrice(p, selectedSymbol)}</span>
-                        <span className="text-gray-300 relative z-10">{q.toLocaleString('en-US', { maximumFractionDigits: 3 })}</span>
+                  {/* Horizontal Column Headers: Bids (SIZE | PRICE) vs Asks (PRICE | SIZE) */}
+                  <div className="grid grid-cols-2 gap-2 text-[9px] text-gray-500 pb-1.5 border-b border-[#1b2537] font-semibold">
+                    <div className="flex justify-between px-1">
+                      <span className="text-gray-400 font-bold">SIZE ({baseAsset})</span>
+                      <span className="text-emerald-400 font-bold">BID</span>
+                    </div>
+                    <div className="flex justify-between px-1 border-l border-[#1b2537] pl-2">
+                      <span className="text-red-400 font-bold">ASK</span>
+                      <span className="text-gray-400 font-bold">SIZE ({baseAsset})</span>
+                    </div>
+                  </div>
+
+                  {/* Side-by-side Depth Rows */}
+                  <div className="space-y-0.5 text-[10px] mt-1 max-h-56 overflow-y-auto">
+                    {rowCount === 0 ? (
+                      <div className="text-center py-6 text-gray-500 text-[10px]">
+                        Waiting for order book depth...
                       </div>
-                    ))}
+                    ) : (
+                      Array.from({ length: rowCount }).map((_, idx) => {
+                        const bid = bids[idx];
+                        const ask = asks[idx];
+
+                        return (
+                          <div
+                            key={idx}
+                            className="grid grid-cols-2 gap-2 py-0.5 px-0.5 hover:bg-[#141d2e] rounded transition-colors font-mono"
+                          >
+                            {/* Left: Bid (SIZE | PRICE) - Bar grows from inside (right) to outside (left) */}
+                            {bid ? (
+                              <div className="flex justify-between relative px-1 items-center">
+                                <div
+                                  className="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded"
+                                  style={{ width: `${Math.min(100, (bid[1] / maxQty) * 100)}%` }}
+                                />
+                                <span className="text-gray-300 relative z-10 text-[9px]">
+                                  {bid[1].toLocaleString('en-US', { maximumFractionDigits: 3 })}
+                                </span>
+                                <span className="text-emerald-400 font-bold relative z-10">
+                                  {formatPrice(bid[0], selectedSymbol)}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="px-1" />
+                            )}
+
+                            {/* Right: Ask (PRICE | SIZE) - Bar grows from inside (left) to outside (right) */}
+                            {ask ? (
+                              <div className="flex justify-between relative px-1 items-center border-l border-[#1b2537] pl-2">
+                                <div
+                                  className="absolute left-0 top-0 bottom-0 bg-red-500/15 rounded"
+                                  style={{ width: `${Math.min(100, (ask[1] / maxQty) * 100)}%` }}
+                                />
+                                <span className="text-red-400 font-bold relative z-10">
+                                  {formatPrice(ask[0], selectedSymbol)}
+                                </span>
+                                <span className="text-gray-300 relative z-10 text-[9px]">
+                                  {ask[1].toLocaleString('en-US', { maximumFractionDigits: 3 })}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="px-1 border-l border-[#1b2537] pl-2" />
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </>
               );

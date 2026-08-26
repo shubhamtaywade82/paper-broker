@@ -65,7 +65,7 @@ export function TradingChart({
   const lastBarRef = useRef<CandlestickData | null>(null);
   const initialFitDoneRef = useRef(false);
 
-  const livePrice = useStore((s) => s.livePrice[symbol]);
+  const livePrice = useStore((s) => s.livePrice[symbol] ?? s.tickers[symbol]?.price);
   const closedCandle = useStore((s) => s.closedCandle[`${symbol}:${timeframe}`]);
   const prevSymbolRef = useRef(symbol);
 
@@ -169,8 +169,22 @@ export function TradingChart({
       }
     }
 
+    const lastBar = uniqueCandles[uniqueCandles.length - 1];
+    if (lastBar && livePrice) {
+      const liveBar: CandlestickData = {
+        time: lastBar.time,
+        open: lastBar.open,
+        high: Math.max(lastBar.high, livePrice),
+        low: Math.min(lastBar.low, livePrice),
+        close: livePrice,
+      };
+      uniqueCandles[uniqueCandles.length - 1] = liveBar;
+      lastBarRef.current = liveBar;
+    } else {
+      lastBarRef.current = lastBar || null;
+    }
+
     candleSeriesRef.current.setData(uniqueCandles);
-    lastBarRef.current = uniqueCandles[uniqueCandles.length - 1] || null;
 
     if (volumeSeriesRef.current && showVolume) {
       const volumeData: HistogramData[] = candles
@@ -198,11 +212,25 @@ export function TradingChart({
       chartRef.current?.timeScale().fitContent();
       initialFitDoneRef.current = true;
     }
-  }, [candles, markers, showVolume, symbol]);
+  }, [candles, markers, showVolume, symbol, livePrice]);
 
   // Real-time live price tick updates on the forming candle bar
   useEffect(() => {
-    if (!candleSeriesRef.current || !livePrice || !lastBarRef.current) return;
+    if (!candleSeriesRef.current || !livePrice) return;
+
+    if (!lastBarRef.current) {
+      const nowTime = Math.floor(Date.now() / 1000) as UTCTimestamp;
+      const newBar: CandlestickData = {
+        time: nowTime,
+        open: livePrice,
+        high: livePrice,
+        low: livePrice,
+        close: livePrice,
+      };
+      lastBarRef.current = newBar;
+      candleSeriesRef.current.update(newBar);
+      return;
+    }
 
     const currentBar = lastBarRef.current;
     const updatedBar: CandlestickData = {
