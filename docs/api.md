@@ -347,6 +347,62 @@ no longer hardcoded literals.
 
 ---
 
+## Rate limiting
+
+Every non-WebSocket request passes through a two-tier token bucket keyed by
+client IP:
+
+| Tier | Applies to | Sustained | Burst |
+|------|-----------|-----------|-------|
+| read | `GET` / `HEAD` / `OPTIONS` | 600/min | 120 |
+| control | everything else | 60/min | 20 |
+
+Exceeding a tier returns `429` with a `Retry-After` header in seconds. The two
+budgets are independent, so hammering reads cannot lock an operator out of the
+control endpoints. `/ws` is exempt.
+
+---
+
+## GET /api/v1/reconcile
+
+Last exchange reconciliation result. Returns `{ "enabled": false, ... }` when no
+live venue is attached.
+
+```json
+{
+  "enabled": true,
+  "safeMode": true,
+  "lastReport": {
+    "trigger": "STARTUP",
+    "reconciledAtUtc": "2026-08-25T16:40:00.000Z",
+    "ok": false,
+    "positionDiscrepancies": [
+      { "symbol": "SOLUSDT", "localQty": 0, "venueQty": 10, "difference": 10, "kind": "MISSING_LOCALLY" }
+    ],
+    "localPositionCount": 0,
+    "venuePositionCount": 1,
+    "safeModeTripped": true
+  }
+}
+```
+
+`safeMode: true` means `ExecutionRouter` is rejecting every order submission
+with `SAFE_MODE_ACTIVE`.
+
+---
+
+## POST /api/v1/reconcile
+
+Requires `API_KEY` when configured. Re-runs reconciliation and clears safe mode
+**only if the result is clean**. A mismatch leaves trading halted — the operator
+has to square the books, not dismiss the warning.
+
+```json
+{ "ok": true, "safeMode": false, "report": { "trigger": "MANUAL", "...": "..." } }
+```
+
+---
+
 ## GET /api/v1/profit-goals
 
 Returns `{ "enabled": false }` when `PROFIT_GOALS_ENABLED` is not set. Otherwise:
@@ -421,7 +477,8 @@ Event types include `market.tick`, `kline.closed`, `book.update`,
 `trade.stream`, `order.updated`, `order.filled`, `position.updated`,
 `signal.created`, `health.updated`, `incident.reported`, `mode.changed`,
 `mode.aggressive`, `kill_switch.activated`, `agent.cycle`, `agent.step`,
-`profit.goal`, `strategy.performance`, and `trailing.stop`.
+`profit.goal`, `strategy.performance`, `trailing.stop`, and
+`reconciliation.report`.
 
 `agent.step` payloads carry `engine: "llm" | "deterministic"` — the risk team
 and fund manager stages are deterministic policy, not model output.

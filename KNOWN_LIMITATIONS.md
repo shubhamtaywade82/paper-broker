@@ -16,17 +16,46 @@ This file records confirmed limitations of the current implementation.
 - An armed live profile with missing `COINDCX_API_KEY`/`COINDCX_API_SECRET` rejects orders with `NO_LIVE_EXECUTION_ADAPTER`; it never falls back to simulated fills while reporting live execution.
 - **Caveat:** the live path has never been validated against a real CoinDCX account in this repository. Treat it as implemented but unproven.
 
-### ⚠️ Provider Failover & Divergence Guard Implemented But NOT Wired
-- `MarketDataSupervisor`, `ProviderHealthManager`, and `DivergenceGuard` exist under `src/market/` with unit tests.
-- **`engine.ts` does not construct any of them.** The running engine consumes the Binance stream directly via `BinanceStreamHandler`, so no automatic failover, no divergence check, and no provider health tracking happens at runtime.
-- Do not describe failover as active. Work required: construct the supervisor in `engine.ts` and route `BinanceStreamHandler` through it.
+### ⚠️ Provider Failover Wired But Inert (no second feed)
+- `MarketDataSupervisor`, `ProviderHealthManager` and `DivergenceGuard` are constructed in `engine.ts` and fed from the Binance bookTicker stream. Provider liveness, latency and staleness are tracked, `PROVIDER_SWITCHED` is emitted, and `/api/v1/health/providers` reports real state.
+- **Failover still cannot fire.** No CoinDCX market-data feed exists in this repository, so the fallback provider never records a tick, `isHealthy('COINDCX')` is always false, and `validateFailover()` refuses to promote it. This is correct behaviour — never silently promote a feed that is not there — but do not describe failover as working.
+- The divergence guard is armed and has only one price source, so `checkDivergence()` always returns `isDivergent: false`.
+- Work required: add a CoinDCX market-data feed and call `supervisor.processTick('COINDCX', ...)` from it. No other change is needed.
 
-### ❌ Exchange Position Reconciliation (Live Mode Ongoing Reconnects)
-- Startup and periodic reconciliation with exchange balance/positions for automated multi-day recovery is planned.
+### ⚠️ CoinDCX Adapter Order Semantics
 
-Work required:
-- Live reconciliation loop on websocket reconnect
-- Blocking order submission if state discrepancy exceeds tolerance
+`CoinDCXBroker` routes each `OrderCommand` onto the primitive that actually
+expresses it: brackets to `createTPSL`, full exits to `exitPosition`, entries to
+`createOrder`. Anything with no faithful representation is REJECTED with an
+explicit reason rather than approximated.
+
+Still limited by what the venue API offers:
+- **Partial reduce-only is not expressible.** `exitPosition` closes the whole
+  position, so a partial reduce is rejected rather than over-closing.
+- **`getOpenOrders()` reads the adapter's own in-memory map**, not the venue, so
+  order-level reconciliation stays weaker than position-level.
+- **Bracket ids are not cancellable as orders** — brackets are position
+  attributes, so `cancelOrder` on a `tpsl-*` id has no venue effect.
+- The adapter has **never been exercised against a real CoinDCX account.**
+
+### ⚠️ Exchange Position Reconciliation Implemented, Orders Only Partly Covered
+
+`ExchangeReconciler` runs on startup and on websocket reconnect when a live
+venue is attached. It compares venue positions against local positions and, on
+any material mismatch — or if the venue cannot be read at all — trips
+`LiveTradingGuard` into safe mode, which makes `ExecutionRouter` reject every
+subsequent submission. Clearing it requires `POST /api/v1/reconcile`, which
+re-runs reconciliation and only resumes on a clean result.
+
+Still missing:
+- **Order-level reconciliation is weak.** `CoinDCXBroker.getOpenOrders()` returns
+  its own in-memory map rather than querying the venue, so resting orders placed
+  before a restart are invisible. Position reconciliation — the part that
+  prevents double-entry — does query the venue.
+- No periodic reconciliation; only startup, reconnect and manual triggers.
+- No automatic remediation. The reconciler halts trading and reports; squaring
+  the books is an operator action.
+- Never validated against a real CoinDCX account.
 
 ---
 
@@ -257,14 +286,18 @@ architecture change):
 
 ## Financial Modeling Simplifications (not fixed this pass)
 
-- **`PaperLiquidation.calculateLiquidationPrice()` uses a flat-rate,
-  fee-and-funding-free formula** (`entryPrice * (1 - 1/leverage +
-  maintenanceMarginRate)` for longs). Real exchanges use tiered maintenance
-  margin rates that increase with position size, and a real liquidation
-  also incurs the closing taker fee — both make actual liquidation happen
-  earlier (a less favorable price) than this formula predicts, i.e. it is
-  optimistic versus a real exchange. Implementing tiered margin schedules
-  is exchange-specific data modeling, not a formula tweak.
+- ~~**`PaperLiquidation.calculateLiquidationPrice()` uses a flat-rate**~~ —
+  **PARTLY RESOLVED 2026-08-25.** It now solves the standard isolated-margin
+  relation (`margin + pnl - fees = notional*mmr - maintenanceAmount`) and accepts
+  a real leverage-bracket table, selecting the bracket by notional. It also
+  accounts for fees and funding already charged, which the old formula ignored.
+  **Still missing:** this repository ships no bracket data — fabricating exchange
+  tier boundaries would produce an authoritative-looking wrong number — so with
+  no brackets supplied it falls back to a single tier built from the instrument's
+  own `maintenanceMarginRate`. Supply real brackets from the exchange's
+  leverage-bracket endpoint to get true tiering. Note that the closing taker fee
+  at liquidation is still not modelled, so the result remains marginally
+  optimistic versus a real exchange.
 - **The `SmcPaperBroker` subsystem (`src/broker/paper/*.ts`, used by
   `ReplayEngine`/backtesting) computes money with native JS floating-point
   arithmetic plus `.toFixed(4)` rounding, not `decimal.js`** — a direct
@@ -297,6 +330,21 @@ Still missing:
 - `AgentCycleStep` now carries `engine: 'llm' | 'deterministic'`; the agent view
   does not yet use it to distinguish model output from deterministic policy.
 
+### ✅ API Rate Limiting Implemented
+
+`RateLimiter` applies a two-tier token bucket per client IP on every
+non-WebSocket request, registered as an `onRequest` hook so unmatched paths are
+covered too. Reads get 600/min sustained with a 120 burst; control endpoints
+(anything non-GET) get 60/min with a 20 burst. Blocked requests return `429`
+with `Retry-After`. Buckets are evicted when idle and hard-capped, so client
+churn cannot grow memory without bound.
+
+The WebSocket upgrade path is exempt — it is one long-lived connection per
+client, already bounded by `WebSocketGateway`'s own connection limit.
+
+Still missing: limits are per-process (no shared store across instances), and
+keyed by `request.ip`, which is only as trustworthy as the proxy in front of it.
+
 ### ⚠️ API Authentication Partially Implemented
 
 `API_KEY` guards control endpoints via the `requireApiKey` preHandler:
@@ -306,7 +354,7 @@ backtest run, and strategy quarantine release.
 Still missing:
 - Read endpoints are unauthenticated even when `API_KEY` is set.
 - When `API_KEY` is unset, control endpoints are open — localhost-only is assumed.
-- No role-based authorization, no rate limiting, no per-command audit log.
+- No role-based authorization and no per-command audit log. (Rate limiting is now implemented — see above.)
 
 ### ✅ Telegram Notifications Implemented
 
@@ -495,6 +543,8 @@ When you complete work that addresses a limitation:
 | 2026-08-25 | `StrategyEngine` had no performance feedback; strategies ran always-on regardless of PnL | `StrategyPerformanceTracker` + quarantine gate, persisted across restarts, operator-released |
 | 2026-08-25 | Agent risk team evaluated 2 of 3 declared personas and its only rule was `leverage > 5`; the fund manager rubber-stamped on confidence alone | Complete deterministic policy across SAFE/NEUTRAL/RISKY with real ceilings, stop validation, free-margin limits, and every `RiskOpinionSchema` verdict reachable. Kept deterministic per CONTRACTS.md §5 — not converted to LLM calls |
 | 2026-08-25 | All seven agent stages were presented identically as "agents" despite two being hardcoded policy | `AgentCycleStep` now carries `engine: 'llm' \| 'deterministic'` |
+| 2026-08-25 | `CoinDCXBroker` coerced `TAKE_PROFIT_MARKET` to `market_order`, so a take-profit bracket would have executed immediately and closed the position the instant it opened | Brackets now route to `createTPSL` against the open position; unsupported entry types rejected explicitly |
+| 2026-08-25 | `reduceOnly` was set on the returned `Order` but never sent to the venue (`createOrder` has no `reduce_only` field), so a close against a flat position would have opened a new opposite position | Reduce-only closes route to `exitPosition`; closing while flat and partial reduces are both rejected |
 
 ---
 

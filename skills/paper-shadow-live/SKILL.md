@@ -95,7 +95,7 @@ COINDCX_EXECUTION_ENABLED=true
 | Order submission | Simulated (`PaperBroker`) | Simulated (`PaperBroker`) | Real (`CoinDCXBroker`) |
 | Position query | Local only | Local, `accountReadOnly` | Exchange authoritative |
 | Balance query | Local only | Local, `accountReadOnly` | Exchange authoritative |
-| Reconciliation | N/A | Flagged on, **not implemented** | Flagged on, **not implemented** |
+| Reconciliation | N/A | Flagged on, no venue to reconcile against | ✅ Startup + reconnect via `ExchangeReconciler` |
 | Arm state required | No | No | Yes (`LIVE_TRADING_ARMED=true`) |
 | Credentials required | No | No | Yes (`COINDCX_API_KEY`/`_SECRET`) |
 | Event persistence | ✅ Yes | ✅ Yes | ✅ Yes |
@@ -103,9 +103,9 @@ COINDCX_EXECUTION_ENABLED=true
 ### As-built notes
 
 - Every mode routes through `ExecutionRouter`, constructed in `engine.ts`.
-- Shadow still executes against `PaperBroker`; `accountReadOnly` and
-  `reconciliationEnabled` are set on the profile but no reconciliation loop
-  exists yet (see KNOWN_LIMITATIONS.md).
+- Shadow still executes against `PaperBroker`. `reconciliationEnabled` is set on
+  the profile, but reconciliation only runs when a live venue adapter is
+  attached — in shadow there is nothing to reconcile against.
 - **An armed live profile with no usable adapter rejects orders** with
   `NO_LIVE_EXECUTION_ADAPTER`. It must never fall back to a paper fill: a
   simulated fill reported as live execution makes every downstream number
