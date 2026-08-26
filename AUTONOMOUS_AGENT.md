@@ -136,11 +136,17 @@ The agent also reuses existing infrastructure end-to-end:
    2. `MarketRegimeDetector.detect(symbol, mtf, now)` — extract 9-dim
       features from closed 4h candles, classify the regime, compute
       confidence.
-   3. **Regime confirmation gate.** If the regime differs from the
-      previous cycle, bump an observation counter; only commit the change
-      after `AUTONOMOUS_REGIME_CONFIRMATION_BARS` (default 3) consecutive
-      observations. This prevents a single noisy 4h bar from thrashing
-      the strategy profile.
+   3. **Regime confirmation gate (per-regime, Finding 6).** If the regime
+      differs from the previous cycle, bump an observation counter; only
+      commit the change after enough consecutive observations — the count is
+      **per-regime**, keyed on the regime being left:
+      leaving `RANGING_LOW_VOL` needs `AUTONOMOUS_REGIME_CONFIRMATION_BARS − 1`,
+      leaving a trending regime needs the base (default 3), leaving
+      `RANGING_HIGH_VOL`/`TRANSITIONING` needs base + 1, and leaving
+      `VOLATILE_BREAKOUT` — the noisiest — needs base + 2. Transitions INTO
+      `TRANSITIONING` are never delayed (standing aside early is the safe
+      direction). This prevents noisy regimes from thrashing the strategy
+      profile.
    4. **Stand-aside.** If the current regime is `TRANSITIONING`, log a
       "stand aside" decision and move to the next symbol. No entries in
       ambiguous regimes.
@@ -158,36 +164,54 @@ The agent also reuses existing infrastructure end-to-end:
         broadcast as `agent.autonomous.forming` so the dashboard can
         show "what's coming".
       - **Ready** (status `READY`) — eligible for entry.
-   9. **Confluence gate.** Pick the highest-confluence READY setup.
-      If its confluence score < `AUTONOMOUS_MIN_CONFLUENCE` (default
-      65/100), skip.
-   10. **HTF alignment gate.** Setup direction must agree with the 4h
-       trend — longs only when HTF is bullish, shorts only when HTF is
-       bearish. **Exception:** reversal archetypes (e.g.
-       `SSL_SWEEP_REVERSAL_LONG`) are allowed when HTF is in range,
-       because that's exactly the regime they're designed for.
-   11. **Trade plan.** `AdaptiveRiskManager.computeTradePlan(symbol,
+   9. **Confluence gate × weighted HTF alignment (Finding 5).** Pick the
+      highest-confluence READY setup. Its confluence score is scaled by how
+      strongly the 4h trend supports the direction:
+      aligned = ×1.0, 4h RANGE/UNKNOWN = ×0.7, counter-trend = ×0.3
+      (reversal archetypes countering the 4h trend get the ×0.7 range weight
+      instead). The weighted score must clear `AUTONOMOUS_MIN_CONFLUENCE`.
+      In practice a hard-misaligned setup needs a near-perfect 100/100
+      confluence to clear a ×0.3 weight at min 65 — the binary gate's
+      rejection behaviour survives, but high-conviction range-trend setups
+      are no longer locked out. Set `AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED=false`
+      to restore the legacy binary pass/fail gate.
+   10. **Trade plan.** `AdaptiveRiskManager.computeTradePlan(symbol,
        direction, regimeAdaptation)` returns stop/target/leverage/size
        based on ATR scaled by the regime's `stopAtrMultiplier` and
        `targetAtrMultiplier`. If the realised RR is below the regime's
        `minRR`, the plan is rejected — "the regime can't pay for the
        stop we'd need".
-   12. **Model confidence probe.** Best-effort LLM call via
-       `ModelManager.complete()` to ask a quick risk-reviewer prompt
-       ("given this setup + regime + RR + ATR, what confidence 0..1?").
-       The model output is **blended** 60/40 with a deterministic
-       confidence derived from the confluence score + RR bonus. If the
-       model is unreachable (Ollama down), the agent falls back to the
-       deterministic confidence and keeps running — the agent never
-       blocks on model availability, same pattern as
-       `TradingAgentsPipeline`'s NEUTRAL fallback.
+   11. **Correlation-aware portfolio capacity (Finding 8).** Before any
+       model call, the candidate's planned margin is checked against the
+       correlated cluster: same-direction open positions whose rolling
+       1h-return Pearson correlation with the candidate clears
+       `AUTONOMOUS_CORRELATION_FLOOR` count toward a cap of
+       `AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT` of equity (margin-weighted).
+       This is what stops "BTC + ETH + SOL all long" — three positions that
+       are really one bet. Hedges (opposite direction, or negative
+       correlation) don't count.
+   12. **Model confidence probe + debate veto (Finding 1).** With the veto
+       enabled (default), the setup is first put in front of the same
+       bull/bear debate the SMC strategy uses (`TradingAgentsPipeline`:
+       analyst → bull vs bear → judge → trader). A **genuine** NEUTRAL or
+       opposing trader verdict **vetoes** the entry (durable
+       `AUTONOMOUS_LLM_VETO` event). If any debate stage fell back —
+       Ollama down, timeout — the consultation is *degraded* and NEVER
+       vetoes: the agent falls back to the plain probe path. Without the
+       consultant (or with `AUTONOMOUS_LLM_VETO_ENABLED=false`) the plain
+       probe runs: one best-effort LLM call via `ModelManager.complete()`,
+       blended 60/40 with a deterministic confidence derived from the
+       weighted confluence + RR bonus. Either way the agent never blocks
+       on model availability.
    13. **Confidence gate.** If the blended confidence < 
        `AUTONOMOUS_MIN_CONFIDENCE` (default 0.55), reject and log.
    14. **Position sizing.** `riskAmount = equity * sizePct`, where
        `sizePct = baseRiskPerTradePct * regime.riskMultiplier`. Then
        `quantity = riskAmount / stopDistance`. Folded into
        `signalInput.features['quantity']` — exactly the key
-       `SignalExecutor` reads.
+       `SignalExecutor` reads. The signal also carries
+       `features.alignmentWeight` and `features.effectiveConfluence` so the
+       audit trail shows the weighted score that justified the entry.
    15. **Submit.** `strategyEngine.submitSignal(signalInput)` runs the
        existing pipeline: cooldown, dedup, conflict check, signal
        repository insert, `SignalExecutor.execute()`, broker order +
@@ -222,6 +246,14 @@ The agent also reuses existing infrastructure end-to-end:
 | `AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION` | `0.5` | Fraction of the position closed by the de-risk. |
 | `SYMBOL_LOCK_ENABLED` | `true` | One strategy owns a symbol's entry rights for the lock TTL (multi-strategy orchestration). |
 | `SYMBOL_LOCK_TTL_MS` | `300000` | How long an accepted OPEN signal owns the symbol. |
+| `AUTONOMOUS_LLM_VETO_ENABLED` | `true` | Debate-driven LLM veto: entries face the bull/bear debate; a genuine opposing verdict blocks the entry (Finding 1). |
+| `AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED` | `true` | Weight confluence by HTF-alignment strength instead of the legacy binary gate (Finding 5). |
+| `AUTONOMOUS_HTF_RANGE_WEIGHT` | `0.7` | Confluence weight when the 4h trend is RANGE/UNKNOWN, or a reversal counters the 4h trend. |
+| `AUTONOMOUS_HTF_COUNTER_WEIGHT` | `0.3` | Confluence weight for a non-reversal setup countering the 4h trend. |
+| `AUTONOMOUS_CORRELATION_ENABLED` | `true` | Correlation-aware portfolio cap on top of the count-based maxOpenPositions gate (Finding 8). |
+| `AUTONOMOUS_CORRELATION_FLOOR` | `0.7` | Rolling 1h-return Pearson ρ at/above which a same-direction position joins the correlated cluster. |
+| `AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT` | `0.25` | Max margin-weighted correlated exposure as a fraction of equity (candidate + cluster). |
+| `AUTONOMOUS_CORRELATION_LOOKBACK` | `50` | Candles used for the pairwise correlation estimate. |
 
 The agent also reads the existing `OLLAMA_*` env vars for the model
 endpoint configuration — see `src/ai/ModelManager.ts` and the engine
@@ -293,6 +325,99 @@ Disable with `SYMBOL_LOCK_ENABLED=false`.
 
 ---
 
+## LLM veto via debate consultation (Finding 1)
+
+The agent's confidence probe used to be *passive*: it asked the LLM for a
+confidence number and blended it in. It now also gives the model the power to
+say **no**. When `AUTONOMOUS_LLM_VETO_ENABLED=true` (default) and the
+`TradingAgentsPipeline` is wired, every entry candidate that survives the
+cheap gates is put in front of the same multi-agent debate the `smc-agent`
+strategy uses:
+
+1. **Analyst team** — derivatives/order-flow read of the market facts.
+2. **Bull vs bear debate** — configurable rounds, each rebutting the prior.
+3. **Debate judge** — which side presented stronger evidence.
+4. **Trader** — final LONG / SHORT / NEUTRAL action with confidence.
+
+The deterministic risk-team / fund-manager stages are deliberately skipped:
+the agent already has its own `AdaptiveRiskManager`, `CircuitBreaker` and the
+canonical `RiskEngine` behind the signal, and CONTRACTS.md Section 5 keeps
+risk authority out of model hands. The debate is *consultative*, not
+authoritative.
+
+**Veto rule:** a genuine trader verdict of NEUTRAL, or one opposing the
+intended direction, blocks the entry — recorded as a `REJECTED` decision with
+the debate rationale and a durable `AUTONOMOUS_LLM_VETO` system event.
+
+**Degradation contract:** if ANY debate stage fell back (Ollama down,
+timeout, schema failure) the consultation is flagged `degraded` and **never
+vetoes** — a fallback NEUTRAL is not a model opinion. The agent falls back to
+its deterministic confidence and keeps trading. This preserves the
+"never blocks on model availability" property that has been the design rule
+since the first confidence probe.
+
+When the debate agrees, its trader confidence is blended 60/40 with the
+deterministic base — exactly like the plain probe — so no single source runs
+away with the decision. With the veto disabled the plain single-call probe
+runs unchanged.
+
+---
+
+## Weighted HTF alignment (Finding 5)
+
+The old alignment gate was binary: a long setup needed a BULLISH 4h trend
+(else rejection, with only RANGE/UNKNOWN reversals exempt). The gate is now a
+weight on the confluence score:
+
+| 4h trend vs direction | Weight (default) |
+|---|---|
+| Aligned (LONG+BULLISH / SHORT+BEARISH) | ×1.0 |
+| RANGE / UNKNOWN | ×0.7 (`AUTONOMOUS_HTF_RANGE_WEIGHT`) |
+| Opposing, reversal archetype | ×0.7 (countering the 4h trend is the archetype's job) |
+| Opposing, non-reversal | ×0.3 (`AUTONOMOUS_HTF_COUNTER_WEIGHT`) |
+
+The weighted score must clear `AUTONOMOUS_MIN_CONFLUENCE`. Practical effect:
+a counter-trend setup needs a near-perfect 100/100 confluence to clear a ×0.3
+weight at min 65 (so the old rejection behaviour survives for realistic
+scores), while a very-high-conviction setup in a RANGE 4h is no longer locked
+out. The effective score feeds the confidence probe, and every submitted
+signal carries `features.alignmentWeight` + `features.effectiveConfluence`
+for the audit trail. Set `AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED=false` to restore
+the legacy binary gate.
+
+---
+
+## Correlation-aware portfolio risk (Finding 8)
+
+The count-based `AUTONOMOUS_MAX_OPEN_POSITIONS` gate can't see that BTC, ETH
+and SOL all long is *one* bet. The `PortfolioCorrelationGuard`
+(`src/risk/PortfolioCorrelationGuard.ts`) adds a second, correlation-aware
+gate at entry time (and for pyramid adds):
+
+- **Pairwise correlation** is estimated from rolling 1h close-to-close log
+  returns (Pearson, `AUTONOMOUS_CORRELATION_LOOKBACK` candles, both symbols
+  need ≥ 30 closed candles for a trusted estimate).
+- A position joins the candidate's **correlated cluster** only when the
+  *effective* correlation — ρ × direction-agreement — clears
+  `AUTONOMOUS_CORRELATION_FLOOR`. Same-direction + positive ρ compounds;
+  opposite-direction + positive ρ (or same-direction + negative ρ) is a hedge
+  and is ignored.
+- Exposure is measured in **margin** (the broker's `initialMargin`; the
+  candidate's notional / leverage), so a 10x scalp and a 2x swing are compared
+  in the capital the account actually commits.
+- The candidate is rejected when `candidate margin + Σ cluster margins >
+  AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT × equity`.
+
+Design notes: pairs with insufficient candle history are treated as
+uncorrelated (flagged `insufficientData` in the check result) so newly listed
+symbols aren't silently blocked; the check runs BEFORE the model calls so a
+capped candidate never burns LLM latency; and pyramid adds evaluate the same
+cap with the base position included (`includeSameSymbol`) so adds can't hide
+exposure underneath the gate. With `AUTONOMOUS_CORRELATION_ENABLED=false` the
+guard is a pass-through and the count-based gate is the only portfolio check.
+
+---
+
 ## Regime adaptation table
 
 | Regime | Risk multiplier | Stop ATR | Target ATR | Min RR | Max lev | Trailing act / dist |
@@ -332,13 +457,14 @@ Same payload shape, persisted to the existing `events` table under
 
 - `AUTONOMOUS_AGENT_STARTED` — payload: `{symbols, cycleMs, thresholds...}`
 - `AUTONOMOUS_AGENT_STOPPED` — payload: `{symbols}`
-- `AUTONOMOUS_REGIME_CHANGE` — payload: `{symbol, from, to, confidence, regimeKey}`
+- `AUTONOMOUS_REGIME_CHANGE` — payload: `{symbol, from, to, confidence, regimeKey, confirmations}`
 - `AUTONOMOUS_AGENT_SIGNAL` — payload: `AutonomousSignalRecord & {signalId}`
 - `AUTONOMOUS_AGENT_REJECTED` — payload: `AutonomousSignalRecord & {signalId, reason}`
 - `AUTONOMOUS_CYCLE_COMPLETED` — payload: full `AutonomousCycleSummary`
 - `AUTONOMOUS_EXIT_SIGNAL` — payload: `{cycleId, symbol, action, reason, accepted, signalId}`
 - `AUTONOMOUS_SCALE_IN` — payload: `{cycleId, symbol, action, addNumber, maxAdds, addQty, setupType, regime, unrealizedPct, accepted, signalId}`
 - `AUTONOMOUS_SCALE_OUT` — payload: `{cycleId, symbol, action, reason: 'DOWNSIDE_DERISK', closeFraction, accepted, signalId}`
+- `AUTONOMOUS_LLM_VETO` — payload: `{symbol, direction, setupType, regime, confluenceScore, effectiveConfluence, reason}` — the debate blocked an entry (Finding 1).
 - `AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED` — payload: `{parameter, from, to, rollingWinRate, rollingSampleSize}`
 
 Query them via the existing API: `GET /api/v1/events?type=AUTONOMOUS_CYCLE_COMPLETED&limit=20`.
@@ -356,19 +482,20 @@ before submitting a signal, in order:
 4. Within `AUTONOMOUS_COOLDOWN_MS` of the last attempt → `monitor`.
 5. Portfolio at `AUTONOMOUS_MAX_OPEN_POSITIONS` → `monitor`.
 6. No READY setup found → `monitor` (forming setups still broadcast).
-7. Confluence < `AUTONOMOUS_MIN_CONFLUENCE` → `monitor`.
-8. HTF trend misaligns with setup direction (and not a reversal archetype in range) → `monitor`.
-9. Plan RR < regime `minRR` → `reject` (the regime can't pay for the stop).
-10. Blended confidence < `AUTONOMOUS_MIN_CONFIDENCE` → `reject`.
-11. Another strategy holds the symbol lock → `stand_aside` ("symbol locked by strategy X").
-12. `StrategyEngine.submitSignal` itself runs cooldown + dedup + conflict check (e.g. "duplicate: long position already open") **and re-checks the symbol lock** at submission time.
-13. `SignalExecutor` rejects with `NO_MARKET_STATE` or `ZERO_QUANTITY`.
-14. `ExecutionRouter` applies the live-trading guard + mode profile (paper/shadow/live).
-15. The `RiskEngine` (untouched, still applies) re-validates exposure, daily loss, max positions.
+7. Weighted confluence (raw score × HTF-alignment weight) < `AUTONOMOUS_MIN_CONFLUENCE` → `monitor` — the old binary HTF gate is subsumed here (Finding 5).
+8. Plan RR < regime `minRR` → `reject` (the regime can't pay for the stop).
+9. Correlated-exposure cluster (same-direction, ρ ≥ floor) at cap → `reject` (Finding 8).
+10. Debate veto: genuine NEUTRAL / opposing trader verdict → `reject` (Finding 1; degraded consultations never veto).
+11. Blended confidence < `AUTONOMOUS_MIN_CONFIDENCE` → `reject`.
+12. Another strategy holds the symbol lock → `stand_aside` ("symbol locked by strategy X").
+13. `StrategyEngine.submitSignal` itself runs cooldown + dedup + conflict check (e.g. "duplicate: long position already open") **and re-checks the symbol lock** at submission time.
+14. `SignalExecutor` rejects with `NO_MARKET_STATE` or `ZERO_QUANTITY`.
+15. `ExecutionRouter` applies the live-trading guard + mode profile (paper/shadow/live).
+16. The `RiskEngine` (untouched, still applies) re-validates exposure, daily loss, max positions.
 
-That's fifteen independent gates between "the agent saw a setup" and
+That's sixteen independent gates between "the agent saw a setup" and
 "an order reached the broker." Removing any single one is safe-by-design:
-the remaining fourteen still hold.
+the remaining fifteen still hold.
 
 ---
 
@@ -378,7 +505,7 @@ The `ModelManager` is designed to route between three model kinds:
 
 | Kind | Status | Wire-in plan |
 |------|--------|--------------|
-| `llm` | **Wired.** Routes to Ollama local daemon + Ollama Cloud accounts (Llama 3, Qwen, Mistral, Gemma). Used by the agent's confidence probe. | Already configured via existing `OLLAMA_*` env vars. |
+| `llm` | **Wired.** Routes to Ollama local daemon + Ollama Cloud accounts (Llama 3, Qwen, Mistral, Gemma). Used by the agent's confidence probe **and the debate-driven veto consultation** (Finding 1). | Already configured via existing `OLLAMA_*` env vars. |
 | `vision` | Declared, throws `Not Implemented`. | Drop in `OllamaClient.chat({ images: [base64Chart] })` against a pulled LLaVA model. Use case: candlestick pattern recognition on rendered chart screenshots for setups the SMC detectors don't cover. |
 | `timeSeries` | Declared, throws `Not Implemented`. | Wire a Temporal Fusion Transformer or Chrono-Bert adapter (e.g. via ONNX Runtime). Use case: short-horizon volatility forecasting to refine the regime adaptation. |
 
@@ -458,14 +585,17 @@ guardrails apply.
 ## Tests
 
 ```bash
-pnpm vitest run test/unit/AutonomousTradingAgent.test.ts
+pnpm vitest run test/unit/AutonomousTradingAgent.test.ts test/unit/AutonomyFollowups.test.ts
 ```
 
 The suite covers:
 - `MarketRegimeDetector` classifies a strong uptrend as `TRENDING_STRONG`.
 - `MarketRegimeDetector.getAdaptation` returns a valid adaptation for all six regimes.
-- `AdaptiveRiskManager.computeTradePlan` builds a plan that clears the regime min RR for a strong trend.
-- `AdaptiveRiskManager.isTradeable` reports `TRANSITIONING` as not tradeable.
+- `regimeConfirmationBarsFor` per-regime offsets: leaving VOLATILE needs more observations than leaving RANGING (Finding 6).
+- `PortfolioCorrelationGuard`: correlated cluster caps, hedge exemption, insufficient-data flag, same-symbol scale-in inclusion (Finding 8).
+- `ExitManager.evaluateScaleIn` blocks pyramid adds when the correlation callback disallows (Finding 8).
+- `AutonomousTradingAgent` vetoes entries on a genuine NEUTRAL / opposing debate verdict and never vetoes on a degraded consultation (Finding 1).
+- `AutonomousTradingAgent` weights confluence by HTF alignment (0.7 range / 0.3 counter / reversal exemption) and restores the binary gate when disabled (Finding 5).
 - `AutonomousTradingAgent.runCycle` runs a full cycle, broadcasts a summary, and submits no signal when no READY setup exists.
 - `AutonomousTradingAgent` stands aside when the regime is unclear (not enough candles).
 - `AutonomousTradingAgent.start/stop` emit the correct system events.

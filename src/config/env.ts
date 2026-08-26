@@ -179,6 +179,50 @@ const EnvSchema = z.object({
     // Default true. Only an explicit "false" disables it.
     .transform((val) => val !== 'false'),
   SYMBOL_LOCK_TTL_MS: z.coerce.number().int().min(1_000).default(300_000),
+  // --- LLM veto via debate consultation (AUTONOMY_AUDIT Finding 1) --------
+  // When enabled (default) and the TradingAgentsPipeline is wired, every
+  // entry candidate goes in front of the bull/bear debate before submission;
+  // a genuine NEUTRAL / opposing trader verdict vetoes the entry. A degraded
+  // consultation (model unavailable) never vetoes — the agent stays
+  // best-effort, exactly like the plain confidence probe.
+  AUTONOMOUS_LLM_VETO_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  // --- Weighted HTF alignment (AUTONOMY_AUDIT Finding 5) -----------------
+  // Weight the setup's confluence by how strongly the 4h trend supports the
+  // direction instead of the legacy binary pass/fail gate. Set
+  // AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED=false to restore the binary gate.
+  AUTONOMOUS_HTF_ALIGNMENT_WEIGHTED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  // Confluence weight when the 4h trend is RANGE/UNKNOWN, or when a REVERSAL
+  // archetype counters the 4h trend (0.7 = a 90/100 setup scores 63).
+  AUTONOMOUS_HTF_RANGE_WEIGHT: z.coerce.number().min(0).max(1).default(0.7),
+  // Confluence weight for a NON-reversal setup countering the 4h trend
+  // (0.3 = counter-trend setups need near-perfect confluence to clear 65).
+  AUTONOMOUS_HTF_COUNTER_WEIGHT: z.coerce.number().min(0).max(1).default(0.3),
+  // --- Correlation-aware portfolio risk (AUTONOMY_AUDIT Finding 8) -------
+  // Cap the margin-weighted exposure a symbol may ADD to its correlated
+  // cluster (same-direction open positions with |Pearson ρ| ≥ floor,
+  // estimated over AUTONOMOUS_CORRELATION_LOOKBACK candles of 1h). Blocks
+  // the "BTC + ETH + SOL all long" concentration the count-based
+  // maxOpenPositions gate can't see.
+  AUTONOMOUS_CORRELATION_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  AUTONOMOUS_CORRELATION_FLOOR: z.coerce.number().min(0).max(1).default(0.7),
+  AUTONOMOUS_CORRELATION_MAX_EXPOSURE_PCT: z.coerce
+    .number()
+    .min(0.01)
+    .max(1)
+    .default(0.25),
+  AUTONOMOUS_CORRELATION_LOOKBACK: z.coerce.number().int().min(10).max(500).default(50),
   // --- Health monitor (self-diagnostics) ----------------------------------
   AUTONOMOUS_HEALTH_STALE_MS: z.coerce.number().int().min(1_000).default(15_000),
   AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),

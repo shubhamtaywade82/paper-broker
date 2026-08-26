@@ -84,6 +84,34 @@ export interface AgentCycleStep {
 
 export type AgentCycleStepListener = (step: AgentCycleStep) => void;
 
+/**
+ * Result of a veto consultation (AUTONOMY_AUDIT Finding 1).
+ *
+ * The autonomous agent calls {@link TradingAgentsPipeline.runVetoConsultation}
+ * before submitting an entry: instead of only *probing* the LLM for a
+ * confidence number, the setup is put in front of the full bull/bear debate
+ * and the trader stage, and their verdict can VETO the trade.
+ *
+ * The veto rule lives with the caller (the agent), but the contract is:
+ * - `action` NEUTRAL, or opposing the intended direction → veto.
+ * - `degraded === true` → at least one LLM stage fell back to its
+ *   deterministic fallback, so the verdict is NOT a genuine model opinion —
+ *   the caller must NOT veto on a degraded consultation (the agent's
+ *   "never blocks on Ollama availability" property depends on this).
+ */
+export interface VetoConsultation {
+  /** Trader stage's final action. */
+  action: TraderDecision['action'];
+  /** Debate judge's prevailing side. */
+  prevailingSide: DebateVerdict['prevailingSide'];
+  /** Trader stage's confidence (0..1). */
+  confidence: number;
+  /** True when any LLM stage failed and fell back — see interface doc. */
+  degraded: boolean;
+  /** Compact rationale for logs / the rejection broadcast. */
+  rationale: string;
+}
+
 export interface MarketFactContext {
   symbol: string;
   lastPrice: number;
@@ -200,6 +228,47 @@ export class TradingAgentsPipeline {
       ttlMs: 60_000,
       features: { leverage: d.leverage, sizePct: d.sizePct },
     });
+  }
+
+  /**
+   * Debate-driven veto consultation (AUTONOMY_AUDIT Finding 1).
+   *
+   * Runs the LLM stages of the pipeline — analyst team, bull/bear debate,
+   * judge, trader — WITHOUT the deterministic risk-team / fund-manager stages:
+   * the autonomous agent already has its own AdaptiveRiskManager,
+   * CircuitBreaker and the canonical RiskEngine behind it, and
+   * CONTRACTS.md Section 5 keeps risk authority out of model hands anyway.
+   *
+   * The caller (the agent) treats a genuine NEUTRAL / opposing `action` as a
+   * veto, and MUST ignore the verdict when `degraded` is true — see
+   * {@link VetoConsultation}.
+   */
+  async runVetoConsultation(
+    ctx: MarketFactContext,
+    _direction: 'LONG' | 'SHORT',
+    onStep?: AgentCycleStepListener
+  ): Promise<VetoConsultation> {
+    const cycleId = `veto_${ctx.symbol}_${Date.now()}`;
+
+    // Any LLM stage that emits 'failed' means we're on a deterministic
+    // fallback path — the resulting action is not a genuine model opinion.
+    let degraded = false;
+    const trackingListener: AgentCycleStepListener = (step) => {
+      if (step.status === 'failed' && step.engine === 'llm') degraded = true;
+      onStep?.(step);
+    };
+
+    const analystReports = await this.runAnalystTeam(cycleId, ctx, trackingListener);
+    const { verdict } = await this.runDebate(cycleId, ctx.symbol, analystReports, trackingListener);
+    const traderDecision = await this.runTrader(cycleId, ctx, verdict, analystReports, trackingListener);
+
+    return {
+      action: traderDecision.action,
+      prevailingSide: verdict.prevailingSide,
+      confidence: traderDecision.confidence,
+      degraded,
+      rationale: `verdict=${verdict.prevailingSide} (${verdict.rationale}) | trader=${traderDecision.action} conf=${traderDecision.confidence.toFixed(2)} (${traderDecision.rationale})`,
+    };
   }
 
   private static readonly STAGE_ENGINE: Record<AgentCycleStage, 'llm' | 'deterministic'> = {

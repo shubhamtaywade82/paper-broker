@@ -510,7 +510,19 @@ export class ExitManager {
     position: Position,
     setups: SetupCandidate[],
     plan: TradePlan | null,
-    opts: { allowNewEntries: boolean; minConfluence: number; runtimeRiskMultiplier: number },
+    opts: {
+      allowNewEntries: boolean;
+      minConfluence: number;
+      runtimeRiskMultiplier: number;
+      /**
+       * Correlated-exposure gate (AUTONOMY_AUDIT Finding 8): called with the
+       * prospective add's notional and leverage just before submission. When
+       * provided and it disallows, the add is skipped with a reason — a
+       * pyramid add is margin added to the same correlated cluster and must
+       * clear the same cap a fresh entry would.
+       */
+      correlationCheck?: (addNotional: number, leverage: number) => { allowed: boolean; reason: string };
+    },
     cycleId: string,
     now = Date.now()
   ): Promise<ScaleInDecision | null> {
@@ -601,6 +613,24 @@ export class ExitManager {
     if (addQty <= 0) {
       return { ...base, submitted: false, reason: 'Computed add quantity is zero', setupType: best.setupType, setupState: best.state, confluenceScore: best.confluence.totalScore };
     }
+
+    // 7.5. Correlated-exposure capacity (Finding 8): the add's notional is
+    // margin added to the candidate's cluster — check it BEFORE building the
+    // signal, same as the agent's entry path does at gate 17.5.
+    if (opts.correlationCheck) {
+      const check = opts.correlationCheck(addQty * last, plan.leverage);
+      if (!check.allowed) {
+        return {
+          ...base,
+          submitted: false,
+          reason: `Correlated exposure cap: ${check.reason}`,
+          setupType: best.setupType,
+          setupState: best.state,
+          confluenceScore: best.confluence.totalScore,
+        };
+      }
+    }
+
     const addNumber = tracker.adds + 1;
     const confidence = Math.max(0.55, Math.min(0.95, 0.5 + best.confluence.totalScore / 200));
     const action: SignalInput['action'] = direction === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT';

@@ -70,6 +70,42 @@ export interface RegimeAdaptation {
 }
 
 /**
+ * Confirmation bars required to commit a regime transition FROM `prev` TO
+ * `next` (AUTONOMY_AUDIT Finding 6).
+ *
+ * The threshold is keyed on the regime being LEFT, ranked by how noisy its
+ * classifications are: RANGING_LOW_VOL is quiet (−1 bar), trending regimes
+ * are stable (±0), RANGING_HIGH_VOL / TRANSITIONING are choppy (+1), and
+ * VOLATILE_BREAKOUT is the noisiest (+2). Transitions INTO TRANSITIONING are
+ * never delayed — standing aside early is the safe direction, and delaying
+ * it would keep the agent trading a regime that already ended.
+ *
+ * An explicit `overrides` entry for the source regime replaces the offset
+ * table entirely (clamped to ≥ 1). With the default base of 3 this yields:
+ * leaving RANGING_LOW_VOL needs 2 observations, leaving VOLATILE_BREAKOUT
+ * needs 5.
+ */
+export function regimeConfirmationBarsFor(
+  prev: MarketRegime | undefined,
+  next: MarketRegime,
+  base: number,
+  overrides?: Partial<Record<MarketRegime, number>>
+): number {
+  if (next === 'TRANSITIONING') return base;
+  const override = prev ? overrides?.[prev] : undefined;
+  if (typeof override === 'number') return Math.max(1, Math.round(override));
+  const offsets: Record<MarketRegime, number> = {
+    RANGING_LOW_VOL: -1,
+    TRENDING_STRONG: 0,
+    TRENDING_NORMAL: 0,
+    RANGING_HIGH_VOL: 1,
+    TRANSITIONING: 1,
+    VOLATILE_BREAKOUT: 2,
+  };
+  return Math.max(1, base + (prev ? offsets[prev] : 0));
+}
+
+/**
  * Detect market regime per symbol from the MTF state.
  *
  * Reuses the existing {@link extractMarketFeatures} function (ADX, Bollinger
