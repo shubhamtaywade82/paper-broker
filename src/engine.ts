@@ -38,6 +38,10 @@ import { ModelManager } from './ai/ModelManager.js';
 import { MarketRegimeDetector } from './analysis/MarketRegimeDetector.js';
 import { AdaptiveRiskManager } from './risk/AdaptiveRiskManager.js';
 import { AutonomousTradingAgent } from './agent/AutonomousTradingAgent.js';
+import { PerformanceTracker } from './agent/PerformanceTracker.js';
+import { CircuitBreaker } from './agent/CircuitBreaker.js';
+import { ExitManager } from './agent/ExitManager.js';
+import { HealthMonitor } from './agent/HealthMonitor.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
 import { ApiServer } from './api/server.js';
@@ -408,6 +412,81 @@ export async function startEngine(): Promise<EngineHandle> {
 
   let autonomousAgent: AutonomousTradingAgent | undefined;
   if (env.AUTONOMOUS_AGENT_ENABLED) {
+    // --- The agent's brain: 4 modules wired before the agent itself ----------
+    // Each one is a single-purpose class so the agent's main loop stays
+    // focused on the per-symbol scan. Order matters here: the health
+    // monitor must exist before the circuit breaker (which queries it on
+    // every cycle), and the performance tracker must exist before both
+    // (the breaker queries its consecutive-loss count).
+    const healthMonitor = new HealthMonitor(
+      {
+        symbols,
+        timeframes: ['4h', '1h', '15m', '5m'],
+        staleMs: env.AUTONOMOUS_HEALTH_STALE_MS,
+        modelProbeIntervalMs: env.AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS,
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        mtfEngine,
+        marketState,
+        modelManager,
+      }
+    );
+
+    const performanceTracker = new PerformanceTracker(
+      {
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        windowSize: env.AUTONOMOUS_LEARN_WINDOW_SIZE,
+        minSample: env.AUTONOMOUS_LEARN_MIN_SAMPLE,
+        riskAdaptStep: env.AUTONOMOUS_LEARN_RISK_ADAPT_STEP,
+        riskMultMin: env.AUTONOMOUS_LEARN_RISK_MULT_MIN,
+        riskMultMax: env.AUTONOMOUS_LEARN_RISK_MULT_MAX,
+      },
+      { eventLog: events }
+    );
+
+    // The circuit breaker's `getHealth` reads the monitor's cached state
+    // (no extra probes — the agent itself triggers one full probe per cycle).
+    const circuitBreaker = new CircuitBreaker(
+      {
+        maxDailyLossPct: env.AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT,
+        maxConsecutiveLosses: env.AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES,
+        maxDrawdownPct: env.AUTONOMOUS_CB_MAX_DRAWDOWN_PCT,
+        cooldownMs: env.AUTONOMOUS_CB_COOLDOWN_MS,
+        requireHealthyMarket: env.AUTONOMOUS_CB_REQUIRE_HEALTHY_MARKET,
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        getAccount: () => broker.getAccount(),
+        getConsecutiveLosses: () => performanceTracker.getRollingStats().consecutiveLosses,
+        getHealth: () => healthMonitor.getState(),
+      }
+    );
+
+    // The exit manager hands the trailing-stop controller a `forget(symbol)`
+    // hook so the controller doesn't keep trying to move stops on positions
+    // the agent just flattened. The controller is optional (only constructed
+    // when TRAILING_STOPS_ENABLED), so we use optional chaining.
+    const exitManager = new ExitManager(
+      {
+        exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
+        maxUnrealizedLossPct: env.AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT,
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        strategyEngine,
+        regimeDetector,
+        getPositions: () => broker.getPositions(),
+        getAccount: () => broker.getAccount(),
+        getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+        forgetTrailingStop: (symbol) => trailingStops?.forget(symbol),
+      }
+    );
+
     autonomousAgent = new AutonomousTradingAgent(
       {
         symbols,
@@ -433,6 +512,10 @@ export async function startEngine(): Promise<EngineHandle> {
         getPositions: () => broker.getPositions(),
         getAccount: () => broker.getAccount(),
         getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+        performanceTracker,
+        circuitBreaker,
+        exitManager,
+        healthMonitor,
       }
     );
     logger.info(
@@ -441,6 +524,10 @@ export async function startEngine(): Promise<EngineHandle> {
         minConfluence: env.AUTONOMOUS_MIN_CONFLUENCE,
         minRR: env.AUTONOMOUS_MIN_RR,
         maxOpenPositions: env.AUTONOMOUS_MAX_OPEN_POSITIONS,
+        cbMaxDailyLossPct: env.AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT,
+        cbMaxConsecutiveLosses: env.AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES,
+        learnWindowSize: env.AUTONOMOUS_LEARN_WINDOW_SIZE,
+        exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
       },
       'Autonomous trading agent enabled and will run on its own clock'
     );

@@ -3,7 +3,7 @@ import type { WebSocketGateway } from '../api/websocket/WebSocketGateway.js';
 import type { StrategyEngine } from '../strategy/StrategyEngine.js';
 import type { SetupEngine } from '../market/setup/SetupEngine.js';
 import type { MtfStateEngine } from '../market/MtfStateEngine.js';
-import type { MarketRegimeDetector, RegimeSnapshot } from '../analysis/MarketRegimeDetector.js';
+import type { MarketRegimeDetector } from '../analysis/MarketRegimeDetector.js';
 import type { AdaptiveRiskManager, TradePlan } from '../risk/AdaptiveRiskManager.js';
 import type { ModelManager } from '../ai/ModelManager.js';
 import type { SignalInput } from '../strategy/signal.js';
@@ -14,6 +14,10 @@ import type {
   AutonomousCycleSummary,
   AutonomousSignalRecord,
 } from './types.js';
+import type { PerformanceTracker } from './PerformanceTracker.js';
+import type { CircuitBreaker } from './CircuitBreaker.js';
+import type { ExitManager } from './ExitManager.js';
+import type { HealthMonitor } from './HealthMonitor.js';
 import { logger } from '../telemetry/logger.js';
 import { metrics } from '../telemetry/metrics.js';
 
@@ -55,6 +59,14 @@ export interface AutonomousTradingAgentDeps {
   getAccount: () => AccountState;
   /** Returns the last price for a symbol (used as the entry assumption). */
   getLastPrice: (symbol: string) => number | undefined;
+  /** The performance tracker — the agent's "memory" of recent trade outcomes. */
+  performanceTracker: PerformanceTracker;
+  /** The circuit breaker — self-preservation: trips on losses / drawdown / unhealthy market. */
+  circuitBreaker: CircuitBreaker;
+  /** The exit manager — decides when to flatten positions before the trailing stop fires. */
+  exitManager: ExitManager;
+  /** The health monitor — probes kline / market / model liveness each cycle. */
+  healthMonitor: HealthMonitor;
 }
 
 /**
@@ -79,6 +91,19 @@ export interface AutonomousTradingAgentDeps {
  *      the event log + `agent.autonomous.regime` to the dashboard.
  *   5. Tracks per-symbol state between cycles so the agent's "memory" of
  *      what each symbol was doing survives the next poll.
+ *   6. **(Brain)** Each cycle, the PerformanceTracker refreshes its rolling
+ *      window from the durable EventLog and suggests a runtime risk multiplier
+ *      based on recent realised win rate. The agent applies that multiplier
+ *      on top of the regime overlay's riskMultiplier.
+ *   7. **(Self-preservation)** Before any new entry, the CircuitBreaker
+ *      checks daily loss, drawdown, consecutive losses, and market health.
+ *      A tripped breaker refuses new entries for the cooldown period.
+ *   8. **(Exits)** The ExitManager walks open positions and may flatten any
+ *      whose regime has flipped, whose setup has invalidated, or whose
+ *      unrealized loss has breached the configured threshold.
+ *   9. **(Self-diagnostics)** The HealthMonitor probes kline freshness, market
+ *      state staleness, model reachability, and recent WS disconnects. A
+ *      degraded state trips the breaker via the `requireHealthyMarket` config.
  *
  * The agent is **always safe by default**:
  *   - Disabled by env (AUTONOMOUS_AGENT_ENABLED=false) → never constructed.
@@ -88,6 +113,7 @@ export interface AutonomousTradingAgentDeps {
  *   - RR below regime minRR → skip.
  *   - Portfolio at max open positions → skip new entries.
  *   - Symbol in cooldown → skip.
+ *   - Circuit breaker tripped → skip ALL new entries.
  *
  * Everything that happens is logged + broadcast, so an operator can audit
  * why the agent did or didn't act on any given cycle.
@@ -98,6 +124,8 @@ export class AutonomousTradingAgent {
   private perSymbol = new Map<string, PerSymbolState>();
   private readonly config: AutonomousTradingAgentConfig;
   private readonly deps: AutonomousTradingAgentDeps;
+  /** Most recent runtime risk multiplier suggested by the learning loop. */
+  private runtimeRiskMultiplier = 1.0;
 
   constructor(config: AutonomousTradingAgentConfig, deps: AutonomousTradingAgentDeps) {
     this.config = config;
@@ -170,6 +198,18 @@ export class AutonomousTradingAgent {
   /**
    * One polling cycle. Public so it can be triggered manually from the API
    * (e.g. a "Run cycle now" dashboard button) without waiting for the timer.
+   *
+   * The cycle runs in this order, deliberately:
+   *   1. Health probe (cheap unless model probe interval elapses)
+   *   2. Performance refresh + risk multiplier suggestion (the brain)
+   *   3. Circuit breaker check (may stand-aside the whole cycle)
+   *   4. Exit evaluation on open positions (the agent's intra-position brain)
+   *   5. Per-symbol entry scan (only if breaker not tripped)
+   *   6. Broadcast + persist cycle summary
+   *
+   * Exits always run regardless of circuit-breaker state — we don't want a
+   * tripped breaker to prevent the agent from flattening positions whose
+   * regime has flipped against them.
    */
   async runCycle(): Promise<AutonomousCycleSummary> {
     const startedAt = Date.now();
@@ -182,21 +222,59 @@ export class AutonomousTradingAgent {
     let standingAsideSymbols = 0;
     const decisions: AutonomousCycleSummary['decisions'] = [];
 
+    const now = startedAt;
+
+    // --- (1) Health probe — drives the circuit breaker via requireHealthyMarket.
+    const health = await this.deps.healthMonitor.check(now);
+
+    // --- (2) Performance refresh + learning-loop risk multiplier suggestion.
+    this.deps.performanceTracker.refresh(now);
+    const learningRiskMultiplier = this.deps.performanceTracker.suggestRiskMultiplier();
+    if (Math.abs(learningRiskMultiplier - this.runtimeRiskMultiplier) > 0.001) {
+      const prev = this.runtimeRiskMultiplier;
+      this.runtimeRiskMultiplier = learningRiskMultiplier;
+      this.deps.eventLog.appendSystemEvent({
+        eventType: 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED',
+        payload: {
+          parameter: 'runtimeRiskMultiplier',
+          from: prev,
+          to: learningRiskMultiplier,
+          rollingWinRate: this.deps.performanceTracker.getRollingStats().winRate,
+          rollingSampleSize: this.deps.performanceTracker.getRollingStats().trades,
+        },
+        createdAtUtc: new Date(now).toISOString(),
+      });
+      this.deps.wsGateway.broadcast('agent.autonomous.learning', {
+        cycleId,
+        parameter: 'runtimeRiskMultiplier',
+        from: prev,
+        to: learningRiskMultiplier,
+        rollingWinRate: this.deps.performanceTracker.getRollingStats().winRate,
+        rollingSampleSize: this.deps.performanceTracker.getRollingStats().trades,
+      });
+    }
+
+    // --- (3) Circuit breaker — may stand-aside the entire cycle.
+    const breaker = this.deps.circuitBreaker.check(now);
+    const breakerTripped = !breaker.allowEntries;
+
+    // --- (4) Exits — always run, regardless of breaker.
+    const exits = await this.deps.exitManager.evaluateExits(this.perSymbol, cycleId, now);
+
     const account = this.deps.getAccount();
     const openPositions = this.deps.getPositions();
     const portfolioFull = openPositions.length >= this.config.maxOpenPositions;
 
     for (const symbol of this.config.symbols) {
       const symState = this.perSymbol.get(symbol)!;
-      const now = Date.now();
 
-      // 1. Compute MTF state.
+      // 5. Compute MTF state.
       const mtf = this.deps.mtfEngine.computeState(symbol, now);
 
-      // 2. Detect regime.
+      // 6. Detect regime.
       const regime = this.deps.regimeDetector.detect(symbol, mtf, now);
 
-      // 3. Track regime change + confirmation.
+      // 7. Track regime change + confirmation.
       if (regime) {
         const prev = symState.regime;
         if (prev && prev.regime !== regime.regime) {
@@ -237,12 +315,14 @@ export class AutonomousTradingAgent {
         }
       }
 
-      // 4. Stand-aside if regime is TRANSITIONING.
+      // 8. Stand-aside if regime is TRANSITIONING.
       const currentRegime = symState.regime?.regime ?? 'TRANSITIONING';
       const adaptation = this.deps.regimeDetector.getAdaptation(currentRegime);
       const tradeableRegime = this.deps.riskManager.isTradeable(currentRegime);
 
-      // 5. Check for an existing position on this symbol.
+      // 9. Check for an existing position on this symbol — if so, the
+      // ExitManager already evaluated it above; just record the in-position
+      // state and move on.
       const symPosition = openPositions.find((p) => p.symbol === symbol && p.status === 'OPEN');
 
       if (symPosition) {
@@ -256,6 +336,23 @@ export class AutonomousTradingAgent {
           confluenceScore: null,
           action: 'IN_POSITION',
           reason: `Already in position (qty=${symPosition.qty}, entry=${symPosition.entryPrice})`,
+        });
+        continue;
+      }
+
+      // 10. Circuit-breaker stand-aside.
+      if (breakerTripped) {
+        symState.state = 'stand_aside';
+        standingAsideSymbols++;
+        decisions.push({
+          symbol,
+          state: 'stand_aside',
+          regime: currentRegime,
+          setupState: null,
+          setupType: null,
+          confluenceScore: null,
+          action: 'STAND_ASIDE',
+          reason: `Circuit breaker tripped: ${breaker.reason}`,
         });
         continue;
       }
@@ -276,7 +373,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 6. Check cooldown.
+      // 11. Check cooldown.
       if (now - symState.lastEntryAttemptAt < this.config.cooldownMs) {
         const remainingMs = this.config.cooldownMs - (now - symState.lastEntryAttemptAt);
         symState.state = 'monitoring';
@@ -293,7 +390,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 7. Portfolio full?
+      // 12. Portfolio full?
       if (portfolioFull) {
         symState.state = 'monitoring';
         decisions.push({
@@ -309,7 +406,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 8. Pull setups for this symbol.
+      // 13. Pull setups for this symbol.
       const setups = this.deps.setupEngine.getSetupsAsOf(symbol, now);
       const ready = setups.filter((s) => s.status === 'READY');
       const forming = setups.filter(
@@ -333,7 +430,7 @@ export class AutonomousTradingAgent {
         });
       }
 
-      // 9. Pick the highest-confluence READY setup.
+      // 14. Pick the highest-confluence READY setup.
       const best = ready.sort((a, b) => b.confluence.totalScore - a.confluence.totalScore)[0];
 
       if (!best) {
@@ -351,7 +448,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 10. Confluence gate.
+      // 15. Confluence gate.
       if (best.confluence.totalScore < this.config.minConfluence) {
         symState.state = 'monitoring';
         decisions.push({
@@ -367,7 +464,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 11. HTF alignment check — setup direction must agree with HTF trend
+      // 16. HTF alignment check — setup direction must agree with HTF trend
       // unless it's an explicit reversal archetype.
       const direction = best.direction;
       const htfTrend = best.timeframes.regime4h;
@@ -392,7 +489,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 12. Build the trade plan.
+      // 17. Build the trade plan.
       // SetupDirection includes 'AVOID' but we've already filtered to READY
       // setups with aligned HTF, so direction is guaranteed to be LONG/SHORT.
       if (direction !== 'LONG' && direction !== 'SHORT') {
@@ -431,7 +528,7 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 13. Optional model-confidence probe — best-effort, never blocks.
+      // 18. Optional model-confidence probe — best-effort, never blocks.
       const confidence = await this.probeConfidence(symbol, direction, best, plan);
 
       if (confidence < this.config.minConfidence) {
@@ -450,13 +547,17 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 14. Build & submit the signal.
+      // 19. Build & submit the signal. The runtime risk multiplier from the
+      // learning loop is folded into sizePct on top of the regime overlay.
       symState.trackingSetup = best;
       symState.trackingPlan = plan;
       symState.state = 'seeking_entry';
       symState.lastEntryAttemptAt = now;
 
-      const sizePct = this.deps.riskManager.planToFeatures(plan)['sizePct'] as number;
+      const planFeatures = this.deps.riskManager.planToFeatures(plan);
+      const baseSizePct = planFeatures['sizePct'] as number;
+      // Apply the learning-loop multiplier on top of the regime overlay.
+      const sizePct = baseSizePct * this.runtimeRiskMultiplier;
       const entry = plan.entryPrice;
       const stopDistance = Math.abs(entry - plan.stopLossPrice);
       // Risk-based qty: (equity * sizePct) / stopDistance.
@@ -471,9 +572,11 @@ export class AutonomousTradingAgent {
         stopLossPrice: String(plan.stopLossPrice.toFixed(8)),
         takeProfitPrice: String(plan.takeProfitPrice.toFixed(8)),
         ttlMs: this.config.cycleMs * 2,
-        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore} RR=${plan.rr.toFixed(2)} | ${adaptation.rationale}`,
+        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore} RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)} | ${adaptation.rationale}`,
         features: {
-          ...this.deps.riskManager.planToFeatures(plan),
+          ...planFeatures,
+          sizePct,
+          runtimeRiskMultiplier: this.runtimeRiskMultiplier,
           quantity,
           cooldownMs: this.config.cooldownMs,
         },
@@ -518,7 +621,7 @@ export class AutonomousTradingAgent {
           setupType: best.setupType,
           confluenceScore: best.confluence.totalScore,
           action: 'ENTRY_SUBMITTED',
-          reason: `Submitted ${signalInput.action} @ ${plan.entryPrice} SL=${plan.stopLossPrice.toFixed(4)} TP=${plan.takeProfitPrice.toFixed(4)} lev=${plan.leverage}x RR=${plan.rr.toFixed(2)}`,
+          reason: `Submitted ${signalInput.action} @ ${plan.entryPrice} SL=${plan.stopLossPrice.toFixed(4)} TP=${plan.takeProfitPrice.toFixed(4)} lev=${plan.leverage}x RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)}`,
         });
       } else {
         signalsRejected++;
@@ -561,6 +664,11 @@ export class AutonomousTradingAgent {
       signalsSubmitted,
       signalsRejected,
       standingAsideSymbols,
+      circuitBreakerTripped: breakerTripped,
+      health,
+      exits,
+      runtimeRiskMultiplier: this.runtimeRiskMultiplier,
+      rollingWinRate: this.deps.performanceTracker.getRollingStats().winRate,
       decisions,
     };
 
@@ -573,6 +681,7 @@ export class AutonomousTradingAgent {
     metrics.setGauge('autonomous_forming_setups', formingSetups);
     metrics.setGauge('autonomous_ready_setups', readySetups);
     metrics.setGauge('autonomous_standing_aside', standingAsideSymbols);
+    metrics.setGauge('autonomous_runtime_risk_multiplier', Math.round(this.runtimeRiskMultiplier * 1000));
 
     return summary;
   }

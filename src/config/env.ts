@@ -104,6 +104,42 @@ const EnvSchema = z.object({
   AUTONOMOUS_REGIME_CONFIRMATION_BARS: z.coerce.number().int().positive().default(3),
   AUTONOMOUS_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.55),
   AUTONOMOUS_STRATEGY_ID: z.string().min(1).default('autonomous-agent'),
+  // --- Circuit breaker (self-preservation) --------------------------------
+  // Trip the agent (stop new entries) when ANY of these breach. Existing
+  // positions continue to be managed by their stop/target/trailing logic.
+  AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.03),
+  AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES: z.coerce.number().int().min(1).default(5),
+  AUTONOMOUS_CB_MAX_DRAWDOWN_PCT: z.coerce.number().min(0).max(1).default(0.08),
+  AUTONOMOUS_CB_COOLDOWN_MS: z.coerce.number().int().min(1_000).default(900_000),
+  AUTONOMOUS_CB_REQUIRE_HEALTHY_MARKET: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // --- Learning loop (adaptive parameters) --------------------------------
+  // How many recent closed trades to consider when nudging params. Larger =
+  // smoother but slower to react; smaller = noisier but quicker.
+  AUTONOMOUS_LEARN_WINDOW_SIZE: z.coerce.number().int().min(5).max(500).default(30),
+  // Minimum trades before nudging kicks in (avoid small-sample knee-jerks).
+  AUTONOMOUS_LEARN_MIN_SAMPLE: z.coerce.number().int().min(2).max(100).default(5),
+  // How aggressively to nudge risk multiplier toward observed win rate.
+  // 0 = never adjust; 0.1 = small steps; 0.5 = aggressive.
+  AUTONOMOUS_LEARN_RISK_ADAPT_STEP: z.coerce.number().min(0).max(1).default(0.1),
+  // Floor and ceiling on the runtime risk multiplier.
+  AUTONOMOUS_LEARN_RISK_MULT_MIN: z.coerce.number().min(0.05).max(1).default(0.5),
+  AUTONOMOUS_LEARN_RISK_MULT_MAX: z.coerce.number().min(1).max(3).default(1.5),
+  // --- Exit manager (intra-position decisions) ----------------------------
+  // Allow the agent to flatten a position whose regime has flipped against
+  // it, even if the trailing stop hasn't fired yet.
+  AUTONOMOUS_EXIT_ON_REGIME_FLIP: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // If unrealized loss exceeds this fraction of equity, exit regardless of
+  // stop. 0 = disabled.
+  AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.02),
+  // --- Health monitor (self-diagnostics) ----------------------------------
+  AUTONOMOUS_HEALTH_STALE_MS: z.coerce.number().int().min(1_000).default(15_000),
+  AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
 
   DB_FILE: z.string().default('data/paper.sqlite3'),
   EVENT_LOG_FILE: z.string().default('data/events.jsonl'),

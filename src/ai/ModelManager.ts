@@ -1,5 +1,4 @@
 import { OllamaClient } from '@nemesis-oss/ollama-sdk';
-import { logger } from '../telemetry/logger.js';
 
 /**
  * Model types the agent may want to call. Today only `llm` is wired (the

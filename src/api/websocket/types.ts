@@ -21,7 +21,11 @@ export type WebSocketEventType =
   | 'agent.autonomous.forming'
   | 'agent.autonomous.regime'
   | 'agent.autonomous.signal'
-  | 'agent.autonomous.rejected';
+  | 'agent.autonomous.rejected'
+  | 'agent.autonomous.circuit_breaker'
+  | 'agent.autonomous.health'
+  | 'agent.autonomous.exit'
+  | 'agent.autonomous.learning';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

@@ -1,7 +1,8 @@
-import type { Position, AccountState } from '../broker/types.js';
 import type { RegimeSnapshot } from '../analysis/MarketRegimeDetector.js';
 import type { TradePlan } from '../risk/AdaptiveRiskManager.js';
 import type { SetupCandidate } from '../market/setup/types.js';
+import type { ExitDecision } from './ExitManager.js';
+import type { HealthState } from './HealthMonitor.js';
 
 /**
  * The agent's high-level state machine.
@@ -43,6 +44,16 @@ export interface AutonomousCycleSummary {
   signalsSubmitted: number;
   signalsRejected: number;
   standingAsideSymbols: number;
+  /** True iff the circuit breaker refused new entries this cycle. */
+  circuitBreakerTripped: boolean;
+  /** Latest health snapshot from the HealthMonitor. */
+  health: HealthState;
+  /** Per-symbol exit decisions taken this cycle (empty if no positions open). */
+  exits: ExitDecision[];
+  /** The runtime risk multiplier applied by the learning loop this cycle. */
+  runtimeRiskMultiplier: number;
+  /** Rolling win rate (0..1) as of the most recent refresh. */
+  rollingWinRate: number;
   /** Compact per-symbol decisions, for the WebSocket dashboard. */
   decisions: Array<{
     symbol: string;
