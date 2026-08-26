@@ -187,11 +187,11 @@ export function MarketsView() {
                             key={idx}
                             className="grid grid-cols-2 gap-2 py-0.5 px-0.5 hover:bg-[#141d2e] rounded transition-colors font-mono"
                           >
-                            {/* Left: Bid (SIZE | PRICE) */}
+                            {/* Left: Bid (SIZE | PRICE) - Bar grows from inside (right) to outside (left) */}
                             {bid ? (
                               <div className="flex justify-between relative px-1 items-center">
                                 <div
-                                  className="absolute left-0 top-0 bottom-0 bg-emerald-500/15 rounded"
+                                  className="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded"
                                   style={{ width: `${Math.min(100, (bid[1] / maxQty) * 100)}%` }}
                                 />
                                 <span className="text-gray-300 relative z-10 text-[9px]">
@@ -205,11 +205,11 @@ export function MarketsView() {
                               <div className="px-1" />
                             )}
 
-                            {/* Right: Ask (PRICE | SIZE) */}
+                            {/* Right: Ask (PRICE | SIZE) - Bar grows from inside (left) to outside (right) */}
                             {ask ? (
                               <div className="flex justify-between relative px-1 items-center border-l border-[#1b2537] pl-2">
                                 <div
-                                  className="absolute right-0 top-0 bottom-0 bg-red-500/15 rounded"
+                                  className="absolute left-0 top-0 bottom-0 bg-red-500/15 rounded"
                                   style={{ width: `${Math.min(100, (ask[1] / maxQty) * 100)}%` }}
                                 />
                                 <span className="text-red-400 font-bold relative z-10">
