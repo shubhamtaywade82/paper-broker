@@ -182,9 +182,10 @@ export function useTickers() {
         for (const item of raw) {
           const sym = String(item.symbol || '');
           if (!sym) continue;
+          const p = parseFloat(String(item.lastPrice || item.price || 0));
           tickersMap[sym] = {
             symbol: sym,
-            price: parseFloat(String(item.lastPrice || item.price || 0)),
+            price: p,
             change24h: parseFloat(String(item.priceChangePercent || 0)),
             high24h: parseFloat(String(item.highPrice || 0)),
             low24h: parseFloat(String(item.lowPrice || 0)),
@@ -192,6 +193,9 @@ export function useTickers() {
             fundingRate: item.lastFundingRate ? parseFloat(String(item.lastFundingRate)) : undefined,
             markPrice: item.markPrice ? parseFloat(String(item.markPrice)) : undefined,
           };
+          if (p > 0) {
+            useStore.getState().setLivePrice(sym, p);
+          }
         }
       }
       setTickers(tickersMap);

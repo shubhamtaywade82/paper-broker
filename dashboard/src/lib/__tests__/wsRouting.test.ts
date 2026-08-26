@@ -125,18 +125,20 @@ describe('wsRouting — autonomous event dispatch', () => {
     expect(useTradingStore.getState().positions['pos-1']).toBeDefined();
   });
 
-  it('WS-ROUTE-05: unknown event types are silently dropped (default branch)', () => {
-    // mode.changed is not handled by wsRouting (handled by legacy useStore).
-    // Should not throw, should not mutate any store.
-    const before = useAutonomousStore.getState();
+  it('WS-ROUTE-06: market.tick routes to useStore setLivePrice', () => {
+    const tick = {
+      symbol: 'SOLUSDT',
+      price: 185.5,
+    };
     dispatch({
-      type: 'mode.changed',
-      payload: { mode: 'live', liveArmed: true },
+      type: 'market.tick',
+      payload: tick,
       timestampUtc: new Date().toISOString(),
     });
-    expect(useAutonomousStore.getState()).toEqual(before);
+    expect(useStore.getState().livePrice['SOLUSDT']).toBe(185.5);
   });
 });
 
 // Need to import afterEach for the cleanup call.
 import { afterEach } from 'vitest';
+import { useStore } from '../../store/useStore.js';

@@ -34,6 +34,7 @@ export function TradingView() {
     selectedSymbol,
     setActiveTab,
     livePrice,
+    tickers,
   } = useStore();
 
   useDashboard();
@@ -153,14 +154,17 @@ export function TradingView() {
                         const side = pos.side ?? 'LONG';
                         const mark =
                           livePrice[pos.symbol] ??
+                          tickers[pos.symbol]?.price ??
                           pos.markPrice ??
                           (pos.unrealizedPnl && qty > 0
                             ? side === 'LONG'
                               ? entry + pos.unrealizedPnl / qty
                               : entry - pos.unrealizedPnl / qty
                             : entry);
+                        const hasLiveOrTickerPrice =
+                          livePrice[pos.symbol] !== undefined || tickers[pos.symbol]?.price !== undefined;
                         const pnl =
-                          livePrice[pos.symbol] !== undefined
+                          hasLiveOrTickerPrice
                             ? side === 'LONG'
                               ? (mark - entry) * qty
                               : (entry - mark) * qty

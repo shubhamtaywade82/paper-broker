@@ -65,7 +65,7 @@ export function TradingChart({
   const lastBarRef = useRef<CandlestickData | null>(null);
   const initialFitDoneRef = useRef(false);
 
-  const livePrice = useStore((s) => s.livePrice[symbol]);
+  const livePrice = useStore((s) => s.livePrice[symbol] ?? s.tickers[symbol]?.price);
   const closedCandle = useStore((s) => s.closedCandle[`${symbol}:${timeframe}`]);
   const prevSymbolRef = useRef(symbol);
 

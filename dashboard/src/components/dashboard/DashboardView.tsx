@@ -32,6 +32,7 @@ export function DashboardView() {
     setTimeframe,
     liveEvents,
     livePrice,
+    tickers,
     openOrders,
   } = useStore();
 
@@ -227,14 +228,17 @@ export function DashboardView() {
                     const lev = pos.leverage ?? 5;
                     const mark =
                       livePrice[pos.symbol] ??
+                      tickers[pos.symbol]?.price ??
                       pos.markPrice ??
                       (pos.unrealizedPnl && qty > 0
                         ? side === 'LONG'
                           ? entry + pos.unrealizedPnl / qty
                           : entry - pos.unrealizedPnl / qty
                         : entry);
+                    const hasLiveOrTickerPrice =
+                      livePrice[pos.symbol] !== undefined || tickers[pos.symbol]?.price !== undefined;
                     const pnl =
-                      livePrice[pos.symbol] !== undefined
+                      hasLiveOrTickerPrice
                         ? side === 'LONG'
                           ? (mark - entry) * qty
                           : (entry - mark) * qty

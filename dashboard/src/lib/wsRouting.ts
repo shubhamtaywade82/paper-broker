@@ -2,6 +2,7 @@ import { wsManager } from './wsConnection.js';
 import { useTradingStore } from '../stores/tradingStore.js';
 import { useSystemStore } from '../stores/systemStore.js';
 import { useAutonomousStore } from '../stores/autonomousStore.js';
+import { useStore } from '../store/useStore.js';
 
 /**
  * Wire every backend WebSocket broadcast into the appropriate Zustand store.
@@ -17,6 +18,11 @@ import { useAutonomousStore } from '../stores/autonomousStore.js';
 export function setupWsRouting(): () => void {
   return wsManager.on('*', (m) => {
     switch (m.type) {
+      // --- Market Data ---------------------------------------------------
+      case 'market.tick':
+        useStore.getState().setLivePrice(m.payload.symbol, m.payload.price);
+        break;
+
       // --- Trading -------------------------------------------------------
       case 'position.updated':
         useTradingStore.getState().upsertPosition(m.payload);

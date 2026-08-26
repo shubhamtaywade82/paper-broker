@@ -24,6 +24,7 @@ export function Header() {
     wsConnected,
     account,
     livePrice,
+    tickers,
     operatingMode,
     liveArmed,
     aggressiveMode,
@@ -139,9 +140,9 @@ export function Header() {
                 </option>
               ))}
             </select>
-            {livePrice[selectedSymbol] && (
+            {Boolean(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price) && (
               <span className="text-amber-400 font-bold text-xs border-l border-[#1b2537] pl-2">
-                ${livePrice[selectedSymbol].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                ${(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
               </span>
             )}
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
