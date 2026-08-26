@@ -8,6 +8,9 @@ import { ExecutionPlanEngine } from '../../src/market/execution/ExecutionPlanEng
 import { TradeIntentEngine } from '../../src/trading/TradeIntentEngine.js';
 import { KlineStore } from '../../src/market/Klines.js';
 import { MarketStateManager } from '../../src/market/MarketState.js';
+import { StrategyPerformanceTracker } from '../../src/strategy/StrategyPerformanceTracker.js';
+import { SetupOutcomeTracker } from '../../src/strategy/SetupOutcomeTracker.js';
+import type { MarketFactContext } from '../../src/ai/tradingAgents.js';
 import type { CycleRecord } from '../../src/ai/schemas.js';
 import type { Candle } from '../../src/strategy/indicators.js';
 import type { StrategyContext } from '../../src/strategy/StrategyContext.js';
@@ -286,6 +289,95 @@ describe('SMC agent strategy — structure to agents to risk gate', () => {
       const result = await strategy.onCandleClose!(ctx, currentCandle);
       expect(result).toBeNull();
       expect(failingPipeline.runCycle).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe('setup-type self-learning memory', () => {
+    // The fixture's 15m sequence produces an SSL liquidity sweep ahead of the
+    // bullish CHOCH/BOS, so SetupEngine classifies it as this archetype (see
+    // evaluateLongSetup in SetupEngine.ts).
+    const SETUP_TYPE = 'SSL_SWEEP_REVERSAL_LONG';
+
+    it('skips a quarantined setup archetype without ever calling the LLM pipeline', async () => {
+      const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
+      const tradeIntentEngine = new TradeIntentEngine();
+      const runCycle = vi.fn();
+      const setupPerformance = new StrategyPerformanceTracker({
+        thresholds: { minTradesBeforeAction: 1, maxDrawdownUsdt: 1, minWinRate: 0 },
+      });
+      // Two losing trades exceed the 1 USDT drawdown threshold and quarantine the archetype.
+      setupPerformance.recordRealizedPnl(SETUP_TYPE, -5);
+      setupPerformance.recordRealizedPnl(SETUP_TYPE, -3);
+      expect(setupPerformance.isQuarantined(SETUP_TYPE)).toBe(true);
+
+      const strategy = createSmcAgentStrategy({
+        setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
+        tradingAgentsPipeline: { runCycle },
+        getInstrument: () => FAKE_INSTRUMENT,
+        setupPerformance,
+        enforceSetupQuarantine: true,
+      });
+
+      const candles5m = build5mCandles();
+      const currentCandle = candles5m[candles5m.length - 1]!;
+      const result = await strategy.onCandleClose!(makeContext(10000), currentCandle);
+
+      expect(result).toBeNull();
+      expect(runCycle).not.toHaveBeenCalled();
+    });
+
+    it('does not gate on quarantine when enforceSetupQuarantine is false, but still surfaces the memory to the agent prompt', async () => {
+      const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
+      const tradeIntentEngine = new TradeIntentEngine();
+      const setupPerformance = new StrategyPerformanceTracker({
+        thresholds: { minTradesBeforeAction: 1, maxDrawdownUsdt: 1, minWinRate: 0 },
+      });
+      setupPerformance.recordRealizedPnl(SETUP_TYPE, -5);
+      setupPerformance.recordRealizedPnl(SETUP_TYPE, -3);
+      expect(setupPerformance.isQuarantined(SETUP_TYPE)).toBe(true);
+
+      let seenCtx: MarketFactContext | undefined;
+      const strategy = createSmcAgentStrategy({
+        setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
+        tradingAgentsPipeline: {
+          async runCycle(ctx) {
+            seenCtx = ctx;
+            return makeApprovingAgentPipeline('LONG').runCycle(ctx);
+          },
+        },
+        getInstrument: () => FAKE_INSTRUMENT,
+        setupPerformance,
+        // enforceSetupQuarantine intentionally omitted (observe-only, matches
+        // STRATEGY_FEEDBACK_ENABLED's default-off behaviour).
+      });
+
+      const candles5m = build5mCandles();
+      const currentCandle = candles5m[candles5m.length - 1]!;
+      const result = await strategy.onCandleClose!(makeContext(10000), currentCandle);
+
+      expect(result).not.toBeNull();
+      expect(seenCtx?.setupMemory).toContain(SETUP_TYPE);
+      expect(seenCtx?.setupMemory).toContain('quarantined');
+    });
+
+    it('records the opened setup type on the outcome tracker when a signal is produced', async () => {
+      const { setupEngine, structureEngine, smcEngine, planEngine } = buildPipeline();
+      const tradeIntentEngine = new TradeIntentEngine();
+      const setupOutcomeTracker = new SetupOutcomeTracker();
+
+      const strategy = createSmcAgentStrategy({
+        setupEngine, structureEngine, smcEngine, planEngine, tradeIntentEngine,
+        tradingAgentsPipeline: makeApprovingAgentPipeline('LONG'),
+        getInstrument: () => FAKE_INSTRUMENT,
+        setupOutcomeTracker,
+      });
+
+      const candles5m = build5mCandles();
+      const currentCandle = candles5m[candles5m.length - 1]!;
+      const result = await strategy.onCandleClose!(makeContext(10000), currentCandle);
+
+      expect(result).not.toBeNull();
+      expect(setupOutcomeTracker.resolveOnClose(SYMBOL)).toBe(SETUP_TYPE);
     });
   });
 });

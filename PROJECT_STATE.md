@@ -25,7 +25,7 @@ Every order submission goes through `ExecutionRouter`, which is constructed in
 | Provider         | Market Data | Execution | Status                                                                 |
 |------------------|-------------|-----------|------------------------------------------------------------------------|
 | Binance Futures  | ✅ wired     | ❌        | Primary stream (`BinanceStreamHandler`), wired in `engine.ts`.          |
-| CoinDCX          | ⚠️ not wired | ✅ wired   | `CoinDCXBroker` is routed via `ExecutionRouter`. The `MarketDataSupervisor` fallback exists in `src/market/supervisor/` but is **not** constructed by `engine.ts`. |
+| CoinDCX          | ❌ no feed   | ✅ wired   | `CoinDCXBroker` is routed via `ExecutionRouter`. `MarketDataSupervisor` is wired and treats CoinDCX as the configured fallback, but no CoinDCX market-data feed exists, so failover can never actually promote it. |
 
 ## Agent / LLM
 
@@ -36,7 +36,7 @@ Every order submission goes through `ExecutionRouter`, which is constructed in
 | Agent authority | advisory only | The pipeline **confirms or vetoes** a candidate the deterministic SMC engine already produced (`smc-agent.ts`: a NEUTRAL or mismatched direction returns null). It cannot originate a trade, pick a symbol, set a stop, or size a position. |
 | Ollama reachability | soft dependency | If unreachable, the debate resolves to NEUTRAL and no SMC trades occur. `engine.ts` logs a startup warning; startup is not gated. |
 | MCP             | not implemented | No tool orchestration. Agents are prompt-in / JSON-out. |
-| Learning        | implemented, narrow | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. Nothing else in the system learns; the LLM has no memory across cycles. |
+| Learning        | implemented | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. **Also:** per-SMC-setup-archetype performance memory (`StrategyPerformanceTracker` reused, keyed by setup type e.g. `SSL_SWEEP_REVERSAL_LONG`, persisted to `data/setup_performance.json`). Closing fills from `smc-agent-v1` are attributed to the setup archetype that opened them via `SetupOutcomeTracker` (in-memory, per-symbol correlation). A setup archetype's realized track record is (a) surfaced to the LLM analyst/trader prompts as advisory `setupMemory` context — informational only, never routed to the deterministic risk/fund-manager stages — and (b) deterministically gates future entries of that archetype when quarantined, same mechanism as strategy-level quarantine but scoped narrower. Off by default (`SETUP_FEEDBACK_ENABLED=true` to enforce; stats accumulate either way). Operator-releasable via `POST /api/v1/setups/:id/release`, observable via `GET /api/v1/setups/performance`. The LLM debate/analyst/trader stages themselves still have no memory beyond this one summarized line — no broader agentic memory or MCP-tool-based recall exists. |
 
 ## Persistence
 
@@ -71,8 +71,9 @@ These must NOT change without an ADR:
 4. **Market data owns price truth** — stale/missing market causes `NO_MARKET_STATE` rejection, never invented prices.
 5. **Event log is append-only** — `events` table and `events.jsonl` are immutable history.
 6. **Live execution requires explicit arm** — `TRADING_MODE=live` alone does nothing; `LIVE_TRADING_ARMED=true` plus credentials are required.
-7. **Live execution is never simulated** — an armed live profile with no usable adapter rejects orders; it must never fall back to paper fills.
-8. **TRADING_MODE is single selector** — one flag controls the operational profile, not multiple booleans.
+7. **Unknown exchange state blocks submission** — a failed or mismatched reconciliation trips safe mode, and `ExecutionRouter` rejects every order until an operator resolves it.
+8. **Live execution is never simulated** — an armed live profile with no usable adapter rejects orders; it must never fall back to paper fills.
+9. **TRADING_MODE is single selector** — one flag controls the operational profile, not multiple booleans.
 
 ## Current Capabilities
 
@@ -88,19 +89,24 @@ These must NOT change without an ADR:
 - ✅ Profit goals (`ProfitGoalManager`) feeding `RiskEngine`'s trading halt and position-size multiplier, persisted, with calendar resets in `Scheduler`
 - ✅ Trailing stops (`TrailingStopController`) doing real cancel-and-replace on resting STOP_MARKET orders
 - ✅ Per-strategy performance feedback (`StrategyPerformanceTracker`) with drawdown/win-rate quarantine, persisted, operator-released
+- ✅ Per-setup-archetype performance feedback for `smc-agent-v1` (same tracker, keyed by setup type), feeding advisory memory into the LLM prompts and gating quarantined archetypes deterministically, persisted, operator-released
 - ✅ SQLite event persistence (append-only + queryable tables)
 - ✅ Fastify REST + WebSocket gateway, API key auth on control endpoints
 - ✅ Incident normalization (`ErrorNormalizer`) with Telegram alerts
+- ✅ Exchange state reconciliation (`ExchangeReconciler`) on startup and reconnect, tripping `LiveTradingGuard` safe mode on mismatch or unreachable venue
+- ✅ API rate limiting (`RateLimiter`), two-tier, on every non-WebSocket request
+- ✅ Bracket-aware, fee-inclusive liquidation pricing (`PaperLiquidation`)
 - ✅ CLI for operational commands
 
-### Implemented but NOT wired into `engine.ts`
+### Wired, but constrained by a missing second feed
 
-These exist with tests and are reachable programmatically, but the running
-engine does not construct them. Do not describe them as active.
-
-- ⚠️ `MarketDataSupervisor` (multi-feed failover coordination)
-- ⚠️ `DivergenceGuard` (cross-exchange price divergence)
-- ⚠️ `ProviderHealthManager` (provider health/latency tracking)
+- ⚠️ `MarketDataSupervisor` / `ProviderHealthManager` / `DivergenceGuard` are
+  now constructed in `engine.ts` and fed from the Binance bookTicker stream, so
+  provider liveness, latency and staleness are tracked and
+  `/api/v1/health/providers` reports real state. **Failover itself cannot fire:**
+  no CoinDCX *market data* feed ships here, so the fallback provider never
+  records a tick and `validateFailover()` correctly refuses to promote it. The
+  divergence guard is armed but has only one price source to compare.
 
 ### Deferred
 
@@ -109,7 +115,8 @@ engine does not construct them. Do not describe them as active.
 ### Planned
 
 - ⏳ MCP tool orchestration loop
-- ⏳ Exchange position reconciliation for live mode
+- ⏳ A second market-data feed, without which failover cannot engage
+- ⏳ Real leverage-bracket data from the exchange (the liquidation model accepts brackets but ships none)
 - ⏳ Backtest engine visualization
 
 ## Known Constraints
@@ -122,7 +129,7 @@ engine does not construct them. Do not describe them as active.
 
 ## Last Updated
 
-2026-08-25
+2026-08-26
 
 ---
 

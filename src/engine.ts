@@ -26,6 +26,8 @@ import { ExecutionRouter } from './execution/ExecutionRouter.js';
 import { DEFAULT_RISK_CONFIG } from './trading/risk/RiskLimits.js';
 import { LiveTradingGuard } from './execution/LiveTradingGuard.js';
 import { CoinDCXBroker } from './coindcx/CoinDCXBroker.js';
+import { MarketDataSupervisor } from './market/supervisor/MarketDataSupervisor.js';
+import { ExchangeReconciler } from './execution/ExchangeReconciler.js';
 import type { ProfitGoalManager } from './trading/goals/ProfitGoalManager.js';
 import { ProfitGoalStore } from './trading/goals/ProfitGoalStore.js';
 import type { ProfitGoalConfig } from './trading/goals/ProfitGoalTypes.js';
@@ -33,6 +35,7 @@ import { TrailingStopManager } from './trading/risk/TrailingStopManager.js';
 import { TrailingStopController } from './trading/risk/TrailingStopController.js';
 import { StrategyPerformanceTracker } from './strategy/StrategyPerformanceTracker.js';
 import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js';
+import { SetupOutcomeTracker } from './strategy/SetupOutcomeTracker.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { ModelManager } from './ai/ModelManager.js';
 import { MarketRegimeDetector } from './analysis/MarketRegimeDetector.js';
@@ -102,6 +105,22 @@ export async function startEngine(): Promise<EngineHandle> {
   // profit-goal updates through it.
   const wsGateway = new WebSocketGateway();
 
+  // --- Market data supervision --------------------------------------------
+  // Tracks per-provider liveness and latency, and arms the cross-exchange
+  // divergence check.
+  //
+  // Failover has nowhere to go today: this repository ships no CoinDCX *market
+  // data* feed, so the COINDCX provider never records a tick and
+  // validateFailover() will correctly refuse to switch to it. That is the
+  // intended behaviour — detect and report primary staleness, never silently
+  // promote a feed that does not exist. When a second feed is added, call
+  // supervisor.processTick('COINDCX', ...) from it and failover becomes live
+  // with no further change here.
+  const supervisor = new MarketDataSupervisor({
+    primary: runtimeProfile.marketDataPrimary,
+    fallback: runtimeProfile.marketDataFallback,
+  });
+
   // --- Profit goals -------------------------------------------------------
   // Restored from disk so a target hit before a restart still throttles risk
   // afterwards. Disabled by default: PROFIT_GOALS_ENABLED=true opts in.
@@ -148,6 +167,37 @@ export async function startEngine(): Promise<EngineHandle> {
     logger.info('Strategy performance feedback is observe-only (set STRATEGY_FEEDBACK_ENABLED=true to quarantine)');
   }
 
+  // --- Self-learning: per-setup-archetype performance feedback for the SMC
+  // agent (smc-agent.ts) ----------------------------------------------------
+  // Reuses StrategyPerformanceTracker as-is, keyed by setup archetype (e.g.
+  // 'SSL_SWEEP_REVERSAL_LONG') instead of strategy id — same quarantine
+  // semantics, narrower scope. Closes the gap PROJECT_STATE.md records under
+  // Agent/LLM Learning: previously only adaptive-supertrend's Q-table learned
+  // from outcomes, and the LLM debate had no memory across cycles.
+  const setupPerformanceStore = new StrategyPerformanceStore(
+    path.join(dataDir, 'setup_performance.json')
+  );
+  const setupPerformance = new StrategyPerformanceTracker({
+    thresholds: {
+      minTradesBeforeAction: env.SETUP_FEEDBACK_MIN_TRADES,
+      maxDrawdownUsdt: env.SETUP_FEEDBACK_MAX_DRAWDOWN_USDT,
+      minWinRate: env.SETUP_FEEDBACK_MIN_WIN_RATE,
+    },
+    onQuarantine: ({ strategyId: setupType, reason, stats }) => {
+      events.appendSystemEvent({
+        eventType: 'SETUP_TYPE_QUARANTINED',
+        payload: { setupType, reason, stats },
+        createdAtUtc: new Date().toISOString(),
+      });
+      setupPerformanceStore.save(setupPerformance.listStats());
+    },
+  });
+  setupPerformance.restore(setupPerformanceStore.load());
+  const setupOutcomeTracker = new SetupOutcomeTracker();
+  if (!env.SETUP_FEEDBACK_ENABLED) {
+    logger.info('Setup-archetype performance feedback is observe-only (set SETUP_FEEDBACK_ENABLED=true to quarantine)');
+  }
+
   const broker = new PaperBroker({
     dataDir,
     accountId: 'paper-main',
@@ -164,6 +214,14 @@ export async function startEngine(): Promise<EngineHandle> {
       if (fill.strategyId) {
         strategyPerformance.recordRealizedPnl(fill.strategyId, fill.realizedPnl, fill.fillTsUtc);
         strategyPerformanceStore.save(strategyPerformance.listStats());
+      }
+
+      if (fill.strategyId === 'smc-agent-v1') {
+        const setupType = setupOutcomeTracker.resolveOnClose(fill.symbol);
+        if (setupType) {
+          setupPerformance.recordRealizedPnl(setupType, fill.realizedPnl, fill.fillTsUtc);
+          setupPerformanceStore.save(setupPerformance.listStats());
+        }
       }
 
       if (profitGoals) {
@@ -222,6 +280,26 @@ export async function startEngine(): Promise<EngineHandle> {
     coindcxBroker,
     guard: liveGuard,
   });
+
+  // --- Exchange state reconciliation --------------------------------------
+  // CONTRACTS.md Section 6: reconcile after startup and reconnect, and block
+  // submission while exchange state is unknown or disagrees with local belief.
+  // Only meaningful when a live venue is actually attached.
+  const reconciler = coindcxBroker
+    ? new ExchangeReconciler({
+        venue: coindcxBroker,
+        local: broker,
+        guard: liveGuard,
+        onReport: (report) => {
+          events.appendSystemEvent({
+            eventType: report.ok ? 'RECONCILIATION_OK' : 'RECONCILIATION_MISMATCH',
+            payload: { ...report },
+            createdAtUtc: report.reconciledAtUtc,
+          });
+          wsGateway.broadcast('reconciliation.report', report);
+        },
+      })
+    : undefined;
 
   const klines = new KlineStore(500);
 
@@ -547,6 +625,9 @@ export async function startEngine(): Promise<EngineHandle> {
       symbols,
       getAllPositions: () => broker.getPositions(),
       getAllOpenOrders: () => broker.getOpenOrders(),
+      setupPerformance,
+      setupOutcomeTracker,
+      enforceSetupQuarantine: env.SETUP_FEEDBACK_ENABLED,
       onCycleCompleted: (cycle) => {
         events.logAgentCycle(cycle);
         wsGateway.broadcast('agent.cycle', cycle);
@@ -663,6 +744,7 @@ export async function startEngine(): Promise<EngineHandle> {
     klines,
     snapshots,
     profile: runtimeProfile,
+    supervisor,
     marketState,
     wsGateway,
     host: '0.0.0.0',
@@ -671,7 +753,9 @@ export async function startEngine(): Promise<EngineHandle> {
     armPasscode: env.LIVE_ARM_PASSCODE,
     profitGoals,
     strategyPerformance,
+    setupPerformance,
     liveGuard,
+    reconciler,
     riskConfig: DEFAULT_RISK_CONFIG,
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
@@ -756,7 +840,23 @@ export async function startEngine(): Promise<EngineHandle> {
       });
     },
     onBookTicker: (symbol, bid, ask, bidQty, askQty) => {
-      broker.onMarket({ symbol, bid, ask, bidQty, askQty, last: (bid + ask) / 2 });
+      const mid = (bid + ask) / 2;
+      const tick = supervisor.processTick('BINANCE', symbol, mid);
+      if (tick.switched) {
+        logger.warn({ symbol, activeProvider: tick.activeProvider, reason: tick.reason }, 'Market data provider switched');
+        events.appendSystemEvent({
+          eventType: 'PROVIDER_SWITCHED',
+          payload: { symbol, activeProvider: tick.activeProvider, reason: tick.reason },
+          createdAtUtc: new Date().toISOString(),
+        });
+        wsGateway.broadcast('health.updated', {
+          activeProvider: tick.activeProvider,
+          reason: tick.reason,
+          binance: supervisor.health.getHealth('BINANCE'),
+          coindcx: supervisor.health.getHealth('COINDCX'),
+        });
+      }
+      broker.onMarket({ symbol, bid, ask, bidQty, askQty, last: mid });
       strategyEngine.onMarket({
         symbol,
         bid,
@@ -802,11 +902,33 @@ export async function startEngine(): Promise<EngineHandle> {
       });
     },
     onSystemEvent: (type, payload) => {
+      if (type === 'WS_DISCONNECTED') {
+        supervisor.health.recordDisconnect('BINANCE');
+      }
+      if (type === 'WS_RESUBSCRIBED' || type === 'WS_CONNECTED') {
+        // A reconnect means we may have missed fills while disconnected.
+        void reconciler?.reconcile('RECONNECT').catch((error) => {
+          logger.error({ error }, 'Reconnect reconciliation failed');
+        });
+      }
       events.appendSystemEvent({ eventType: type as never, payload, createdAtUtc: new Date().toISOString() });
     },
   });
 
   await streams.connect();
+
+  // Startup reconciliation runs before the scheduler starts placing anything.
+  // A failure here trips safe mode, which ExecutionRouter honours on every
+  // submission — the engine still starts, but it will not trade blind.
+  if (reconciler) {
+    const startupReport = await reconciler.reconcile('STARTUP');
+    if (!startupReport.ok) {
+      logger.error(
+        { report: startupReport },
+        'Startup reconciliation failed — trading halted until an operator resolves it via POST /api/v1/reconcile'
+      );
+    }
+  }
 
   const scheduler = new Scheduler({
     broker,

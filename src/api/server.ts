@@ -27,8 +27,10 @@ import type { ReplayConfig } from '../research/replay/types.js';
 import type { ProfitGoalManager } from '../trading/goals/ProfitGoalManager.js';
 import type { StrategyPerformanceTracker } from '../strategy/StrategyPerformanceTracker.js';
 import type { LiveTradingGuard } from '../execution/LiveTradingGuard.js';
+import type { ExchangeReconciler } from '../execution/ExchangeReconciler.js';
 import type { RiskConfig } from '../trading/risk/types.js';
 import { DEFAULT_RISK_CONFIG } from '../trading/risk/RiskLimits.js';
+import { RateLimiter, DEFAULT_RATE_LIMITS, type RateLimiterOptions, type RateLimitScope } from './RateLimiter.js';
 
 const CreateOrderSchema = z.object({
   symbol: z.string().min(1),
@@ -104,10 +106,25 @@ export interface ApiServerOptions {
   profitGoals?: ProfitGoalManager;
   /** Per-strategy performance, surfaced at `/api/v1/strategies/performance`. */
   strategyPerformance?: StrategyPerformanceTracker;
+  /**
+   * Per-setup-archetype performance for the SMC agent's self-learning
+   * memory (src/strategy/strategies/smc-agent.ts), surfaced read-only at
+   * `/api/v1/setups/performance` and releasable at
+   * `/api/v1/setups/:id/release`. Same tracker class as strategyPerformance,
+   * keyed by setup type instead of strategy id.
+   */
+  setupPerformance?: StrategyPerformanceTracker;
   /** The live guard actually in force, so `/api/v1/risk` reports real safe-mode state. */
   liveGuard?: LiveTradingGuard;
   /** The risk limits actually in force, so `/api/v1/risk` stops reporting hardcoded values. */
   riskConfig?: RiskConfig;
+  /** Live-mode exchange reconciliation, surfaced at `/api/v1/reconcile`. */
+  reconciler?: ExchangeReconciler;
+  /**
+   * Rate limit tiers. Defaults are generous enough that a 1s-polling dashboard
+   * is unaffected. Pass `false` to disable entirely (tests, trusted networks).
+   */
+  rateLimits?: RateLimiterOptions | false;
 }
 
 export class ApiServer {
@@ -130,6 +147,7 @@ export class ApiServer {
   private backtestInFlight = false;
   private indexHtmlCache?: string;
   private readonly assetCache = new Map<string, Buffer>();
+  private rateLimiter?: RateLimiter;
 
   constructor(options: ApiServerOptions) {
     this.options = options;
@@ -146,6 +164,9 @@ export class ApiServer {
     this.wsGateway = options.wsGateway ?? new WebSocketGateway();
     this.host = options.host ?? '127.0.0.1';
     this.port = options.port ?? 8080;
+    if (options.rateLimits !== false) {
+      this.rateLimiter = new RateLimiter(options.rateLimits ?? DEFAULT_RATE_LIMITS);
+    }
 
     this.app = Fastify({ logger: false });
   }
@@ -180,7 +201,53 @@ export class ApiServer {
     }
   };
 
+  /**
+   * Which tier a request belongs to. Anything that mutates state — orders, kill
+   * switch, mode arming, backtests, quarantine release — is `control`.
+   * Everything else is a read.
+   */
+  private static scopeFor(method: string, url: string): RateLimitScope {
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return 'read';
+    void url;
+    return 'control';
+  }
+
+  /**
+   * Global onRequest rate limit. Registered before routes so it also covers
+   * unmatched paths — an unauthenticated scanner hammering 404s should still be
+   * throttled.
+   *
+   * The WebSocket upgrade path is exempt: it is one long-lived connection per
+   * client, already bounded by WebSocketGateway's own connection limit, and
+   * counting it against the read budget would penalise the dashboard for
+   * staying connected.
+   */
+  private registerRateLimit(): void {
+    const limiter = this.rateLimiter;
+    if (!limiter) return;
+
+    this.app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+      if (request.url.startsWith('/ws')) return;
+
+      const key = request.ip || 'unknown';
+      const scope = ApiServer.scopeFor(request.method, request.url);
+      const decision = limiter.check(key, scope);
+
+      if (!decision.allowed) {
+        metrics.inc('api_rate_limit_rejections_total');
+        reply
+          .code(429)
+          .header('Retry-After', String(decision.retryAfterSec ?? 1))
+          .send({
+            error: 'RATE_LIMITED',
+            message: `Too many ${scope} requests. Retry in ${decision.retryAfterSec ?? 1}s.`,
+          });
+      }
+    });
+  }
+
   private registerRoutes(): void {
+    this.registerRateLimit();
     this.registerWebSocketRoutes();
     this.registerQueryRoutes();
     this.registerBacktestRoutes();
@@ -357,6 +424,36 @@ export class ApiServer {
       };
     });
 
+    this.app.get('/api/v1/reconcile', async () => {
+      const reconciler = this.options.reconciler;
+      if (!reconciler) {
+        return { enabled: false, reason: 'No live venue attached; reconciliation does not apply' };
+      }
+      return {
+        enabled: true,
+        safeMode: this.options.liveGuard?.isSafeMode() ?? false,
+        lastReport: reconciler.getLastReport() ?? null,
+      };
+    });
+
+    this.app.post('/api/v1/reconcile', { preHandler: this.requireApiKey }, async (_request, reply) => {
+      const reconciler = this.options.reconciler;
+      if (!reconciler) {
+        return reply.code(404).send({ error: 'Reconciliation is not enabled (no live venue attached)' });
+      }
+
+      // Re-runs reconciliation and clears safe mode ONLY if it comes back
+      // clean. A mismatch leaves trading halted — the operator has to fix the
+      // underlying disagreement, not dismiss it.
+      const report = await reconciler.reconcileAndResume('MANUAL');
+      this.wsGateway.broadcast('reconciliation.report', report);
+      return {
+        ok: report.ok,
+        safeMode: this.options.liveGuard?.isSafeMode() ?? false,
+        report,
+      };
+    });
+
     this.app.get('/api/v1/profit-goals', async () => {
       const profitGoals = this.options.profitGoals;
       if (!profitGoals) {
@@ -404,6 +501,35 @@ export class ApiServer {
           stats: tracker.getStats(request.params.id),
         });
         return { released: true, strategyId: request.params.id };
+      }
+    );
+
+    this.app.get('/api/v1/setups/performance', async () => {
+      const tracker = this.options.setupPerformance;
+      return {
+        enabled: Boolean(tracker),
+        setups: tracker?.listStats() ?? [],
+      };
+    });
+
+    this.app.post<{ Params: { id: string } }>(
+      '/api/v1/setups/:id/release',
+      { preHandler: this.requireApiKey },
+      async (request, reply) => {
+        const tracker = this.options.setupPerformance;
+        if (!tracker) {
+          return reply.code(404).send({ error: 'Setup performance tracking is not enabled' });
+        }
+        const released = tracker.release(request.params.id);
+        if (!released) {
+          return reply.code(404).send({ error: `Setup type ${request.params.id} is not quarantined` });
+        }
+        this.wsGateway.broadcast('setup.performance', {
+          setupType: request.params.id,
+          released: true,
+          stats: tracker.getStats(request.params.id),
+        });
+        return { released: true, setupType: request.params.id };
       }
     );
 

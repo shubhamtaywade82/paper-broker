@@ -15,7 +15,18 @@ export class PaperPositionManager {
   ): PaperPosition {
     const notional = fill.price * fill.quantity;
     const initialMargin = notional / Math.max(1, leverage);
-    const liqPrice = PaperLiquidation.calculateLiquidationPrice(fill.price, side, leverage, maintenanceMarginRate);
+    // Pass real position economics so the liquidation price accounts for the
+    // margin actually posted and the entry fee already charged, not just
+    // entry/leverage.
+    const liqPrice = PaperLiquidation.calculateLiquidationPrice({
+      entryPrice: fill.price,
+      side,
+      leverage,
+      quantity: fill.quantity,
+      initialMargin,
+      fees: fill.fee,
+      maintenanceMarginRate,
+    });
 
     return {
       id: `POS:${fill.orderId}`,

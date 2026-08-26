@@ -12,6 +12,8 @@ import type { CycleRecord } from '../../ai/schemas.js';
 import type { AccountState, Instrument, Order, Position } from '../../broker/types.js';
 import { toRiskAccountState, toPortfolioPositions } from '../../trading/risk/adapters.js';
 import { logger } from '../../telemetry/logger.js';
+import type { StrategyPerformanceTracker } from '../StrategyPerformanceTracker.js';
+import type { SetupOutcomeTracker } from '../SetupOutcomeTracker.js';
 
 export interface AgentDebatePipeline {
   runCycle(ctx: MarketFactContext, onStep?: AgentCycleStepListener): Promise<CycleRecord>;
@@ -72,6 +74,18 @@ export interface SmcAgentStrategyDeps {
   getAllOpenOrders?: () => Order[];
   onCycleCompleted?: (cycle: CycleRecord) => void;
   onCycleStep?: AgentCycleStepListener;
+  /**
+   * Self-learning memory: realized-outcome stats per SMC setup archetype
+   * (e.g. 'SSL_SWEEP_REVERSAL_LONG'), keyed exactly like
+   * StrategyPerformanceTracker's existing strategyId keying but scoped to
+   * setup type instead of strategy. Reused as-is rather than a parallel
+   * class — the tracker is already generic over its string key.
+   */
+  setupPerformance?: StrategyPerformanceTracker;
+  /** Attributes a closing fill back to the setup type that opened it. */
+  setupOutcomeTracker?: SetupOutcomeTracker;
+  /** Mirrors STRATEGY_FEEDBACK_ENABLED: observe stats always, only gate entries when true. */
+  enforceSetupQuarantine?: boolean;
 }
 
 export function createSmcAgentStrategy(deps: SmcAgentStrategyDeps): Strategy {
@@ -99,6 +113,15 @@ async function evaluateCandle(
   const candidate = setups.find((s) => s.direction !== 'AVOID');
   if (!candidate) return null;
 
+  // Self-learning gate: a setup archetype that has repeatedly lost money is
+  // deterministically skipped before spending an LLM call on it, same spirit
+  // as StrategyPerformanceTracker's whole-strategy quarantine but scoped to
+  // this one setup type. Observation (recordRealizedPnl) always happens via
+  // the onFill hook regardless of this flag — only enforcement is gated.
+  if (deps.enforceSetupQuarantine && deps.setupPerformance?.isQuarantined(candidate.setupType)) {
+    return null;
+  }
+
   const structure = deps.structureEngine.computeMultiTimeframeStructure(symbol, asOf);
   const smc = deps.smcEngine.computeMultiTimeframeSmcContext(symbol, asOf);
   const instrument = deps.getInstrument(symbol);
@@ -108,6 +131,7 @@ async function evaluateCandle(
   const account = ctx.getAccount();
   const marketFacts = buildMarketFacts(ctx, symbol, account);
   if (!marketFacts) return null;
+  marketFacts.setupMemory = buildSetupMemory(candidate.setupType, deps.setupPerformance);
 
   if (Date.now() < llmCircuit.circuitOpenUntil) {
     return null;
@@ -176,7 +200,20 @@ async function evaluateCandle(
   const tradeSignal = deps.tradeIntentEngine.processExecutionPlan(plan, riskAccount, riskPositions, instrument, asOf);
   if (tradeSignal.status !== 'PAPER_READY') return null;
 
+  deps.setupOutcomeTracker?.recordOpen(symbol, candidate.setupType);
   return tradeSignalToSignalInput(tradeSignal, cycle.traderDecision.confidence, STRATEGY_ID);
+}
+
+/** Advisory-only context for the LLM stages — never gates execution itself. */
+function buildSetupMemory(setupType: string, tracker?: StrategyPerformanceTracker): string | undefined {
+  const stats = tracker?.getStats(setupType);
+  if (!stats || stats.trades === 0) return undefined;
+  return (
+    `Setup archetype ${setupType}: ${stats.trades} past trades, ` +
+    `${(stats.winRate * 100).toFixed(0)}% win rate, realized PnL ${stats.realizedPnl.toFixed(2)} USDT` +
+    (stats.quarantined ? ' (currently quarantined for poor performance)' : '') +
+    '.'
+  );
 }
 
 function buildMarketFacts(

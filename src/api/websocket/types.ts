@@ -25,7 +25,9 @@ export type WebSocketEventType =
   | 'agent.autonomous.circuit_breaker'
   | 'agent.autonomous.health'
   | 'agent.autonomous.exit'
-  | 'agent.autonomous.learning';
+  | 'agent.autonomous.learning'
+  | 'setup.performance'
+  | 'reconciliation.report';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

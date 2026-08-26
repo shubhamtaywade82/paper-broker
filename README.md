@@ -38,6 +38,10 @@ reporting live execution.
 
 Binance credentials are used for **market data only**, never for order placement.
 
+On startup and on every websocket reconnect, `ExchangeReconciler` compares venue
+positions against local state. A mismatch — or a venue it cannot read — halts all
+order submission until an operator resolves it via `POST /api/v1/reconcile`.
+
 > The live path has never been validated against a real CoinDCX account in this
 > repository. Treat it as implemented but unproven.
 
@@ -115,6 +119,8 @@ Base URL `http://localhost:8080`. Full reference: [`docs/api.md`](docs/api.md).
 | GET | `/api/v1/profit-goals` | Profit-goal config, state, progress and metrics |
 | GET | `/api/v1/strategies/performance` | Per-strategy PnL, win rate, drawdown, quarantine state |
 | POST | `/api/v1/strategies/:id/release` | Lift a strategy quarantine (operator action) |
+| GET | `/api/v1/reconcile` | Last exchange reconciliation report and safe-mode state |
+| POST | `/api/v1/reconcile` | Re-run reconciliation; resumes trading only if clean |
 | GET | `/health` | Liveness + uptime |
 | GET | `/account` | Wallet balance, equity, fees, daily P&L |
 | GET | `/positions` | Open positions |
