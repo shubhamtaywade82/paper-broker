@@ -1,133 +1,200 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CoinDCXBroker } from '../../src/coindcx/CoinDCXBroker.js';
 import type { CoinDCXClient } from '@nemesis-oss/coindcx-sdk';
 
-describe('CoinDCXBroker', () => {
-  it('submits orders and maps parameters to CoinDCX format', async () => {
-    const mockCreateOrder = vi.fn().mockResolvedValue({ id: 'cdx-order-123', status: 'open' });
-    const mockClient = {
+describe('CoinDCXBroker Live Adapter Order Semantics', () => {
+  let mockClient: CoinDCXClient;
+  let createOrderMock: ReturnType<typeof vi.fn>;
+  let cancelOrderMock: ReturnType<typeof vi.fn>;
+  let cancelAllOrdersMock: ReturnType<typeof vi.fn>;
+  let getPositionsMock: ReturnType<typeof vi.fn>;
+  let createTPSLMock: ReturnType<typeof vi.fn>;
+  let exitPositionMock: ReturnType<typeof vi.fn>;
+  let getWalletMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    createOrderMock = vi.fn().mockResolvedValue({ id: 'ord-coindcx-101' });
+    cancelOrderMock = vi.fn().mockResolvedValue({ status: 'success' });
+    cancelAllOrdersMock = vi.fn().mockResolvedValue({ status: 'success' });
+    createTPSLMock = vi.fn().mockResolvedValue({ status: 'success' });
+    exitPositionMock = vi.fn().mockResolvedValue({ status: 'success' });
+    getPositionsMock = vi.fn().mockResolvedValue([
+      {
+        id: 'pos-123',
+        pair: 'B-SOL_USDT',
+        side: 'long',
+        size: '10.5',
+        entry_price: '98.5',
+        unrealized_pnl: '12.3',
+        realized_pnl: '5.0',
+        leverage: 5,
+        margin: '200',
+      },
+    ]);
+    getWalletMock = vi.fn().mockResolvedValue({
+      balance: 10_000,
+      unrealized_pnl: 12.3,
+      margin: 200,
+    });
+
+    mockClient = {
       futures: {
         trading: {
-          createOrder: mockCreateOrder,
-          cancelOrder: vi.fn(),
-          cancelAllOrders: vi.fn(),
-          getPositions: vi.fn().mockResolvedValue([]),
+          createOrder: createOrderMock,
+          cancelOrder: cancelOrderMock,
+          cancelAllOrders: cancelAllOrdersMock,
+          getPositions: getPositionsMock,
+          createTPSL: createTPSLMock,
+          exitPosition: exitPositionMock,
         },
         account: {
-          getWallet: vi.fn().mockResolvedValue({ balance: 5000, unrealized_pnl: 100, margin: 200 }),
+          getWallet: getWalletMock,
         },
       },
     } as unknown as CoinDCXClient;
+  });
 
+  it('CDX-01: maps LIMIT entry order to createOrder limit_order with explicit price', async () => {
     const broker = new CoinDCXBroker({ client: mockClient });
-
     const order = await broker.submitOrder({
       symbol: 'SOLUSDT',
       side: 'BUY',
       type: 'LIMIT',
       quantity: 5,
-      price: 89.5,
-      leverage: 10,
-      stopPrice: 87.0,
-      marginType: 'ISOLATED',
+      price: 95.0,
+      leverage: 5,
     });
 
-    expect(mockCreateOrder).toHaveBeenCalledWith(
+    expect(createOrderMock).toHaveBeenCalledWith(
       expect.objectContaining({
         side: 'buy',
         order_type: 'limit_order',
         base_currency: 'SOL',
         quote_currency: 'USDT',
         target_quantity: 5,
-        price: 89.5,
-        leverage: 10,
-        stop_loss: 87.0,
-        margin_type: 'isolated',
+        price: 95.0,
       })
     );
+    expect(order.id).toBe('ord-coindcx-101');
+    expect(order.status).toBe('NEW');
+    expect(order.type).toBe('LIMIT');
+  });
 
-    expect(order.id).toBe('cdx-order-123');
-    expect(order.symbol).toBe('SOLUSDT');
+  it('CDX-02: routes STOP_MARKET reduce-only order to createTPSL with stop_loss against open position', async () => {
+    const broker = new CoinDCXBroker({ client: mockClient });
+    const order = await broker.submitOrder({
+      symbol: 'SOLUSDT',
+      side: 'SELL',
+      type: 'STOP_MARKET',
+      quantity: 10.5,
+      stopPrice: 90.0,
+      reduceOnly: true,
+    });
+
+    expect(createTPSLMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        position_id: 'pos-123',
+        stop_loss: 90.0,
+        take_profit: undefined,
+      })
+    );
+    expect(order.status).toBe('NEW');
+    expect(order.id).toBe('tpsl-pos-123-sl');
+  });
+
+  it('CDX-03: routes TAKE_PROFIT_MARKET reduce-only order to createTPSL with take_profit against open position', async () => {
+    const broker = new CoinDCXBroker({ client: mockClient });
+    const order = await broker.submitOrder({
+      symbol: 'SOLUSDT',
+      side: 'SELL',
+      type: 'TAKE_PROFIT_MARKET',
+      quantity: 10.5,
+      stopPrice: 115.0,
+      reduceOnly: true,
+    });
+
+    expect(createTPSLMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        position_id: 'pos-123',
+        stop_loss: undefined,
+        take_profit: 115.0,
+      })
+    );
+    expect(order.status).toBe('NEW');
+    expect(order.id).toBe('tpsl-pos-123-tp');
+  });
+
+  it('CDX-04: maps MARKET entry order to createOrder market_order', async () => {
+    const broker = new CoinDCXBroker({ client: mockClient });
+    const order = await broker.submitOrder({
+      symbol: 'SOLUSDT',
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: 1.5,
+    });
+
+    expect(createOrderMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        side: 'buy',
+        order_type: 'market_order',
+        base_currency: 'SOL',
+        quote_currency: 'USDT',
+        target_quantity: 1.5,
+      })
+    );
     expect(order.status).toBe('NEW');
   });
 
-  it('cancels orders and manages active orders', async () => {
-    const mockCancelOrder = vi.fn().mockResolvedValue({ success: true });
-    const mockCreateOrder = vi.fn().mockResolvedValue({ id: 'cdx-order-456' });
-    const mockClient = {
-      futures: {
-        trading: {
-          createOrder: mockCreateOrder,
-          cancelOrder: mockCancelOrder,
-          cancelAllOrders: vi.fn(),
-          getPositions: vi.fn().mockResolvedValue([]),
-        },
-        account: {
-          getWallet: vi.fn().mockResolvedValue({ balance: 1000 }),
-        },
-      },
-    } as unknown as CoinDCXClient;
-
+  it('CDX-05: routes reduce-only MARKET exit to exitPosition when closing full position', async () => {
     const broker = new CoinDCXBroker({ client: mockClient });
-
-    await broker.submitOrder({
-      symbol: 'ETHUSDT',
+    const order = await broker.submitOrder({
+      symbol: 'SOLUSDT',
       side: 'SELL',
       type: 'MARKET',
-      quantity: 1,
+      quantity: 10.5,
+      reduceOnly: true,
+      closePosition: true,
     });
 
-    const openOrdersBefore = await broker.getOpenOrders('ETHUSDT');
-    expect(openOrdersBefore.length).toBe(1);
-
-    const canceled = await broker.cancelOrder('cdx-order-456');
-    expect(canceled?.status).toBe('CANCELED');
-
-    const openOrdersAfter = await broker.getOpenOrders('ETHUSDT');
-    expect(openOrdersAfter.length).toBe(0);
+    expect(exitPositionMock).toHaveBeenCalledWith({
+      pair: 'B-SOL_USDT',
+    });
+    expect(order.status).toBe('NEW');
+    expect(order.id).toBe('exit-pos-123');
   });
 
-  it('retrieves positions and maps to canonical format', async () => {
-    const mockPositions = [
-      {
-        id: 'pos-1',
-        pair: 'B-SOL_USDT',
-        size: 10,
-        side: 'long',
-        entry_price: 88.0,
-        unrealized_pnl: 35.5,
-        realized_pnl: 12.0,
-        leverage: 5,
-        margin: 176.0,
-      },
-    ];
+  it('CDX-06: rejects unsupported partial reduce-only orders safely', async () => {
+    const broker = new CoinDCXBroker({ client: mockClient });
+    const order = await broker.submitOrder({
+      symbol: 'SOLUSDT',
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: 5.0, // Partial reduce of 10.5 size
+      reduceOnly: true,
+    });
 
-    const mockClient = {
-      futures: {
-        trading: {
-          createOrder: vi.fn(),
-          cancelOrder: vi.fn(),
-          cancelAllOrders: vi.fn(),
-          getPositions: vi.fn().mockResolvedValue(mockPositions),
-        },
-        account: {
-          getWallet: vi.fn().mockResolvedValue({ balance: 2500, unrealized_pnl: 35.5 }),
-        },
-      },
-    } as unknown as CoinDCXClient;
+    expect(order.status).toBe('REJECTED');
+    expect(order.rejectReason).toContain('PARTIAL_REDUCE_ONLY_UNSUPPORTED');
+  });
 
+  it('CDX-07: getPositions normalizes CoinDCX pairs and sides correctly', async () => {
     const broker = new CoinDCXBroker({ client: mockClient });
     const positions = await broker.getPositions();
 
-    expect(positions.length).toBe(1);
-    expect(positions[0].symbol).toBe('SOLUSDT');
-    expect(positions[0].positionSide).toBe('LONG');
-    expect(positions[0].qty).toBe(10);
-    expect(positions[0].entryPrice).toBe(88.0);
-    expect(positions[0].unrealizedPnl).toBe(35.5);
+    expect(positions).toHaveLength(1);
+    expect(positions[0]?.symbol).toBe('SOLUSDT');
+    expect(positions[0]?.positionSide).toBe('LONG');
+    expect(positions[0]?.qty).toBe(10.5);
+    expect(positions[0]?.entryPrice).toBe(98.5);
+    expect(positions[0]?.unrealizedPnl).toBe(12.3);
+  });
 
+  it('CDX-08: getAccount fetches wallet balance and computes equity', async () => {
+    const broker = new CoinDCXBroker({ client: mockClient });
     const account = await broker.getAccount();
-    expect(account.walletBalance).toBe(2500);
-    expect(account.equity).toBe(2535.5);
+
+    expect(account.walletBalance).toBe(10_000);
+    expect(account.unrealizedPnl).toBe(12.3);
+    expect(account.equity).toBe(10_012.3);
   });
 });

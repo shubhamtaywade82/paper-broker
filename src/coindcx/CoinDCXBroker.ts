@@ -135,18 +135,6 @@ export class CoinDCXBroker implements ExecutionBroker {
   /**
    * Routes an OrderCommand onto the CoinDCX primitive that actually expresses it.
    *
-   * This adapter previously funnelled everything through createOrder() with a
-   * best-effort type mapping, which was wrong in three ways that only show up
-   * with real money:
-   *
-   *  - TAKE_PROFIT_MARKET fell through to 'market_order', so a take-profit
-   *    bracket executed IMMEDIATELY at market, closing the position the instant
-   *    it opened.
-   *  - createOrder has no reduce_only field (see CreateFuturesOrderRequest), so
-   *    reduce-only was silently dropped. A CLOSE against an already-flat
-   *    position would have opened a new opposite position.
-   *  - take_profit was hardcoded undefined, so a TP never reached the venue.
-   *
    * CoinDCX models stops and take-profits as brackets attached to a position
    * (createTPSL), and full exits as exitPosition — not as standalone orders.
    * Anything with no faithful representation is REJECTED with an explicit
@@ -232,11 +220,6 @@ export class CoinDCXBroker implements ExecutionBroker {
       leverage: command.leverage ?? 5,
       client_order_id: command.clientOrderId,
       time_in_force: 'gtc',
-      // An entry may carry its own protective stop, which CoinDCX attaches
-      // atomically — strictly safer than a follow-up createTPSL, since there is
-      // no window where the new position sits unprotected. Standalone bracket
-      // orders still route to createTPSL above; only an entry's own stop
-      // travels here. There is no take-profit field on OrderCommand to source.
       stop_loss: command.stopPrice,
       take_profit: undefined,
       margin_type: command.marginType === 'ISOLATED' ? 'isolated' : 'cross',
