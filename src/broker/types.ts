@@ -412,7 +412,9 @@ export interface SystemEventType {
     | 'AUTONOMOUS_HEALTH_DEGRADED'
     | 'AUTONOMOUS_HEALTH_RECOVERED'
     | 'AUTONOMOUS_EXIT_SIGNAL'
-    | 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED';
+    | 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED'
+    | 'AUTONOMOUS_SCALE_IN'
+    | 'AUTONOMOUS_SCALE_OUT';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
 }

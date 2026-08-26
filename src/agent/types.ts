@@ -62,7 +62,13 @@ export interface AutonomousCycleSummary {
     setupState: string | null;
     setupType: string | null;
     confluenceScore: number | null;
-    action: 'ENTRY_SUBMITTED' | 'REJECTED' | 'STAND_ASIDE' | 'MONITOR' | 'IN_POSITION';
+    action:
+      | 'ENTRY_SUBMITTED'
+      | 'SCALE_IN_SUBMITTED'
+      | 'REJECTED'
+      | 'STAND_ASIDE'
+      | 'MONITOR'
+      | 'IN_POSITION';
     reason: string;
   }>;
 }

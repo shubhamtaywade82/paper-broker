@@ -37,6 +37,15 @@ export interface TradePlan {
   leverage: number;
   /** Fraction-of-equity multiplier applied to the base riskPerTradePct. */
   riskMultiplier: number;
+  /**
+   * Per-regime learning bias applied on top of the regime overlay's
+   * riskMultiplier (AUTONOMY_AUDIT Finding 4). 1.0 when the learning loop
+   * has no statistically meaningful sample for this regime; bounded to
+   * [0.5, 1.5] otherwise (observed win rate / 50% baseline). Exposed for
+   * observability — the effective multiplier is
+   * `adaptation.riskMultiplier * regimeBias`.
+   */
+  regimeBias: number;
   /** Realised reward:risk ratio (target distance / stop distance). */
   rr: number;
   /** ATR value used to compute distances (informational). */
@@ -45,6 +54,18 @@ export interface TradePlan {
   entryPrice: number;
   /** Direction the plan is built for — used by callers to sanity-check. */
   direction: 'LONG' | 'SHORT';
+}
+
+/**
+ * Rolling per-regime performance the learning loop can report for a regime.
+ * Structurally compatible with PerformanceTracker's RollingStats — only the
+ * fields the risk manager needs are declared, so tests can stub it easily.
+ */
+export interface RegimePerformanceStats {
+  /** Closed trades observed in this regime. */
+  trades: number;
+  /** 0..1 share of winners. */
+  winRate: number;
 }
 
 export interface AdaptiveRiskManagerDeps {
@@ -56,6 +77,12 @@ export interface AdaptiveRiskManagerDeps {
   getLastPrice: (symbol: string) => number | undefined;
   /** Closed candles for a timeframe — injected so this is testable. */
   getCandles: (symbol: string, timeframe: string, count: number) => Candle[];
+  /**
+   * Per-regime performance lookup — the learning loop's memory (Finding 4).
+   * Optional: without it (or before min-sample is reached) the regime
+   * overlay's static riskMultiplier is used unchanged.
+   */
+  getRegimeStats?: (regime: MarketRegime) => RegimePerformanceStats | null;
 }
 
 export class AdaptiveRiskManager {
@@ -104,10 +131,22 @@ export class AdaptiveRiskManager {
       this.deps.baseConfig.maxLeverage
     );
 
-    // Risk multiplier: never above the regime's multiplier, never below 0.1
-    // (a degenerate plan that risks nothing still has to risk something to
-    // execute on the broker).
-    const riskMultiplier = Math.max(0.1, adaptation.riskMultiplier);
+    // Per-regime learning bias (AUTONOMY_AUDIT Finding 4): when the learning
+    // loop has enough closed trades in THIS regime, bias the regime overlay's
+    // riskMultiplier toward the observed win rate. A 50% win rate is neutral
+    // (x1.0); 70% scales up to x1.4; 30% scales down to x0.6 — bounded to
+    // [0.5, 1.5] so learning can refine the overlay but never override it.
+    // No sample (or no tracker wired) → neutral 1.0.
+    const regimeStats = this.deps.getRegimeStats?.(adaptation.regime) ?? null;
+    const regimeBias = regimeStats
+      ? Math.round(Math.max(0.5, Math.min(1.5, regimeStats.winRate / 0.5)) * 1000) / 1000
+      : 1.0;
+
+    // Risk multiplier: regime overlay x per-regime learning bias, never above
+    // the product of the two ceilings, never below 0.1 (a degenerate plan
+    // that risks nothing still has to risk something to execute on the
+    // broker).
+    const riskMultiplier = Math.max(0.1, adaptation.riskMultiplier * regimeBias);
 
     return {
       adaptation,
@@ -115,6 +154,7 @@ export class AdaptiveRiskManager {
       takeProfitPrice,
       leverage,
       riskMultiplier,
+      regimeBias,
       rr,
       atr: atrVal,
       entryPrice: entry,
@@ -143,6 +183,7 @@ export class AdaptiveRiskManager {
       leverage: plan.leverage,
       sizePct,
       riskMultiplier: plan.riskMultiplier,
+      regimeBias: plan.regimeBias,
       atr: plan.atr,
       rr: plan.rr,
       regime: plan.adaptation.regime,

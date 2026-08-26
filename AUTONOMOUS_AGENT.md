@@ -203,20 +203,93 @@ The agent also reuses existing infrastructure end-to-end:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AUTONOMOUS_AGENT_ENABLED` | `false` | Master switch. |
+| `AUTONOMOUS_AGENT_ENABLED` | `true` | Master switch (autonomous-first; only explicit `false` disables). |
 | `AUTONOMOUS_CYCLE_MS` | `30000` | Polling interval (min 5s). |
 | `AUTONOMOUS_MIN_CONFLUENCE` | `65` | Min confluence score (0..100) for entry. |
 | `AUTONOMOUS_MIN_RR` | `1.5` | Base min reward:risk — regime may push higher. |
 | `AUTONOMOUS_MAX_OPEN_POSITIONS` | `3` | Max concurrent positions portfolio-wide. |
-| `AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS` | `1` | Per-symbol cap (typically 1 — pyramiding is off). |
+| `AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS` | `1` | Per-symbol cap for independent entries (pyramid adds are governed separately). |
 | `AUTONOMOUS_COOLDOWN_MS` | `300000` | Cooldown after an entry attempt on a symbol. |
 | `AUTONOMOUS_REGIME_CONFIRMATION_BARS` | `3` | Bars that must agree before a regime change commits. |
 | `AUTONOMOUS_MIN_CONFIDENCE` | `0.55` | Min blended model + deterministic confidence for entry. |
 | `AUTONOMOUS_STRATEGY_ID` | `autonomous-agent` | Strategy ID stamped on agent-submitted signals. |
+| `AUTONOMOUS_SCALING_ENABLED` | `true` | Position scaling master switch (pyramid adds + downside de-risk). |
+| `AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT` | `0.01` | Unrealized profit (fraction of equity) required before a pyramid add. |
+| `AUTONOMOUS_SCALE_IN_SIZE_FRACTION` | `0.5` | Each add's quantity as a fraction of the CURRENT position size. |
+| `AUTONOMOUS_SCALE_IN_MAX_ADDS` | `1` | Max adds per position lifecycle. |
+| `AUTONOMOUS_SCALE_IN_COOLDOWN_MS` | `900000` | Min time between adds on the same position. |
+| `AUTONOMOUS_SCALE_OUT_TRIGGER_PCT` | `0.01` | Unrealized loss (fraction of equity) triggering a one-time partial de-risk. |
+| `AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION` | `0.5` | Fraction of the position closed by the de-risk. |
+| `SYMBOL_LOCK_ENABLED` | `true` | One strategy owns a symbol's entry rights for the lock TTL (multi-strategy orchestration). |
+| `SYMBOL_LOCK_TTL_MS` | `300000` | How long an accepted OPEN signal owns the symbol. |
 
 The agent also reads the existing `OLLAMA_*` env vars for the model
 endpoint configuration — see `src/ai/ModelManager.ts` and the engine
 wiring in `src/engine.ts`.
+
+---
+
+## Per-regime learning bias (the learning loop × the regime overlay)
+
+On top of the static regime adaptation table, `AdaptiveRiskManager.computeTradePlan`
+consults the PerformanceTracker's **per-regime** rolling stats. If the agent has
+enough closed trades in the *current* regime (`AUTONOMOUS_LEARN_MIN_SAMPLE`), the
+plan's `riskMultiplier` is multiplied by
+
+```
+regimeBias = clamp(observedWinRate / 0.5, 0.5, 1.5)
+```
+
+A 50% win rate is neutral (×1.0), a 70% win rate scales risk up to ×1.4, and a
+30% win rate scales it down to ×0.6 — bounded so the learning loop can refine the
+regime overlay but never override it. The effective multiplier for sizing is
+`regimeOverlay.riskMultiplier × regimeBias × runtimeRiskMultiplier` (the last one is
+the global learning-loop multiplier from `suggestRiskMultiplier`). The bias is
+surfaced on every signal's features (`regimeBias`) and in the reasoning string.
+
+---
+
+## Position scaling (SCALE_IN / SCALE_OUT)
+
+The agent's intra-position behaviour is richer than HOLD-or-exit:
+
+- **SCALE_IN — pyramid into winners.** When an open position is profitable by at
+  least `AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT` of equity AND a fresh aligned READY
+  setup (≥ `AUTONOMOUS_MIN_CONFLUENCE`) confirms the move AND a fresh
+  regime-adjusted plan clears the regime's min RR, the agent adds
+  `AUTONOMOUS_SCALE_IN_SIZE_FRACTION` of the current position size (classic
+  decreasing pyramid). Each add carries **its own SL/TP** computed from the fresh
+  plan, so every unit of added exposure is independently protected. Bounded by
+  `AUTONOMOUS_SCALE_IN_MAX_ADDS` per position lifecycle and
+  `AUTONOMOUS_SCALE_IN_COOLDOWN_MS` between adds. Pyramid adds are blocked while
+  the circuit breaker is tripped (de-risking is never blocked).
+- **SCALE_OUT — de-risk losers.** When unrealized loss lands in the band
+  [`AUTONOMOUS_SCALE_OUT_TRIGGER_PCT`, `AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT`),
+  the agent closes `AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION` of the position **once** —
+  cutting exposure before the full-breach exit or trailing stop fires, while the
+  runner keeps the stop protection. A full breach, regime flip, or setup
+  invalidation still takes the WHOLE position (precedence by check ordering).
+
+Both actions flow through the same `StrategyEngine.submitSignal` pipeline. Partial
+closes carry `features.closeFraction` (honoured by the SignalExecutor) and every
+scaling signal carries a `features.dedupKey` so the engine's identity dedup neither
+blocks the second OPEN/CLOSE on a symbol nor allows a double-fire of the same
+intent. Per-position scaling state resets automatically when the position closes.
+
+---
+
+## Symbol lock (multi-strategy orchestration)
+
+The autonomous agent and the candle-driven strategy fleet (e.g. `smc-agent`)
+share one `StrategyEngine`. To guarantee they can never race each other into
+conflicting entries on the same symbol, the engine maintains a **symbol lock**:
+the first strategy whose OPEN signal is accepted owns that symbol's entry rights
+for `SYMBOL_LOCK_TTL_MS` (refreshed on every accepted signal). Other strategies'
+OPEN signals on that symbol are rejected with an explicit reason. CLOSE /
+CANCEL_ALL always pass — reducing risk is never blocked. The agent pre-checks the
+lock in its entry scan (before the LLM confidence probe) and records a clean
+`STAND_ASIDE` decision like `Symbol locked by strategy smc-agent (240s remaining)`.
+Disable with `SYMBOL_LOCK_ENABLED=false`.
 
 ---
 
@@ -246,8 +319,9 @@ All events are added to the existing `WebSocketEventType` union.
 | `agent.autonomous.cycle` | `AutonomousCycleSummary` | End of every cycle. |
 | `agent.autonomous.forming` | `{cycleId, symbol, setupId, setupType, state, direction, confluenceScore, confluenceNotes}` | For each FORMING setup detected. |
 | `agent.autonomous.regime` | `{cycleId, symbol, from, to, confidence}` | When a regime change is committed (after confirmation). |
-| `agent.autonomous.signal` | `AutonomousSignalRecord & {cycleId, signalId}` | When a signal is submitted and accepted by the executor. |
-| `agent.autonomous.rejected` | `AutonomousSignalRecord & {cycleId, signalId, reason}` | When the executor rejects an agent signal (cooldown, conflict, broker). |
+| `agent.autonomous.signal` | `AutonomousSignalRecord & {cycleId, signalId}` | When a signal is submitted and accepted by the executor (entries **and pyramid adds**). |
+| `agent.autonomous.rejected` | `AutonomousSignalRecord & {cycleId, signalId, reason}` | When the executor rejects an agent signal (cooldown, conflict, symbol lock, broker). |
+| `agent.autonomous.exit` | `{cycleId, symbol, action, reason, accepted, signalId, partial?, closeFraction?}` | Full exits and **partial de-risks** (SCALE_OUT, `partial: true`). |
 
 ---
 
@@ -262,6 +336,10 @@ Same payload shape, persisted to the existing `events` table under
 - `AUTONOMOUS_AGENT_SIGNAL` — payload: `AutonomousSignalRecord & {signalId}`
 - `AUTONOMOUS_AGENT_REJECTED` — payload: `AutonomousSignalRecord & {signalId, reason}`
 - `AUTONOMOUS_CYCLE_COMPLETED` — payload: full `AutonomousCycleSummary`
+- `AUTONOMOUS_EXIT_SIGNAL` — payload: `{cycleId, symbol, action, reason, accepted, signalId}`
+- `AUTONOMOUS_SCALE_IN` — payload: `{cycleId, symbol, action, addNumber, maxAdds, addQty, setupType, regime, unrealizedPct, accepted, signalId}`
+- `AUTONOMOUS_SCALE_OUT` — payload: `{cycleId, symbol, action, reason: 'DOWNSIDE_DERISK', closeFraction, accepted, signalId}`
+- `AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED` — payload: `{parameter, from, to, rollingWinRate, rollingSampleSize}`
 
 Query them via the existing API: `GET /api/v1/events?type=AUTONOMOUS_CYCLE_COMPLETED&limit=20`.
 
@@ -273,7 +351,7 @@ The agent is **defensive by default**. Here is every "skip" path it takes
 before submitting a signal, in order:
 
 1. Agent not constructed → never started.
-2. Symbol already has an open position → `in_position`, no new entries.
+2. Symbol already has an open position → `in_position`, no new entries (a pyramid add is only considered through the ExitManager's own gated evaluation).
 3. Regime is `TRANSITIONING` → `stand_aside`.
 4. Within `AUTONOMOUS_COOLDOWN_MS` of the last attempt → `monitor`.
 5. Portfolio at `AUTONOMOUS_MAX_OPEN_POSITIONS` → `monitor`.
@@ -282,14 +360,15 @@ before submitting a signal, in order:
 8. HTF trend misaligns with setup direction (and not a reversal archetype in range) → `monitor`.
 9. Plan RR < regime `minRR` → `reject` (the regime can't pay for the stop).
 10. Blended confidence < `AUTONOMOUS_MIN_CONFIDENCE` → `reject`.
-11. `StrategyEngine.submitSignal` itself runs cooldown + dedup + conflict check (e.g. "duplicate: long position already open").
-12. `SignalExecutor` rejects with `NO_MARKET_STATE` or `ZERO_QUANTITY`.
-13. `ExecutionRouter` applies the live-trading guard + mode profile (paper/shadow/live).
-14. The `RiskEngine` (untouched, still applies) re-validates exposure, daily loss, max positions.
+11. Another strategy holds the symbol lock → `stand_aside` ("symbol locked by strategy X").
+12. `StrategyEngine.submitSignal` itself runs cooldown + dedup + conflict check (e.g. "duplicate: long position already open") **and re-checks the symbol lock** at submission time.
+13. `SignalExecutor` rejects with `NO_MARKET_STATE` or `ZERO_QUANTITY`.
+14. `ExecutionRouter` applies the live-trading guard + mode profile (paper/shadow/live).
+15. The `RiskEngine` (untouched, still applies) re-validates exposure, daily loss, max positions.
 
-That's fourteen independent gates between "the agent saw a setup" and
+That's fifteen independent gates between "the agent saw a setup" and
 "an order reached the broker." Removing any single one is safe-by-design:
-the remaining thirteen still hold.
+the remaining fourteen still hold.
 
 ---
 

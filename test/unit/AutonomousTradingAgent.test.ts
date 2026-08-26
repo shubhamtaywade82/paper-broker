@@ -10,7 +10,7 @@ import { AdaptiveRiskManager } from '../../src/risk/AdaptiveRiskManager.js';
 import { AutonomousTradingAgent } from '../../src/agent/AutonomousTradingAgent.js';
 import { PerformanceTracker } from '../../src/agent/PerformanceTracker.js';
 import { CircuitBreaker } from '../../src/agent/CircuitBreaker.js';
-import { ExitManager } from '../../src/agent/ExitManager.js';
+import { ExitManager, type ScalingConfig } from '../../src/agent/ExitManager.js';
 import { HealthMonitor } from '../../src/agent/HealthMonitor.js';
 import { StrategyEngine } from '../../src/strategy/StrategyEngine.js';
 import { DEFAULT_RISK_CONFIG } from '../../src/trading/risk/RiskLimits.js';
@@ -112,6 +112,8 @@ function makeBrainModules(opts: {
   getAccount: () => AccountState;
   getPositions: () => Position[];
   getLastPrice: (symbol: string) => number | undefined;
+  /** Optional position-scaling config (Finding 2) — absent = scaling disabled. */
+  scaling?: ScalingConfig;
 }) {
   const performanceTracker = new PerformanceTracker(
     {
@@ -163,6 +165,7 @@ function makeBrainModules(opts: {
       exitOnRegimeFlip: true,
       maxUnrealizedLossPct: 0.02,
       strategyId: 'autonomous-agent-test',
+      ...(opts.scaling ? { scaling: opts.scaling } : {}),
     },
     {
       eventLog: opts.eventLog,
@@ -924,5 +927,234 @@ describe('AutonomousTradingAgent (with brain modules wired)', () => {
     expect(summary.signalsSubmitted).toBe(0);
     // Either MONITOR (no READY setup) or STAND_ASIDE (TRANSITIONING regime).
     expect(['MONITOR', 'STAND_ASIDE']).toContain(summary.decisions[0]?.action);
+  });
+
+  it('evaluates a scale-in for in-position symbols when scaling is enabled (Finding 2)', async () => {
+    const store = new KlineStore(500);
+    const marketState = new MarketStateManager([makeMockInstrument()]);
+    const mtfEngine = new MtfStateEngine(store, marketState);
+    const structureEngine = new MarketStructureEngine(store);
+    const smcEngine = new SmcLocationEngine(store, structureEngine);
+    const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
+    for (const tf of ['4h', '1h', '15m', '5m'] as AnalysisTimeframe[]) {
+      populateTrendingUp(store, 'SOLUSDT', tf, 60);
+    }
+    marketState.onBookTicker('SOLUSDT', 150.0, 150.05, 0, 0);
+    marketState.onAggTrade('SOLUSDT', 150.0, 0);
+    marketState.onMarkPrice('SOLUSDT', 150.0, 150.0, 0);
+
+    const detector = new MarketRegimeDetector(
+      (sym, count) => store.getCandles(sym, '4h', count).filter((c) => c.isClosed).slice(-count),
+      () => 'BULLISH',
+      3
+    );
+    const riskManager = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => 10000,
+      getLastPrice: () => 150,
+      getCandles: (sym, _tf, count) => store.getCandles(sym, '1h', count).filter((c) => c.isClosed).slice(-count),
+    });
+    const modelManager = new ModelManager({
+      llmEndpoints: [{ name: 'fake', kind: 'llm', baseUrl: 'http://127.0.0.1:0', model: 'qwen3.5:2b', priority: 1, timeoutMs: 1000 }],
+    });
+
+    const submittedSignals: SignalInput[] = [];
+    const strategyEngine = {
+      async submitSignal(input: SignalInput): Promise<Signal | null> {
+        submittedSignals.push(input);
+        return { ...input, id: 'sig-scale-1', ts: Date.now(), status: 'EXECUTED' } as Signal;
+      },
+      isRunning: () => true,
+    } as unknown as StrategyEngine;
+
+    const eventLog = makeEventLog();
+    const wsGateway = { broadcast: vi.fn() } as unknown as WebSocketGateway;
+    const account = makeFakeAccount(10000, 0);
+
+    // Open LONG position: qty 10 @ entry 150, last 150 → 0% unrealized.
+    const openPosition: Position = {
+      accountId: 'a', symbol: 'SOLUSDT', positionSide: 'BOTH', status: 'OPEN', qty: 10, entryPrice: 150,
+      unrealizedPnl: 0, realizedPnl: 0, leverage: 5, initialMargin: 30, maintenanceMargin: 1,
+      maintenanceMarginRate: 0.005, totalFees: 0, totalFunding: 0,
+      openedAtUtc: '2026-01-01T00:00:00.000Z', updatedAtUtc: new Date().toISOString(),
+    } as Position;
+
+    const brain = makeBrainModules({
+      symbols: ['SOLUSDT'],
+      eventLog,
+      wsGateway,
+      store,
+      structureEngine,
+      marketState,
+      mtfEngine,
+      strategyEngine,
+      regimeDetector: detector,
+      modelManager,
+      getAccount: () => account,
+      getPositions: () => [openPosition],
+      getLastPrice: () => 150,
+      // Scaling enabled — the in-position branch must run the scale-in
+      // evaluation. With 0% unrealized profit the profit gate blocks the
+      // add, which is exactly what the decision reason should show.
+      scaling: {
+        enabled: true,
+        scaleInMinProfitPct: 0.01,
+        scaleInSizeFraction: 0.5,
+        scaleInMaxAdds: 1,
+        scaleInCooldownMs: 900_000,
+        scaleOutTriggerPct: 0.01,
+        scaleOutCloseFraction: 0.5,
+      },
+    });
+
+    const agent = new AutonomousTradingAgent(
+      {
+        symbols: ['SOLUSDT'], cycleMs: 60_000, minConfluence: 65, minRR: 1.5,
+        maxOpenPositions: 3, perSymbolMaxPositions: 1, cooldownMs: 60_000,
+        strategyId: 'autonomous-agent-test', minConfidence: 0.4, regimeConfirmationBars: 1,
+      },
+      {
+        setupEngine, mtfEngine, regimeDetector: detector, riskManager, modelManager,
+        strategyEngine, eventLog, wsGateway,
+        getPositions: () => [openPosition], getAccount: () => account, getLastPrice: () => 150,
+        performanceTracker: brain.performanceTracker, circuitBreaker: brain.circuitBreaker,
+        exitManager: brain.exitManager, healthMonitor: brain.healthMonitor,
+      }
+    );
+
+    const summary = await agent.runCycle();
+    const decision = summary.decisions[0]!;
+    expect(decision.action).toBe('IN_POSITION');
+    // The scale-in evaluation ran and reported the profit-gate rejection —
+    // proof the in-position branch now consults the scaling brain instead of
+    // just recording "already in position".
+    expect(decision.reason).toMatch(/scale-in threshold/i);
+    // No add signal was submitted (profit gate blocked it).
+    expect(submittedSignals).toHaveLength(0);
+  });
+
+  it('stands aside before the confidence probe when another strategy holds the symbol lock (Finding 3)', async () => {
+    const store = new KlineStore(500);
+    const marketState = new MarketStateManager([makeMockInstrument()]);
+    const mtfEngine = new MtfStateEngine(store, marketState);
+    const structureEngine = new MarketStructureEngine(store);
+    const smcEngine = new SmcLocationEngine(store, structureEngine);
+    const setupEngine = new SetupEngine(mtfEngine, structureEngine, smcEngine);
+    for (const tf of ['4h', '1h', '15m', '5m'] as AnalysisTimeframe[]) {
+      populateTrendingUp(store, 'SOLUSDT', tf, 60);
+    }
+    marketState.onBookTicker('SOLUSDT', 150.0, 150.05, 0, 0);
+    marketState.onAggTrade('SOLUSDT', 150.0, 0);
+    marketState.onMarkPrice('SOLUSDT', 150.0, 150.0, 0);
+
+    const detector = new MarketRegimeDetector(
+      (sym, count) => store.getCandles(sym, '4h', count).filter((c) => c.isClosed).slice(-count),
+      () => 'BULLISH',
+      3
+    );
+    const riskManager = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => 10000,
+      getLastPrice: () => 150,
+      getCandles: (sym, _tf, count) => store.getCandles(sym, '1h', count).filter((c) => c.isClosed).slice(-count),
+    });
+    const modelManager = new ModelManager({
+      llmEndpoints: [{ name: 'fake', kind: 'llm', baseUrl: 'http://127.0.0.1:0', model: 'qwen3.5:2b', priority: 1, timeoutMs: 1000 }],
+    });
+
+    const probeSpy = vi.fn();
+    const submittedSignals: SignalInput[] = [];
+    const strategyEngine = {
+      async submitSignal(input: SignalInput): Promise<Signal | null> {
+        submittedSignals.push(input);
+        return { ...input, id: 'sig-lock-1', ts: Date.now(), status: 'EXECUTED' } as Signal;
+      },
+      isRunning: () => true,
+      // smc-agent holds the entry lock on SOLUSDT.
+      getSymbolLock: () => ({
+        symbol: 'SOLUSDT',
+        strategyId: 'smc-agent',
+        acquiredAt: Date.now() - 1000,
+        until: Date.now() + 240_000,
+      }),
+    } as unknown as StrategyEngine;
+
+    const eventLog = makeEventLog();
+    const wsGateway = { broadcast: vi.fn() } as unknown as WebSocketGateway;
+    const account = makeFakeAccount(10000, 0);
+
+    const brain = makeBrainModules({
+      symbols: ['SOLUSDT'],
+      eventLog,
+      wsGateway,
+      store,
+      structureEngine,
+      marketState,
+      mtfEngine,
+      strategyEngine,
+      regimeDetector: detector,
+      modelManager,
+      getAccount: () => account,
+      getPositions: () => [],
+      getLastPrice: () => 150,
+    });
+
+    // Fabricate a READY long setup so the cycle gets past the confluence and
+    // HTF-alignment gates and reaches the symbol-lock gate.
+    const readySetup = {
+      id: 'setup-ready-1',
+      symbol: 'SOLUSDT',
+      direction: 'LONG',
+      setupType: 'SSL_SWEEP_REVERSAL_LONG',
+      state: 'TRIGGERED',
+      createdAt: 1,
+      updatedAt: 1,
+      expiresAt: 9999999999999,
+      timeframes: { regime4h: 'BULLISH', bias1h: 'BULLISH', structure15m: 'BULLISH', trigger5m: 'BULLISH' },
+      confluence: {
+        htfAlignmentScore: 10, structureScore: 15, liquiditySweepScore: 10, fvgScore: 10,
+        orderBlockScore: 10, retestScore: 10, triggerScore: 10, dataQualityScore: 5,
+        totalScore: 80, maxScore: 100, notes: [],
+      },
+      status: 'READY',
+      sourceCandleTimes: [],
+      sourceEventIds: [],
+    } as never as ReturnType<SetupEngine['getSetupsAsOf']>[number];
+    const setupsSpy = vi.spyOn(setupEngine, 'getSetupsAsOf').mockReturnValue([readySetup]);
+
+    const agent = new AutonomousTradingAgent(
+      {
+        symbols: ['SOLUSDT'], cycleMs: 60_000, minConfluence: 65, minRR: 1.5,
+        maxOpenPositions: 3, perSymbolMaxPositions: 1, cooldownMs: 60_000,
+        strategyId: 'autonomous-agent-test', minConfidence: 0.4, regimeConfirmationBars: 1,
+      },
+      {
+        setupEngine, mtfEngine, regimeDetector: detector, riskManager, modelManager,
+        strategyEngine, eventLog, wsGateway,
+        getPositions: () => [], getAccount: () => account, getLastPrice: () => 150,
+        performanceTracker: brain.performanceTracker, circuitBreaker: brain.circuitBreaker,
+        exitManager: brain.exitManager, healthMonitor: brain.healthMonitor,
+      }
+    );
+
+    // Track whether the (expensive) model-confidence probe was invoked by
+    // wrapping the model manager's complete() — the lock gate must fire
+    // BEFORE the probe.
+    const completeSpy = vi.spyOn(modelManager, 'complete').mockImplementation(async () => {
+      probeSpy();
+      return { text: '{"confidence": 0.9}' };
+    });
+
+    const summary = await agent.runCycle();
+    const decision = summary.decisions[0]!;
+    expect(decision.action).toBe('STAND_ASIDE');
+    expect(decision.reason).toMatch(/Symbol locked by strategy smc-agent/);
+    // No probe, no signal — the lock gate short-circuited the pipeline.
+    expect(probeSpy).not.toHaveBeenCalled();
+    expect(completeSpy).not.toHaveBeenCalled();
+    expect(submittedSignals).toHaveLength(0);
+
+    setupsSpy.mockRestore();
+    completeSpy.mockRestore();
   });
 });

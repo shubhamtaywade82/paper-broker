@@ -16,7 +16,8 @@ import type {
 } from './types.js';
 import type { PerformanceTracker } from './PerformanceTracker.js';
 import type { CircuitBreaker } from './CircuitBreaker.js';
-import type { ExitManager } from './ExitManager.js';
+import type { ExitManager, ScaleInDecision } from './ExitManager.js';
+import type { RegimeAdaptation } from '../analysis/MarketRegimeDetector.js';
 import type { HealthMonitor } from './HealthMonitor.js';
 import { logger } from '../telemetry/logger.js';
 import { metrics } from '../telemetry/metrics.js';
@@ -334,15 +335,27 @@ export class AutonomousTradingAgent {
 
       if (symPosition) {
         symState.state = 'in_position';
+        // Scaling (AUTONOMY_AUDIT Finding 2): the ExitManager owns the
+        // intra-position brain — evaluate a pyramid add for this winner and
+        // fold its outcome into the cycle decision. Exits (incl. partial
+        // de-risks) already ran in step (4) above.
+        const scaleIn = await this.evaluateScaleInForPosition(
+          symPosition,
+          symState,
+          adaptation,
+          cycleId,
+          now,
+          breakerTripped
+        );
         decisions.push({
           symbol,
           state: 'in_position',
           regime: currentRegime,
-          setupState: null,
-          setupType: null,
-          confluenceScore: null,
-          action: 'IN_POSITION',
-          reason: `Already in position (qty=${symPosition.qty}, entry=${symPosition.entryPrice})`,
+          setupState: scaleIn?.setupState ?? null,
+          setupType: scaleIn?.setupType ?? null,
+          confluenceScore: scaleIn?.confluenceScore ?? null,
+          action: scaleIn?.submitted ? 'SCALE_IN_SUBMITTED' : 'IN_POSITION',
+          reason: scaleIn?.reason ?? `Already in position (qty=${symPosition.qty}, entry=${symPosition.entryPrice})`,
         });
         continue;
       }
@@ -496,6 +509,29 @@ export class AutonomousTradingAgent {
         continue;
       }
 
+      // 16.5. Symbol-lock orchestration gate (AUTONOMY_AUDIT Finding 3):
+      // if another strategy (e.g. smc-agent) holds the entry lock on this
+      // symbol, stand aside BEFORE burning a model-confidence probe. The
+      // StrategyEngine enforces the same lock at submit time — this is the
+      // cheap, informative pre-check. (Optional-chained so test doubles
+      // without the lock API keep working.)
+      const symbolLock = this.deps.strategyEngine.getSymbolLock?.(symbol) ?? null;
+      if (symbolLock && symbolLock.strategyId !== this.config.strategyId) {
+        const remainingSec = Math.ceil((symbolLock.until - now) / 1000);
+        symState.state = 'stand_aside';
+        decisions.push({
+          symbol,
+          state: 'stand_aside',
+          regime: currentRegime,
+          setupState: best.state,
+          setupType: best.setupType,
+          confluenceScore: best.confluence.totalScore,
+          action: 'STAND_ASIDE',
+          reason: `Symbol locked by strategy ${symbolLock.strategyId} (${remainingSec}s remaining)`,
+        });
+        continue;
+      }
+
       // 17. Build the trade plan.
       // SetupDirection includes 'AVOID' but we've already filtered to READY
       // setups with aligned HTF, so direction is guaranteed to be LONG/SHORT.
@@ -579,7 +615,7 @@ export class AutonomousTradingAgent {
         stopLossPrice: String(plan.stopLossPrice.toFixed(8)),
         takeProfitPrice: String(plan.takeProfitPrice.toFixed(8)),
         ttlMs: this.config.cycleMs * 2,
-        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore} RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)} | ${adaptation.rationale}`,
+        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore} RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)} regimeBias=${plan.regimeBias.toFixed(2)} | ${adaptation.rationale}`,
         features: {
           ...planFeatures,
           sizePct,
@@ -728,6 +764,51 @@ export class AutonomousTradingAgent {
       running: this.running,
       perSymbol: Array.from(this.perSymbol.values()),
     };
+  }
+
+  /**
+   * Scale-in helper for the main loop's in-position branch (Finding 2).
+   * Builds the fresh inputs the ExitManager needs (current READY setups +
+   * a fresh regime-adjusted plan, which itself gates on tradeability and
+   * min RR) and delegates the scaling decision — the ExitManager owns the
+   * pyramid rules (profit gate, add budget, add cooldown).
+   */
+  private async evaluateScaleInForPosition(
+    position: Position,
+    symState: PerSymbolState,
+    adaptation: RegimeAdaptation,
+    cycleId: string,
+    now: number,
+    breakerTripped: boolean
+  ): Promise<ScaleInDecision | null> {
+    const direction: 'LONG' | 'SHORT' = position.qty > 0 ? 'LONG' : 'SHORT';
+    // Fresh plan at the CURRENT price — reusing the entry-time plan would
+    // give the add stale stops. A null plan (regime can't pay for the stop,
+    // or not enough candles) simply means no add this cycle.
+    const plan = this.deps.riskManager.computeTradePlan(
+      position.symbol,
+      direction,
+      adaptation
+    );
+    const setups = this.deps.setupEngine.getSetupsAsOf(position.symbol, now);
+    // Refresh the tracked setup so the ExitManager's invalidation checks see
+    // the latest state for this symbol.
+    if (symState.trackingSetup) {
+      const refreshed = setups.find((s) => s.id === symState.trackingSetup!.id);
+      if (refreshed) symState.trackingSetup = refreshed;
+    }
+    return this.deps.exitManager.evaluateScaleIn(
+      position,
+      setups,
+      plan,
+      {
+        allowNewEntries: !breakerTripped,
+        minConfluence: this.config.minConfluence,
+        runtimeRiskMultiplier: this.runtimeRiskMultiplier,
+      },
+      cycleId,
+      now
+    );
   }
 
   /**

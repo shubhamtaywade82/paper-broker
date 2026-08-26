@@ -401,6 +401,13 @@ export async function startEngine(): Promise<EngineHandle> {
         logger.warn(`[Signal] Rejected ${signal.strategyId} ${signal.symbol} ${signal.action}: ${reason}`);
         metrics.inc('signals_rejected_total');
       },
+    },
+    // Multi-strategy orchestration (AUTONOMY_AUDIT Finding 3): one strategy
+    // owns a symbol's entry rights for the TTL after an accepted OPEN.
+    // Autonomous-first default: on, escape hatch via SYMBOL_LOCK_ENABLED=false.
+    {
+      symbolLockEnabled: env.SYMBOL_LOCK_ENABLED,
+      symbolLockTtlMs: env.SYMBOL_LOCK_TTL_MS,
     }
   );
 
@@ -479,17 +486,6 @@ export async function startEngine(): Promise<EngineHandle> {
     (symbol) => structureEngine.computeMultiTimeframeStructure(symbol, Date.now()).timeframes['1h']?.trend,
     env.AUTONOMOUS_REGIME_CONFIRMATION_BARS
   );
-
-  const adaptiveRiskManager = new AdaptiveRiskManager({
-    baseConfig: DEFAULT_RISK_CONFIG,
-    getEquity: () => broker.getAccount().equity,
-    getLastPrice: (symbol) => marketState.getState(symbol)?.last,
-    getCandles: (symbol, timeframe, count) => {
-      const all = klines.getCandles(symbol, timeframe as KlineInterval, count);
-      return all.filter((c) => c.isClosed).slice(-count);
-    },
-  });
-
   let autonomousAgent: AutonomousTradingAgent | undefined;
   if (env.AUTONOMOUS_AGENT_ENABLED !== false) {
     // --- The agent's brain: 4 modules wired before the agent itself ----------
@@ -526,6 +522,22 @@ export async function startEngine(): Promise<EngineHandle> {
       { eventLog: events }
     );
 
+    // Adaptive risk manager — regime overlay x per-regime learning bias
+    // (Finding 4): the tracker's getRegimeStats feeds observed per-regime
+    // win rate straight into computeTradePlan's riskMultiplier, so the plan
+    // reflects not just what the regime SHOULD allow but how the agent has
+    // actually been performing inside it.
+    const adaptiveRiskManager = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => broker.getAccount().equity,
+      getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+      getCandles: (symbol, timeframe, count) => {
+        const all = klines.getCandles(symbol, timeframe as KlineInterval, count);
+        return all.filter((c) => c.isClosed).slice(-count);
+      },
+      getRegimeStats: (regime) => performanceTracker.getRegimeStats(regime),
+    });
+
     // The circuit breaker's `getHealth` reads the monitor's cached state
     // (no extra probes — the agent itself triggers one full probe per cycle).
     const circuitBreaker = new CircuitBreaker(
@@ -549,11 +561,22 @@ export async function startEngine(): Promise<EngineHandle> {
     // hook so the controller doesn't keep trying to move stops on positions
     // the agent just flattened. The controller is optional (only constructed
     // when TRAILING_STOPS_ENABLED), so we use optional chaining.
+    // Scaling (Finding 2): pyramid adds into winners + one-time downside
+    // de-risk of losers — bounded by the knobs below.
     const exitManager = new ExitManager(
       {
         exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
         maxUnrealizedLossPct: env.AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT,
         strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        scaling: {
+          enabled: env.AUTONOMOUS_SCALING_ENABLED,
+          scaleInMinProfitPct: env.AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT,
+          scaleInSizeFraction: env.AUTONOMOUS_SCALE_IN_SIZE_FRACTION,
+          scaleInMaxAdds: env.AUTONOMOUS_SCALE_IN_MAX_ADDS,
+          scaleInCooldownMs: env.AUTONOMOUS_SCALE_IN_COOLDOWN_MS,
+          scaleOutTriggerPct: env.AUTONOMOUS_SCALE_OUT_TRIGGER_PCT,
+          scaleOutCloseFraction: env.AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION,
+        },
       },
       {
         eventLog: events,
@@ -608,6 +631,9 @@ export async function startEngine(): Promise<EngineHandle> {
         cbMaxConsecutiveLosses: env.AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES,
         learnWindowSize: env.AUTONOMOUS_LEARN_WINDOW_SIZE,
         exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
+        scalingEnabled: env.AUTONOMOUS_SCALING_ENABLED,
+        symbolLockEnabled: env.SYMBOL_LOCK_ENABLED,
+        symbolLockTtlMs: env.SYMBOL_LOCK_TTL_MS,
       },
       'Autonomous trading agent enabled and will run on its own clock'
     );

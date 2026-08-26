@@ -143,6 +143,42 @@ const EnvSchema = z.object({
   // If unrealized loss exceeds this fraction of equity, exit regardless of
   // stop. 0 = disabled.
   AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.02),
+  // --- Position scaling (AUTONOMY_AUDIT Finding 2) ------------------------
+  // Pyramid into winners + one-time downside de-risk of losers. Enabled by
+  // default (autonomous-first); every knob is bounded independently.
+  AUTONOMOUS_SCALING_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  // Unrealized PROFIT as a fraction of equity required before a pyramid add
+  // (0.01 = 1%). Only winners get added to.
+  AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT: z.coerce.number().min(0).max(1).default(0.01),
+  // Each add's quantity as a fraction of the CURRENT position size
+  // (0.5 = classic decreasing pyramid).
+  AUTONOMOUS_SCALE_IN_SIZE_FRACTION: z.coerce.number().min(0.01).max(1).default(0.5),
+  // Max adds per position lifecycle.
+  AUTONOMOUS_SCALE_IN_MAX_ADDS: z.coerce.number().int().min(0).max(5).default(1),
+  // Min time between adds on the same position.
+  AUTONOMOUS_SCALE_IN_COOLDOWN_MS: z.coerce.number().int().min(0).default(900_000),
+  // Unrealized LOSS (fraction of equity) that triggers a one-time partial
+  // de-risk. Should sit comfortably below
+  // AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT (the full-breach threshold).
+  AUTONOMOUS_SCALE_OUT_TRIGGER_PCT: z.coerce.number().min(0).max(1).default(0.01),
+  // Fraction of the position closed by the de-risk (0.5 = close half).
+  AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION: z.coerce.number().min(0.01).max(1).default(0.5),
+  // --- Symbol lock (multi-strategy orchestration, AUTONOMY_AUDIT Finding 3)
+  // When enabled, the first strategy whose OPEN signal is accepted owns the
+  // symbol for SYMBOL_LOCK_TTL_MS — other strategies' OPENs on that symbol
+  // are rejected (with a reason) so the autonomous agent and candle-driven
+  // strategies (e.g. smc-agent) can never race each other into conflicting
+  // entries on the same symbol. CLOSE/CANCEL_ALL always pass.
+  SYMBOL_LOCK_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  SYMBOL_LOCK_TTL_MS: z.coerce.number().int().min(1_000).default(300_000),
   // --- Health monitor (self-diagnostics) ----------------------------------
   AUTONOMOUS_HEALTH_STALE_MS: z.coerce.number().int().min(1_000).default(15_000),
   AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),

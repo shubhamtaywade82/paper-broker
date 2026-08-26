@@ -65,5 +65,19 @@ export function signalIsExpired(signal: Signal, now: number = Date.now()): boole
 }
 
 export function signalsEqual(a: SignalInput, b: SignalInput): boolean {
-  return a.strategyId === b.strategyId && a.symbol === b.symbol && a.action === b.action;
+  const sameIdentity =
+    a.strategyId === b.strategyId && a.symbol === b.symbol && a.action === b.action;
+  if (!sameIdentity) return false;
+  // Identity dedup by default. Signals that carry an explicit `dedupKey`
+  // feature only dedup against another signal with the SAME key — this lets
+  // the autonomous agent submit multiple OPEN/CLOSE signals for the same
+  // symbol + action (pyramiding adds, partial de-risks) without being
+  // silently dropped, while still protecting each logical intent from
+  // double-submission.
+  const aKey = a.features['dedupKey'];
+  const bKey = b.features['dedupKey'];
+  if (aKey !== undefined || bKey !== undefined) {
+    return aKey !== undefined && aKey === bKey;
+  }
+  return true;
 }
