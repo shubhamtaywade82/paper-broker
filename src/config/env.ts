@@ -85,6 +85,26 @@ const EnvSchema = z.object({
   STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT: z.coerce.number().positive().default(500),
   STRATEGY_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
 
+  // Autonomous trading agent (src/agent/AutonomousTradingAgent.ts).
+  // When enabled, the agent runs on its own clock independent of candle-close
+  // events, surveys every symbol across the MTF stack on each cycle, detects
+  // FORMING setups (state WATCHING..RETEST) and READY setups, validates HTF
+  // regime + LTF trigger alignment, adapts risk parameters per regime, and
+  // submits signals through the same StrategyEngine pipeline.
+  AUTONOMOUS_AGENT_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  AUTONOMOUS_CYCLE_MS: z.coerce.number().int().min(5_000).default(30_000),
+  AUTONOMOUS_MIN_CONFLUENCE: z.coerce.number().min(0).max(100).default(65),
+  AUTONOMOUS_MIN_RR: z.coerce.number().positive().default(1.5),
+  AUTONOMOUS_MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(3),
+  AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS: z.coerce.number().int().positive().default(1),
+  AUTONOMOUS_COOLDOWN_MS: z.coerce.number().int().min(0).default(300_000),
+  AUTONOMOUS_REGIME_CONFIRMATION_BARS: z.coerce.number().int().positive().default(3),
+  AUTONOMOUS_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.55),
+  AUTONOMOUS_STRATEGY_ID: z.string().min(1).default('autonomous-agent'),
+
   DB_FILE: z.string().default('data/paper.sqlite3'),
   EVENT_LOG_FILE: z.string().default('data/events.jsonl'),
   SNAPSHOT_DIR: z.string().default('data/snapshots'),

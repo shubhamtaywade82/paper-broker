@@ -283,6 +283,41 @@ export class StrategyEngine {
     return { ok: true };
   }
 
+  /**
+   * Public entry-point for external decision-makers (the Autonomous Trading
+   * Agent) to submit a signal through the same cooldown / dedup / conflict /
+   * executor pipeline that {@link onCandleClose} uses internally.
+   *
+   * The agent doesn't run as a registered Strategy because it isn't driven by
+   * per-candle callbacks — it polls on its own clock and surveys the whole MTF
+   * stack — but it still needs the engine's guardrails (cooldown, conflict
+   * check, signal repository insert, SignalExecutor hand-off). Routing through
+   * here means a single source of truth for "what is allowed to become an
+   * order" instead of a parallel path the engine can't see.
+   */
+  async submitSignal(input: SignalInput): Promise<Signal | null> {
+    if (!this.running) return null;
+    if (input.action === 'HOLD') return null;
+
+    // Synthetic strategy identity so the cooldown/dedup map keys stay
+    // namespaced away from per-candle strategies. CooldownMs comes from
+    // input.features['cooldownMs'] if set, otherwise a 60s default — both
+    // leave the engine's per-strategy cooldowns untouched.
+    const syntheticStrategy: Strategy = {
+      id: input.strategyId,
+      name: input.strategyId,
+      enabled: true,
+      symbols: [input.symbol],
+      intervals: [],
+      priority: 50,
+      cooldownMs: Number(input.features['cooldownMs'] ?? 60_000),
+    };
+
+    await this.processSignal(syntheticStrategy, input);
+    const key = `${input.strategyId}:${input.symbol}:${input.action}`;
+    return this.lastSignalByKey.get(key) ?? null;
+  }
+
   expireSignals(): number {
     let expired = 0;
 

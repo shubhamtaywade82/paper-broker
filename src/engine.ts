@@ -34,6 +34,10 @@ import { TrailingStopController } from './trading/risk/TrailingStopController.js
 import { StrategyPerformanceTracker } from './strategy/StrategyPerformanceTracker.js';
 import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
+import { ModelManager } from './ai/ModelManager.js';
+import { MarketRegimeDetector } from './analysis/MarketRegimeDetector.js';
+import { AdaptiveRiskManager } from './risk/AdaptiveRiskManager.js';
+import { AutonomousTradingAgent } from './agent/AutonomousTradingAgent.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
 import { ApiServer } from './api/server.js';
@@ -346,6 +350,104 @@ export async function startEngine(): Promise<EngineHandle> {
     }
   });
 
+  // --- Autonomous trading agent ------------------------------------------
+  // The autonomous agent sits ABOVE the strategy fleet and polls on its own
+  // clock (default 30s), independent of candle-close events. It surveys
+  // every symbol's MTF state, detects forming + ready setups, classifies
+  // the market regime, builds regime-adjusted trade plans, and submits
+  // signals through the same StrategyEngine pipeline regular strategies use.
+  //
+  // Disabled by default (AUTONOMOUS_AGENT_ENABLED=true to opt in) so existing
+  // deployments keep their current always-candle-driven behaviour until the
+  // operator is ready.
+  const modelManager = new ModelManager({
+    llmEndpoints: [
+      // Ollama Cloud accounts (when configured) come first for capacity.
+      ...cloudKeys.map((key, idx) => ({
+        name: `ollama-cloud-account-${idx + 1}`,
+        kind: 'llm' as const,
+        baseUrl: env.OLLAMA_CLOUD_BASE_URL,
+        model: env.OLLAMA_CLOUD_MODEL,
+        apiKey: key,
+        priority: idx + 1,
+        timeoutMs: 30_000,
+      })),
+      // Local Ollama daemon as the always-available fallback.
+      {
+        name: 'ollama-local-daemon',
+        kind: 'llm' as const,
+        baseUrl: env.OLLAMA_BASE_URL,
+        model: env.OLLAMA_MODEL,
+        priority: cloudKeys.length + 1,
+        timeoutMs: 30_000,
+      },
+    ],
+    globalTimeoutMs: 30_000,
+    defaultModel: cloudKeys.length > 0 ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL,
+  });
+
+  const regimeDetector = new MarketRegimeDetector(
+    (symbol, count) => {
+      // Pull closed 4h candles for the regime feature extractor.
+      const all = klines.getCandles(symbol, '4h', count);
+      return all.filter((c) => c.isClosed).slice(-count);
+    },
+    (symbol) => structureEngine.computeMultiTimeframeStructure(symbol, Date.now()).timeframes['1h']?.trend,
+    env.AUTONOMOUS_REGIME_CONFIRMATION_BARS
+  );
+
+  const adaptiveRiskManager = new AdaptiveRiskManager({
+    baseConfig: DEFAULT_RISK_CONFIG,
+    getEquity: () => broker.getAccount().equity,
+    getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+    getCandles: (symbol, timeframe, count) => {
+      const all = klines.getCandles(symbol, timeframe as KlineInterval, count);
+      return all.filter((c) => c.isClosed).slice(-count);
+    },
+  });
+
+  let autonomousAgent: AutonomousTradingAgent | undefined;
+  if (env.AUTONOMOUS_AGENT_ENABLED) {
+    autonomousAgent = new AutonomousTradingAgent(
+      {
+        symbols,
+        cycleMs: env.AUTONOMOUS_CYCLE_MS,
+        minConfluence: env.AUTONOMOUS_MIN_CONFLUENCE,
+        minRR: env.AUTONOMOUS_MIN_RR,
+        maxOpenPositions: env.AUTONOMOUS_MAX_OPEN_POSITIONS,
+        perSymbolMaxPositions: env.AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS,
+        cooldownMs: env.AUTONOMOUS_COOLDOWN_MS,
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        minConfidence: env.AUTONOMOUS_MIN_CONFIDENCE,
+        regimeConfirmationBars: env.AUTONOMOUS_REGIME_CONFIRMATION_BARS,
+      },
+      {
+        setupEngine,
+        mtfEngine,
+        regimeDetector,
+        riskManager: adaptiveRiskManager,
+        modelManager,
+        strategyEngine,
+        eventLog: events,
+        wsGateway,
+        getPositions: () => broker.getPositions(),
+        getAccount: () => broker.getAccount(),
+        getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+      }
+    );
+    logger.info(
+      {
+        cycleMs: env.AUTONOMOUS_CYCLE_MS,
+        minConfluence: env.AUTONOMOUS_MIN_CONFLUENCE,
+        minRR: env.AUTONOMOUS_MIN_RR,
+        maxOpenPositions: env.AUTONOMOUS_MAX_OPEN_POSITIONS,
+      },
+      'Autonomous trading agent enabled and will run on its own clock'
+    );
+  } else {
+    logger.info('Autonomous trading agent disabled (set AUTONOMOUS_AGENT_ENABLED=true to enable)');
+  }
+
   strategyEngine.register(
     createSmcAgentStrategy({
       setupEngine,
@@ -640,9 +742,17 @@ export async function startEngine(): Promise<EngineHandle> {
 
   scheduler.start();
 
+  // Start the autonomous trading agent LAST — it needs strategyEngine
+  // running (for submitSignal), market data flowing (for klines and
+  // marketState), the API server up (for WebSocket broadcasts), and the
+  // scheduler started (so profit goals + snapshot state are stable).
+  // Disabled by default; start() is a no-op if the agent wasn't constructed.
+  autonomousAgent?.start();
+
   metrics.setGauge('instruments_total', instruments.length);
   metrics.setGauge('strategies_total', strategyEngine.listStrategies().length);
   metrics.setGauge('strategies_quarantined_total', strategyEngine.listQuarantined().length);
+  metrics.setGauge('autonomous_agent_enabled', autonomousAgent ? 1 : 0);
 
   const telegram = new TelegramNotifier({
     enabled: runtimeProfile.telegramEnabled,
@@ -664,6 +774,7 @@ export async function startEngine(): Promise<EngineHandle> {
   return {
     stop: async (): Promise<void> => {
       logger.info('Stopping paper-broker');
+      autonomousAgent?.stop();
       scheduler.stop();
       if (profitGoals) profitGoalStore.save(profitGoals);
       strategyPerformanceStore.save(strategyPerformance.listStats());

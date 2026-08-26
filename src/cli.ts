@@ -39,6 +39,44 @@ async function runTrade(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
+/**
+ * `autonomous` is `trade` with a banner that explicitly tells the operator
+ * the autonomous agent is what's driving decisions. The agent is only
+ * actually active when AUTONOMOUS_AGENT_ENABLED=true; if it's disabled,
+ * this command logs a warning and falls back to the candle-driven pipeline.
+ */
+async function runAutonomous(): Promise<void> {
+  console.log('='.repeat(60));
+  console.log('AUTONOMOUS AI TRADING AGENT — runs on its own clock');
+  console.log('='.repeat(60));
+  console.log(`Symbols:           ${SYMBOLS.join(', ')}`);
+  console.log(`Timeframes:        ${TIMEFRAMES.join(', ')}`);
+  console.log(`Starting USDT:     ${env.PAPER_STARTING_USDT}`);
+  console.log(`Cycle interval:   ${env.AUTONOMOUS_CYCLE_MS}ms`);
+  console.log(`Min confluence:   ${env.AUTONOMOUS_MIN_CONFLUENCE}`);
+  console.log(`Min RR:           ${env.AUTONOMOUS_MIN_RR}`);
+  console.log(`Max open pos:     ${env.AUTONOMOUS_MAX_OPEN_POSITIONS}`);
+  console.log(`Model:            ${env.OLLAMA_MODEL}`);
+  console.log('='.repeat(60));
+  if (!env.AUTONOMOUS_AGENT_ENABLED) {
+    console.warn(
+      '⚠️  AUTONOMOUS_AGENT_ENABLED is false — the agent will NOT run.\n' +
+        '   Set AUTONOMOUS_AGENT_ENABLED=true in .env to enable autonomous mode.\n' +
+        '   Falling back to the candle-driven strategy pipeline.'
+    );
+  } else {
+    console.log('✓  Autonomous agent enabled — decisions are driven by the agent loop,');
+    console.log('   not by Binance candle-close events. Existing strategies remain active.');
+  }
+
+  const engine = await startEngine();
+  console.log('[Autonomous] Engine started. Press Ctrl+C to stop.');
+
+  const shutdown = createShutdownHandler(engine);
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
 async function runMonitor(): Promise<void> {
   console.log('[Monitor] Connecting to Binance Futures WebSocket...');
 
@@ -203,7 +241,11 @@ async function runBacktestCmd(): Promise<void> {
 }
 
 function printUsage(): void {
-  console.log('Usage: node dist/cli.js <trade|monitor|backtest> [--help]');
+  console.log('Usage: node dist/cli.js <trade|autonomous|monitor|backtest> [--help]');
+  console.log('  trade:       Start paper trading engine (candle-driven strategies)');
+  console.log('  autonomous:  Start the engine with the autonomous AI agent enabled');
+  console.log('               (set AUTONOMOUS_AGENT_ENABLED=true to actually run the loop)');
+  console.log('  monitor:    Stream Binance market data without trading');
   console.log('  backtest options:');
   console.log('    SMC engine (default):        --engine=smc --symbol=SOLUSDT --days=3');
   console.log('    Legacy indicator engine:     --engine=indicators --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,...');
@@ -223,6 +265,9 @@ if (command === '--help' || command === '-h') {
 switch (command) {
   case 'trade':
     await runTrade();
+    break;
+  case 'autonomous':
+    await runAutonomous();
     break;
   case 'monitor':
     await runMonitor();

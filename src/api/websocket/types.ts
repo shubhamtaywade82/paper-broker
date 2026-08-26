@@ -16,7 +16,12 @@ export type WebSocketEventType =
   | 'agent.step'
   | 'profit.goal'
   | 'strategy.performance'
-  | 'trailing.stop';
+  | 'trailing.stop'
+  | 'agent.autonomous.cycle'
+  | 'agent.autonomous.forming'
+  | 'agent.autonomous.regime'
+  | 'agent.autonomous.signal'
+  | 'agent.autonomous.rejected';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

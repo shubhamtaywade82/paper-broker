@@ -396,7 +396,13 @@ export interface SystemEventType {
     | 'STRATEGY_QUARANTINED'
     | 'PROFIT_GOAL_ACHIEVED'
     | 'PROFIT_GOAL_RESET'
-    | 'TRAILING_STOP_MOVED';
+    | 'TRAILING_STOP_MOVED'
+    | 'AUTONOMOUS_AGENT_STARTED'
+    | 'AUTONOMOUS_AGENT_STOPPED'
+    | 'AUTONOMOUS_AGENT_SIGNAL'
+    | 'AUTONOMOUS_AGENT_REJECTED'
+    | 'AUTONOMOUS_REGIME_CHANGE'
+    | 'AUTONOMOUS_CYCLE_COMPLETED';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
 }
