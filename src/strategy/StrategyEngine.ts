@@ -54,25 +54,59 @@ export interface StrategyEngineListeners {
   onSignalExpired?: (signal: Signal) => void;
 }
 
+/** Active symbol lock — one strategy owns the entry rights to a symbol. */
+export interface SymbolLockState {
+  symbol: string;
+  /** Strategy that holds the lock. */
+  strategyId: string;
+  /** Epoch ms when the lock was acquired (refreshed on every accepted signal). */
+  acquiredAt: number;
+  /** Epoch ms after which the lock is stale and may be taken over. */
+  until: number;
+}
+
+export interface StrategyEngineOptions {
+  /**
+   * Multi-strategy orchestration (AUTONOMY_AUDIT Finding 3): when enabled,
+   * the first strategy whose OPEN signal is accepted acquires an exclusive
+   * lock on that symbol for `symbolLockTtlMs`. Other strategies' OPEN signals
+   * on the same symbol are rejected while the lock is held, so the
+   * autonomous agent and candle-driven strategies (e.g. smc-agent) can never
+   * submit conflicting entries on the same symbol. CLOSE / CANCEL_ALL
+   * signals always pass — reducing risk is never blocked.
+   *
+   * Default: enabled (autonomous-first). Disable via SYMBOL_LOCK_ENABLED=false.
+   */
+  symbolLockEnabled?: boolean;
+  /** How long an accepted OPEN signal owns the symbol. Default 300_000 (5 min). */
+  symbolLockTtlMs?: number;
+}
+
 export class StrategyEngine {
   private strategies = new Map<string, Strategy>();
   private contexts = new Map<string, StrategyContext>();
   private lastEmitted = new Map<string, number>();
   private lastSignalByKey = new Map<string, Signal>();
+  private symbolLocks = new Map<string, SymbolLockState>();
   private running = false;
 
   private config: StrategyEngineConfig;
   private deps: StrategyEngineDeps;
   private listeners: StrategyEngineListeners;
+  private readonly symbolLockEnabled: boolean;
+  private readonly symbolLockTtlMs: number;
 
   constructor(
     config: StrategyEngineConfig,
     deps: StrategyEngineDeps,
-    listeners: StrategyEngineListeners = {}
+    listeners: StrategyEngineListeners = {},
+    options: StrategyEngineOptions = {}
   ) {
     this.config = config;
     this.deps = deps;
     this.listeners = listeners;
+    this.symbolLockEnabled = options.symbolLockEnabled ?? true;
+    this.symbolLockTtlMs = options.symbolLockTtlMs ?? 300_000;
   }
 
   register(strategy: Strategy): void {
@@ -128,6 +162,7 @@ export class StrategyEngine {
   stop(): void {
     this.running = false;
     this.lastEmitted.clear();
+    this.symbolLocks.clear();
   }
 
   async onMarket(market: MarketState): Promise<void> {
@@ -184,6 +219,88 @@ export class StrategyEngine {
       .map((s) => s.id);
   }
 
+  // ---------------------------------------------------------------------
+  // Symbol lock — multi-strategy orchestration (AUTONOMY_AUDIT Finding 3)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Active lock on a symbol, or null when free. Expired locks are pruned and
+   * treated as absent. Read-only — callers must not mutate the returned object.
+   */
+  getSymbolLock(symbol: string): SymbolLockState | null {
+    const lock = this.symbolLocks.get(symbol);
+    if (!lock) return null;
+    if (lock.until <= Date.now()) {
+      this.symbolLocks.delete(symbol);
+      return null;
+    }
+    return { ...lock };
+  }
+
+  /**
+   * Manually acquire the lock on behalf of a strategy. Returns false when
+   * another strategy holds a live lock (the caller should stand aside).
+   * Re-acquisition by the current holder refreshes the TTL.
+   */
+  acquireSymbolLock(symbol: string, strategyId: string, ttlMs?: number): boolean {
+    const now = Date.now();
+    const existing = this.symbolLocks.get(symbol);
+    if (existing && existing.until > now && existing.strategyId !== strategyId) {
+      return false;
+    }
+    this.symbolLocks.set(symbol, {
+      symbol,
+      strategyId,
+      acquiredAt: now,
+      until: now + (ttlMs ?? this.symbolLockTtlMs),
+    });
+    return true;
+  }
+
+  /** Release a lock — only the holder (or a force release with no strategyId). */
+  releaseSymbolLock(symbol: string, strategyId?: string): void {
+    const existing = this.symbolLocks.get(symbol);
+    if (!existing) return;
+    if (strategyId === undefined || existing.strategyId === strategyId) {
+      this.symbolLocks.delete(symbol);
+    }
+  }
+
+  /** Snapshot of all live locks — surfaced by the API / diagnostics. */
+  listSymbolLocks(): SymbolLockState[] {
+    const now = Date.now();
+    for (const [symbol, lock] of this.symbolLocks) {
+      if (lock.until <= now) this.symbolLocks.delete(symbol);
+    }
+    return Array.from(this.symbolLocks.values()).map((l) => ({ ...l }));
+  }
+
+  /**
+   * Entry gate for OPEN signals: reject when another strategy holds a live
+   * lock; otherwise acquire/refresh the lock for the signal's strategy.
+   * CLOSE / CANCEL_ALL never consult the lock — flattening is always allowed.
+   */
+  private checkAndAcquireSymbolLock(signal: Signal, now: number): { ok: boolean; reason?: string } {
+    if (!this.symbolLockEnabled) return { ok: true };
+    if (!signal.action.startsWith('OPEN')) return { ok: true };
+
+    const existing = this.symbolLocks.get(signal.symbol);
+    if (existing && existing.until > now && existing.strategyId !== signal.strategyId) {
+      const remainingMs = existing.until - now;
+      return {
+        ok: false,
+        reason: `symbol locked by strategy ${existing.strategyId} (${Math.ceil(remainingMs / 1000)}s remaining)`,
+      };
+    }
+    this.symbolLocks.set(signal.symbol, {
+      symbol: signal.symbol,
+      strategyId: signal.strategyId,
+      acquiredAt: now,
+      until: now + this.symbolLockTtlMs,
+    });
+    return { ok: true };
+  }
+
   private async processSignal(strategy: Strategy, rawInput: unknown): Promise<void> {
     let input: SignalInput;
 
@@ -234,6 +351,21 @@ export class StrategyEngine {
       return;
     }
 
+    // Multi-strategy orchestration: only one strategy may OPEN on a symbol
+    // within the lock TTL. Acquired here so both the candle-driven path and
+    // the autonomous agent's submitSignal path are covered identically.
+    const lockCheck = this.checkAndAcquireSymbolLock(signal, now);
+    if (!lockCheck.ok) {
+      signal.status = 'REJECTED';
+      signal.rejectReason = lockCheck.reason;
+      // Deliberately NOT recorded in lastSignalByKey: lock rejections are
+      // transient (the lock expires) and caching them would silently
+      // suppress the strategy's next identical submission after expiry —
+      // the dedup map has no eviction for REJECTED signals.
+      this.listeners.onSignalRejected?.(signal, lockCheck.reason ?? 'symbol locked');
+      return;
+    }
+
     this.lastSignalByKey.set(cooldownKey, signal);
     this.listeners.onSignal?.(signal);
 
@@ -281,6 +413,71 @@ export class StrategyEngine {
     }
 
     return { ok: true };
+  }
+
+  /**
+   * Public entry-point for external decision-makers (the Autonomous Trading
+   * Agent) to submit a signal through the same cooldown / dedup / conflict /
+   * executor pipeline that {@link onCandleClose} uses internally.
+   *
+   * The agent doesn't run as a registered Strategy because it isn't driven by
+   * per-candle callbacks — it polls on its own clock and surveys the whole MTF
+   * stack — but it still needs the engine's guardrails (cooldown, conflict
+   * check, signal repository insert, SignalExecutor hand-off). Routing through
+   * here means a single source of truth for "what is allowed to become an
+   * order" instead of a parallel path the engine can't see.
+   */
+  async submitSignal(input: SignalInput): Promise<Signal | null> {
+    if (!this.running) return null;
+    if (input.action === 'HOLD') return null;
+
+    // Fast-path symbol-lock check for external submitters (the autonomous
+    // agent): a transient lock rejection returns a proper REJECTED signal
+    // without going through processSignal, so nothing lands in the dedup
+    // map and the caller can retry once the lock expires.
+    if (this.symbolLockEnabled && input.action.startsWith('OPEN')) {
+      const lock = this.getSymbolLock(input.symbol);
+      if (lock && lock.strategyId !== input.strategyId) {
+        const now = Date.now();
+        const signal = toSignal(input, now);
+        signal.status = 'REJECTED';
+        signal.rejectReason = `symbol locked by strategy ${lock.strategyId} (${Math.ceil(
+          (lock.until - now) / 1000
+        )}s remaining)`;
+        this.listeners.onSignalRejected?.(signal, signal.rejectReason);
+        return signal;
+      }
+    }
+    // Synthetic strategy identity so the cooldown/dedup map keys stay
+    // namespaced away from per-candle strategies. CooldownMs comes from
+    // input.features['cooldownMs'] if set, otherwise a 60s default — both
+    // leave the engine's per-strategy cooldowns untouched.
+    const syntheticStrategy: Strategy = {
+      id: input.strategyId,
+      name: input.strategyId,
+      enabled: true,
+      symbols: [input.symbol],
+      intervals: [],
+      priority: 50,
+      cooldownMs: Number(input.features['cooldownMs'] ?? 60_000),
+    };
+
+    await this.processSignal(syntheticStrategy, input);
+    const key = `${input.strategyId}:${input.symbol}:${input.action}`;
+    const stored = this.lastSignalByKey.get(key) ?? null;
+    if (!stored) return null;
+    if (stored.status === 'CREATED') {
+      // processSignal leaves the stored signal CREATED when the executor
+      // ACCEPTED it (only failures get REJECTED in-memory; SignalExecutor
+      // persists EXECUTED to the signals table without mutating this
+      // object). Return a terminal-status VIEW without mutating the stored
+      // object — the dedup map's lifecycle (CREATED → EXPIRED via
+      // expireSignals, which re-enables future identical submissions) stays
+      // intact, while callers like the autonomous agent / ExitManager (which
+      // gate on status === 'EXECUTED' | 'ACCEPTED') see the real outcome.
+      return { ...stored, status: 'EXECUTED' as const };
+    }
+    return stored;
   }
 
   expireSignals(): number {

@@ -59,8 +59,18 @@ export class SignalExecutor {
       return false;
     }
 
+    // Partial closes: when `features.closeFraction` is present (0..1), close
+    // only that fraction of the current position instead of flattening it.
+    // Used by the autonomous agent's ExitManager for downside de-risking
+    // (SCALE_OUT). Absent or invalid → 1 (full close) — the historical
+    // behaviour every other caller relies on.
+    const rawFraction = Number(signal.features['closeFraction'] ?? 1);
+    const closeFraction =
+      Number.isFinite(rawFraction) && rawFraction > 0 ? Math.min(1, rawFraction) : 1;
     const closeQty =
-      signal.action.startsWith('CLOSE') && position ? Math.abs(position.qty) : 0;
+      signal.action.startsWith('CLOSE') && position
+        ? Math.abs(position.qty) * closeFraction
+        : 0;
     const openQty = signal.action.startsWith('OPEN')
       ? Number(signal.features['quantity'] ?? 0)
       : 0;

@@ -37,6 +37,14 @@ import { StrategyPerformanceTracker } from './strategy/StrategyPerformanceTracke
 import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js';
 import { SetupOutcomeTracker } from './strategy/SetupOutcomeTracker.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
+import { ModelManager } from './ai/ModelManager.js';
+import { MarketRegimeDetector } from './analysis/MarketRegimeDetector.js';
+import { AdaptiveRiskManager } from './risk/AdaptiveRiskManager.js';
+import { AutonomousTradingAgent } from './agent/AutonomousTradingAgent.js';
+import { PerformanceTracker } from './agent/PerformanceTracker.js';
+import { CircuitBreaker } from './agent/CircuitBreaker.js';
+import { ExitManager } from './agent/ExitManager.js';
+import { HealthMonitor } from './agent/HealthMonitor.js';
 import { createSmcAgentStrategy } from './strategy/strategies/smc-agent.js';
 import { createAdaptiveSupertrendStrategy } from './strategy/strategies/adaptive-supertrend.js';
 import { ApiServer } from './api/server.js';
@@ -393,6 +401,13 @@ export async function startEngine(): Promise<EngineHandle> {
         logger.warn(`[Signal] Rejected ${signal.strategyId} ${signal.symbol} ${signal.action}: ${reason}`);
         metrics.inc('signals_rejected_total');
       },
+    },
+    // Multi-strategy orchestration (AUTONOMY_AUDIT Finding 3): one strategy
+    // owns a symbol's entry rights for the TTL after an accepted OPEN.
+    // Autonomous-first default: on, escape hatch via SYMBOL_LOCK_ENABLED=false.
+    {
+      symbolLockEnabled: env.SYMBOL_LOCK_ENABLED,
+      symbolLockTtlMs: env.SYMBOL_LOCK_TTL_MS,
     }
   );
 
@@ -423,6 +438,208 @@ export async function startEngine(): Promise<EngineHandle> {
       logger.warn({ baseUrl: env.OLLAMA_BASE_URL }, 'Ollama unreachable at startup — agent debate will fall back to NEUTRAL (no trades) until it recovers');
     }
   });
+
+  // --- Autonomous trading agent ------------------------------------------
+  // The autonomous agent sits ABOVE the strategy fleet and polls on its own
+  // clock (default 30s), independent of candle-close events. It surveys
+  // every symbol's MTF state, detects forming + ready setups, classifies
+  // the market regime, builds regime-adjusted trade plans, and submits
+  // signals through the same StrategyEngine pipeline regular strategies use.
+  //
+  // ENABLED BY DEFAULT — `pnpm start` boots the engine in fully autonomous
+  // mode. Operators who need the legacy candle-driven-only behaviour (e.g. to
+  // debug the strategy fleet in isolation) can opt out by setting
+  // AUTONOMOUS_AGENT_ENABLED=false, or use `pnpm paper:candle-only` which
+  // sets that flag for them.
+  const modelManager = new ModelManager({
+    llmEndpoints: [
+      // Ollama Cloud accounts (when configured) come first for capacity.
+      ...cloudKeys.map((key, idx) => ({
+        name: `ollama-cloud-account-${idx + 1}`,
+        kind: 'llm' as const,
+        baseUrl: env.OLLAMA_CLOUD_BASE_URL,
+        model: env.OLLAMA_CLOUD_MODEL,
+        apiKey: key,
+        priority: idx + 1,
+        timeoutMs: 30_000,
+      })),
+      // Local Ollama daemon as the always-available fallback.
+      {
+        name: 'ollama-local-daemon',
+        kind: 'llm' as const,
+        baseUrl: env.OLLAMA_BASE_URL,
+        model: env.OLLAMA_MODEL,
+        priority: cloudKeys.length + 1,
+        timeoutMs: 30_000,
+      },
+    ],
+    globalTimeoutMs: 30_000,
+    defaultModel: cloudKeys.length > 0 ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL,
+  });
+
+  const regimeDetector = new MarketRegimeDetector(
+    (symbol, count) => {
+      // Pull closed 4h candles for the regime feature extractor.
+      const all = klines.getCandles(symbol, '4h', count);
+      return all.filter((c) => c.isClosed).slice(-count);
+    },
+    (symbol) => structureEngine.computeMultiTimeframeStructure(symbol, Date.now()).timeframes['1h']?.trend,
+    env.AUTONOMOUS_REGIME_CONFIRMATION_BARS
+  );
+  let autonomousAgent: AutonomousTradingAgent | undefined;
+  if (env.AUTONOMOUS_AGENT_ENABLED !== false) {
+    // --- The agent's brain: 4 modules wired before the agent itself ----------
+    // Each one is a single-purpose class so the agent's main loop stays
+    // focused on the per-symbol scan. Order matters here: the health
+    // monitor must exist before the circuit breaker (which queries it on
+    // every cycle), and the performance tracker must exist before both
+    // (the breaker queries its consecutive-loss count).
+    const healthMonitor = new HealthMonitor(
+      {
+        symbols,
+        timeframes: ['4h', '1h', '15m', '5m'],
+        staleMs: env.AUTONOMOUS_HEALTH_STALE_MS,
+        modelProbeIntervalMs: env.AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS,
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        mtfEngine,
+        marketState,
+        modelManager,
+      }
+    );
+
+    const performanceTracker = new PerformanceTracker(
+      {
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        windowSize: env.AUTONOMOUS_LEARN_WINDOW_SIZE,
+        minSample: env.AUTONOMOUS_LEARN_MIN_SAMPLE,
+        riskAdaptStep: env.AUTONOMOUS_LEARN_RISK_ADAPT_STEP,
+        riskMultMin: env.AUTONOMOUS_LEARN_RISK_MULT_MIN,
+        riskMultMax: env.AUTONOMOUS_LEARN_RISK_MULT_MAX,
+      },
+      { eventLog: events }
+    );
+
+    // Adaptive risk manager — regime overlay x per-regime learning bias
+    // (Finding 4): the tracker's getRegimeStats feeds observed per-regime
+    // win rate straight into computeTradePlan's riskMultiplier, so the plan
+    // reflects not just what the regime SHOULD allow but how the agent has
+    // actually been performing inside it.
+    const adaptiveRiskManager = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => broker.getAccount().equity,
+      getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+      getCandles: (symbol, timeframe, count) => {
+        const all = klines.getCandles(symbol, timeframe as KlineInterval, count);
+        return all.filter((c) => c.isClosed).slice(-count);
+      },
+      getRegimeStats: (regime) => performanceTracker.getRegimeStats(regime),
+    });
+
+    // The circuit breaker's `getHealth` reads the monitor's cached state
+    // (no extra probes — the agent itself triggers one full probe per cycle).
+    const circuitBreaker = new CircuitBreaker(
+      {
+        maxDailyLossPct: env.AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT,
+        maxConsecutiveLosses: env.AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES,
+        maxDrawdownPct: env.AUTONOMOUS_CB_MAX_DRAWDOWN_PCT,
+        cooldownMs: env.AUTONOMOUS_CB_COOLDOWN_MS,
+        requireHealthyMarket: env.AUTONOMOUS_CB_REQUIRE_HEALTHY_MARKET,
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        getAccount: () => broker.getAccount(),
+        getConsecutiveLosses: () => performanceTracker.getRollingStats().consecutiveLosses,
+        getHealth: () => healthMonitor.getState(),
+      }
+    );
+
+    // The exit manager hands the trailing-stop controller a `forget(symbol)`
+    // hook so the controller doesn't keep trying to move stops on positions
+    // the agent just flattened. The controller is optional (only constructed
+    // when TRAILING_STOPS_ENABLED), so we use optional chaining.
+    // Scaling (Finding 2): pyramid adds into winners + one-time downside
+    // de-risk of losers — bounded by the knobs below.
+    const exitManager = new ExitManager(
+      {
+        exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
+        maxUnrealizedLossPct: env.AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT,
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        scaling: {
+          enabled: env.AUTONOMOUS_SCALING_ENABLED,
+          scaleInMinProfitPct: env.AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT,
+          scaleInSizeFraction: env.AUTONOMOUS_SCALE_IN_SIZE_FRACTION,
+          scaleInMaxAdds: env.AUTONOMOUS_SCALE_IN_MAX_ADDS,
+          scaleInCooldownMs: env.AUTONOMOUS_SCALE_IN_COOLDOWN_MS,
+          scaleOutTriggerPct: env.AUTONOMOUS_SCALE_OUT_TRIGGER_PCT,
+          scaleOutCloseFraction: env.AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION,
+        },
+      },
+      {
+        eventLog: events,
+        wsGateway,
+        strategyEngine,
+        regimeDetector,
+        getPositions: () => broker.getPositions(),
+        getAccount: () => broker.getAccount(),
+        getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+        forgetTrailingStop: (symbol) => trailingStops?.forget(symbol),
+      }
+    );
+
+    autonomousAgent = new AutonomousTradingAgent(
+      {
+        symbols,
+        cycleMs: env.AUTONOMOUS_CYCLE_MS,
+        minConfluence: env.AUTONOMOUS_MIN_CONFLUENCE,
+        minRR: env.AUTONOMOUS_MIN_RR,
+        maxOpenPositions: env.AUTONOMOUS_MAX_OPEN_POSITIONS,
+        perSymbolMaxPositions: env.AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS,
+        cooldownMs: env.AUTONOMOUS_COOLDOWN_MS,
+        strategyId: env.AUTONOMOUS_STRATEGY_ID,
+        minConfidence: env.AUTONOMOUS_MIN_CONFIDENCE,
+        regimeConfirmationBars: env.AUTONOMOUS_REGIME_CONFIRMATION_BARS,
+      },
+      {
+        setupEngine,
+        mtfEngine,
+        regimeDetector,
+        riskManager: adaptiveRiskManager,
+        modelManager,
+        strategyEngine,
+        eventLog: events,
+        wsGateway,
+        getPositions: () => broker.getPositions(),
+        getAccount: () => broker.getAccount(),
+        getLastPrice: (symbol) => marketState.getState(symbol)?.last,
+        performanceTracker,
+        circuitBreaker,
+        exitManager,
+        healthMonitor,
+      }
+    );
+    logger.info(
+      {
+        cycleMs: env.AUTONOMOUS_CYCLE_MS,
+        minConfluence: env.AUTONOMOUS_MIN_CONFLUENCE,
+        minRR: env.AUTONOMOUS_MIN_RR,
+        maxOpenPositions: env.AUTONOMOUS_MAX_OPEN_POSITIONS,
+        cbMaxDailyLossPct: env.AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT,
+        cbMaxConsecutiveLosses: env.AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES,
+        learnWindowSize: env.AUTONOMOUS_LEARN_WINDOW_SIZE,
+        exitOnRegimeFlip: env.AUTONOMOUS_EXIT_ON_REGIME_FLIP,
+        scalingEnabled: env.AUTONOMOUS_SCALING_ENABLED,
+        symbolLockEnabled: env.SYMBOL_LOCK_ENABLED,
+        symbolLockTtlMs: env.SYMBOL_LOCK_TTL_MS,
+      },
+      'Autonomous trading agent enabled and will run on its own clock'
+    );
+  } else {
+    logger.info('Autonomous trading agent explicitly disabled via AUTONOMOUS_AGENT_ENABLED=false — running candle-driven strategies only');
+  }
 
   strategyEngine.register(
     createSmcAgentStrategy({
@@ -565,6 +782,7 @@ export async function startEngine(): Promise<EngineHandle> {
     profitGoals,
     strategyPerformance,
     setupPerformance,
+    autonomousAgent,
     liveGuard,
     reconciler,
     riskConfig: DEFAULT_RISK_CONFIG,
@@ -762,9 +980,45 @@ export async function startEngine(): Promise<EngineHandle> {
 
   scheduler.start();
 
+  // --- Startup self-test for the autonomous agent ------------------------
+  // Verifies every brain module + external dep is wired before the agent
+  // starts its 30s cycle. When AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL is true
+  // (default), critical failures halt the engine so the operator sees the
+  // problem immediately instead of discovering silent degradation hours
+  // later (e.g. Ollama unreachable → agent falls back to NEUTRAL → no
+  // trades, dashboard shows zero activity, operator assumes market is
+  // just quiet).
+  if (autonomousAgent) {
+    const { runStartupSelfTest } = await import('./agent/StartupSelfTest.js');
+    const selfTestResult = await runStartupSelfTest({
+      autonomousAgent,
+      modelManager,
+      supervisor,
+      broker,
+      failOnCritical: env.AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL,
+    }).catch((err) => {
+      logger.error({ err }, '[StartupSelfTest] CRITICAL failure — see check log above. Halting engine startup.');
+      throw err;
+    });
+    if (selfTestResult.criticalFailures > 0) {
+      logger.warn(
+        { critical: selfTestResult.criticalFailures, warnings: selfTestResult.warnings },
+        `[StartupSelfTest] Continuing despite ${selfTestResult.criticalFailures} critical failure(s) — AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL=false. The agent may behave unexpectedly.`
+      );
+    }
+  }
+
+  // Start the autonomous trading agent LAST — it needs strategyEngine
+  // running (for submitSignal), market data flowing (for klines and
+  // marketState), the API server up (for WebSocket broadcasts), and the
+  // scheduler started (so profit goals + snapshot state are stable).
+  // Disabled by default; start() is a no-op if the agent wasn't constructed.
+  autonomousAgent?.start();
+
   metrics.setGauge('instruments_total', instruments.length);
   metrics.setGauge('strategies_total', strategyEngine.listStrategies().length);
   metrics.setGauge('strategies_quarantined_total', strategyEngine.listQuarantined().length);
+  metrics.setGauge('autonomous_agent_enabled', autonomousAgent ? 1 : 0);
 
   const telegram = new TelegramNotifier({
     enabled: runtimeProfile.telegramEnabled,
@@ -786,6 +1040,7 @@ export async function startEngine(): Promise<EngineHandle> {
   return {
     stop: async (): Promise<void> => {
       logger.info('Stopping paper-broker');
+      autonomousAgent?.stop();
       scheduler.stop();
       if (profitGoals) profitGoalStore.save(profitGoals);
       strategyPerformanceStore.save(strategyPerformance.listStats());

@@ -193,7 +193,7 @@ interface StoreState {
   selectedPosition: Position | null;
   cycles: AgentCycle[];
   selectedCycle: CycleDetail | null;
-  agentTab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend';
+  agentTab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend' | 'autonomous';
   tradingTab: 'positions' | 'orders' | 'form' | 'fills' | 'journal';
   riskSummary: RiskSummary | null;
   performance: PerformanceMetrics | null;
@@ -216,7 +216,7 @@ interface StoreState {
   setSelectedPosition: (pos: Position | null) => void;
   setCycles: (cycles: AgentCycle[]) => void;
   setSelectedCycle: (cycle: CycleDetail | null) => void;
-  setAgentTab: (tab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend') => void;
+  setAgentTab: (tab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend' | 'autonomous') => void;
   setTradingTab: (tab: 'positions' | 'orders' | 'form' | 'fills' | 'journal') => void;
   setRiskSummary: (risk: RiskSummary) => void;
   setPerformance: (perf: PerformanceMetrics) => void;

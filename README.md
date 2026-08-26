@@ -54,8 +54,14 @@ pnpm install          # requires Node 22+ and pnpm
 cp .env.example .env  # set TRADING_MODE=paper|shadow|live
 pnpm db:init          # create the SQLite schema (data/paper.sqlite3)
 pnpm build
-pnpm start            # API and Dashboard on http://localhost:8080
+pnpm start            # boots in AUTONOMOUS mode by default; dashboard at http://localhost:8080
 ```
+
+> **Autonomous-first by default.** `pnpm start` boots the engine with the
+> `AutonomousTradingAgent` driving decisions on its own 30s clock (override
+> via `AUTONOMOUS_CYCLE_MS`). Candle-driven strategies remain active in
+> parallel. To opt out for the legacy candle-only behaviour, use
+> `pnpm paper:candle-only` or set `AUTONOMOUS_AGENT_ENABLED=false` in `.env`.
 
 Open your browser and navigate to:
 ```text
@@ -89,15 +95,18 @@ pnpm docker:down
 | Script | Description |
 | --- | --- |
 | `pnpm build` | Type-check and compile `src/` → `dist/` |
-| `pnpm start` | Run the compiled engine |
-| `pnpm dev` | Watch-mode development (`tsx watch`) |
+| `pnpm start` | **Run the compiled engine — autonomous by default** |
+| `pnpm dev` | Watch-mode development (`tsx watch`) — autonomous by default |
 | `pnpm lint` | ESLint over `src/` |
 | `pnpm test` | Vitest unit tests (100 tests across 17 suites) |
 | `pnpm verify:complete` | Canonical 7-step full verification suite |
 | `pnpm db:init` | Create/upgrade the SQLite schema |
 | `pnpm cli` | Run `dist/cli.js` |
-| `pnpm paper:trade` | Interactive CLI trading loop |
-| `pnpm paper:monitor` | Live stream of system events |
+| `pnpm paper:trade` | Same as `pnpm start` via CLI (alias of `autonomous`) |
+| `pnpm paper:autonomous` | Same as `pnpm start` via CLI — explicit alias |
+| `pnpm paper:candle-only` | **Opt-out:** legacy candle-driven behaviour (sets `AUTONOMOUS_AGENT_ENABLED=false` for you) |
+| `pnpm paper:monitor` | Live stream of Binance market data without trading |
+| `pnpm paper:backtest` | Run historical SMC replay backtest |
 | `pnpm docker:up` | Start background Docker container (`docker-compose up -d`) |
 | `pnpm docker:down` | Stop background Docker container (`docker-compose down`) |
 

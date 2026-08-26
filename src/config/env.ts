@@ -85,6 +85,115 @@ const EnvSchema = z.object({
   STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT: z.coerce.number().positive().default(500),
   STRATEGY_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
 
+  // Autonomous trading agent (src/agent/AutonomousTradingAgent.ts).
+  // ENABLED BY DEFAULT — `pnpm start` boots the engine in fully autonomous
+  // mode. The agent runs on its own clock independent of candle-close events,
+  // surveys every symbol across the MTF stack on each cycle, detects FORMING
+  // setups (state WATCHING..RETEST) and READY setups, validates HTF regime +
+  // LTF trigger alignment, adapts risk parameters per regime, and submits
+  // signals through the same StrategyEngine pipeline regular strategies use.
+  //
+  // Opt-out: set AUTONOMOUS_AGENT_ENABLED=false for the legacy candle-driven-
+  // only behaviour (used to debug the strategy fleet in isolation, or for the
+  // explicit paper:candle-only script which sets this for you).
+  AUTONOMOUS_AGENT_ENABLED: z
+    .string()
+    .optional()
+    // Default true (autonomous-first). Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  AUTONOMOUS_CYCLE_MS: z.coerce.number().int().min(5_000).default(30_000),
+  AUTONOMOUS_MIN_CONFLUENCE: z.coerce.number().min(0).max(100).default(65),
+  AUTONOMOUS_MIN_RR: z.coerce.number().positive().default(1.5),
+  AUTONOMOUS_MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(3),
+  AUTONOMOUS_PER_SYMBOL_MAX_POSITIONS: z.coerce.number().int().positive().default(1),
+  AUTONOMOUS_COOLDOWN_MS: z.coerce.number().int().min(0).default(300_000),
+  AUTONOMOUS_REGIME_CONFIRMATION_BARS: z.coerce.number().int().positive().default(3),
+  AUTONOMOUS_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.55),
+  AUTONOMOUS_STRATEGY_ID: z.string().min(1).default('autonomous-agent'),
+  // --- Circuit breaker (self-preservation) --------------------------------
+  // Trip the agent (stop new entries) when ANY of these breach. Existing
+  // positions continue to be managed by their stop/target/trailing logic.
+  AUTONOMOUS_CB_MAX_DAILY_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.03),
+  AUTONOMOUS_CB_MAX_CONSECUTIVE_LOSSES: z.coerce.number().int().min(1).default(5),
+  AUTONOMOUS_CB_MAX_DRAWDOWN_PCT: z.coerce.number().min(0).max(1).default(0.08),
+  AUTONOMOUS_CB_COOLDOWN_MS: z.coerce.number().int().min(1_000).default(900_000),
+  AUTONOMOUS_CB_REQUIRE_HEALTHY_MARKET: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // --- Learning loop (adaptive parameters) --------------------------------
+  // How many recent closed trades to consider when nudging params. Larger =
+  // smoother but slower to react; smaller = noisier but quicker.
+  AUTONOMOUS_LEARN_WINDOW_SIZE: z.coerce.number().int().min(5).max(500).default(30),
+  // Minimum trades before nudging kicks in (avoid small-sample knee-jerks).
+  AUTONOMOUS_LEARN_MIN_SAMPLE: z.coerce.number().int().min(2).max(100).default(5),
+  // How aggressively to nudge risk multiplier toward observed win rate.
+  // 0 = never adjust; 0.1 = small steps; 0.5 = aggressive.
+  AUTONOMOUS_LEARN_RISK_ADAPT_STEP: z.coerce.number().min(0).max(1).default(0.1),
+  // Floor and ceiling on the runtime risk multiplier.
+  AUTONOMOUS_LEARN_RISK_MULT_MIN: z.coerce.number().min(0.05).max(1).default(0.5),
+  AUTONOMOUS_LEARN_RISK_MULT_MAX: z.coerce.number().min(1).max(3).default(1.5),
+  // --- Exit manager (intra-position decisions) ----------------------------
+  // Allow the agent to flatten a position whose regime has flipped against
+  // it, even if the trailing stop hasn't fired yet.
+  AUTONOMOUS_EXIT_ON_REGIME_FLIP: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // If unrealized loss exceeds this fraction of equity, exit regardless of
+  // stop. 0 = disabled.
+  AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT: z.coerce.number().min(0).max(1).default(0.02),
+  // --- Position scaling (AUTONOMY_AUDIT Finding 2) ------------------------
+  // Pyramid into winners + one-time downside de-risk of losers. Enabled by
+  // default (autonomous-first); every knob is bounded independently.
+  AUTONOMOUS_SCALING_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  // Unrealized PROFIT as a fraction of equity required before a pyramid add
+  // (0.01 = 1%). Only winners get added to.
+  AUTONOMOUS_SCALE_IN_MIN_PROFIT_PCT: z.coerce.number().min(0).max(1).default(0.01),
+  // Each add's quantity as a fraction of the CURRENT position size
+  // (0.5 = classic decreasing pyramid).
+  AUTONOMOUS_SCALE_IN_SIZE_FRACTION: z.coerce.number().min(0.01).max(1).default(0.5),
+  // Max adds per position lifecycle.
+  AUTONOMOUS_SCALE_IN_MAX_ADDS: z.coerce.number().int().min(0).max(5).default(1),
+  // Min time between adds on the same position.
+  AUTONOMOUS_SCALE_IN_COOLDOWN_MS: z.coerce.number().int().min(0).default(900_000),
+  // Unrealized LOSS (fraction of equity) that triggers a one-time partial
+  // de-risk. Should sit comfortably below
+  // AUTONOMOUS_EXIT_MAX_UNREALIZED_LOSS_PCT (the full-breach threshold).
+  AUTONOMOUS_SCALE_OUT_TRIGGER_PCT: z.coerce.number().min(0).max(1).default(0.01),
+  // Fraction of the position closed by the de-risk (0.5 = close half).
+  AUTONOMOUS_SCALE_OUT_CLOSE_FRACTION: z.coerce.number().min(0.01).max(1).default(0.5),
+  // --- Symbol lock (multi-strategy orchestration, AUTONOMY_AUDIT Finding 3)
+  // When enabled, the first strategy whose OPEN signal is accepted owns the
+  // symbol for SYMBOL_LOCK_TTL_MS — other strategies' OPENs on that symbol
+  // are rejected (with a reason) so the autonomous agent and candle-driven
+  // strategies (e.g. smc-agent) can never race each other into conflicting
+  // entries on the same symbol. CLOSE/CANCEL_ALL always pass.
+  SYMBOL_LOCK_ENABLED: z
+    .string()
+    .optional()
+    // Default true. Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+  SYMBOL_LOCK_TTL_MS: z.coerce.number().int().min(1_000).default(300_000),
+  // --- Health monitor (self-diagnostics) ----------------------------------
+  AUTONOMOUS_HEALTH_STALE_MS: z.coerce.number().int().min(1_000).default(15_000),
+  AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
+
+  // --- Startup self-test (src/agent/StartupSelfTest.ts) -------------------
+  // Runs once at startup before the agent's first cycle. When true (default),
+  // any CRITICAL check failure halts the engine so the operator sees the
+  // problem immediately instead of discovering silent degradation hours
+  // later. Set to false to continue anyway (e.g. for dev / debugging).
+  AUTONOMOUS_SELF_TEST_FAIL_ON_CRITICAL: z
+    .string()
+    .optional()
+    // Default true (fail-fast). Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
+
   // Per-setup-archetype performance feedback for the SMC agent
   // (src/strategy/strategies/smc-agent.ts, reuses StrategyPerformanceTracker
   // keyed by setup type instead of strategy id). Lower default trade count
