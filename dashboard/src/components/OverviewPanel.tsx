@@ -1,5 +1,10 @@
 import React from 'react';
-import { useStore, formatCurrency } from '../store/useStore';
+import {
+  useStore,
+  formatCurrency,
+  calculatePositionPnl,
+  calculateTotalUnrealizedPnl,
+} from '../store/useStore';
 import { useDashboard, useCycles, usePerformance } from '../hooks/useApi';
 import {
   DollarSign, TrendingUp, Target,
@@ -7,11 +12,20 @@ import {
 } from 'lucide-react';
 
 export function OverviewPanel() {
-  const { account, positions } = useStore();
+  const { account, positions, livePrice, tickers } = useStore();
   useDashboard();
   useCycles();
   usePerformance('30d');
   const { performance } = useStore();
+
+  const totalUnrealizedPnl = calculateTotalUnrealizedPnl(
+    positions,
+    livePrice,
+    tickers,
+    account?.unrealizedPnl ?? 0
+  );
+  const rawBalance = account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 10000);
+  const liveEquity = account ? rawBalance + totalUnrealizedPnl : 10000;
 
   return (
     <div className="space-y-6">
@@ -20,8 +34,8 @@ export function OverviewPanel() {
         <StatCard
           icon={<DollarSign className="w-5 h-5" />}
           label="Account Equity"
-          value={`$${(account?.equity || 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          change={account?.unrealizedPnl || 0}
+          value={`$${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          change={totalUnrealizedPnl}
           color="blue"
         />
         <StatCard
@@ -72,34 +86,41 @@ export function OverviewPanel() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#2d3a4f]/40">
-                {positions.map((pos) => (
-                  <tr key={pos.symbol} className="hover:bg-[#243044]/40 transition">
-                    <td className="px-6 py-4 font-bold text-white">{pos.symbol}</td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold ${
-                          pos.side === 'LONG'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                {positions.map((pos) => {
+                  const { markPrice: mark, unrealizedPnl: pnl } = calculatePositionPnl(
+                    pos,
+                    livePrice,
+                    tickers
+                  );
+                  return (
+                    <tr key={pos.symbol} className="hover:bg-[#243044]/40 transition">
+                      <td className="px-6 py-4 font-bold text-white">{pos.symbol}</td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold ${
+                            pos.side === 'LONG'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                          }`}
+                        >
+                          {pos.side === 'LONG' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                          {pos.side}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right text-gray-300">{pos.quantity ?? 0}</td>
+                      <td className="px-6 py-4 text-right text-gray-300">{formatCurrency(pos.entryPrice, pos.symbol)}</td>
+                      <td className="px-6 py-4 text-right text-white font-semibold">{formatCurrency(mark, pos.symbol)}</td>
+                      <td className="px-6 py-4 text-right text-amber-400">{pos.leverage ?? 5}x</td>
+                      <td
+                        className={`px-6 py-4 text-right font-semibold ${
+                          pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                         }`}
                       >
-                        {pos.side === 'LONG' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                        {pos.side}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right text-gray-300">{pos.quantity ?? 0}</td>
-                    <td className="px-6 py-4 text-right text-gray-300">{formatCurrency(pos.entryPrice, pos.symbol)}</td>
-                    <td className="px-6 py-4 text-right text-white font-semibold">{formatCurrency(pos.markPrice ?? pos.entryPrice, pos.symbol)}</td>
-                    <td className="px-6 py-4 text-right text-amber-400">{pos.leverage ?? 5}x</td>
-                    <td
-                      className={`px-6 py-4 text-right font-semibold ${
-                        (pos.unrealizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
-                      }`}
-                    >
-                      {(pos.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${(pos.unrealizedPnl ?? 0).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

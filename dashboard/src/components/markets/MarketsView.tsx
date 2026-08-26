@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 export function MarketsView() {
-  const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers } = useStore();
+  const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers, livePrice } = useStore();
   const [depthLimit, setDepthLimit] = useState<number>(10);
 
   useTickers();
@@ -25,6 +25,7 @@ export function MarketsView() {
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 100);
 
   const activeTicker = tickers[selectedSymbol];
+  const activeLtp = livePrice[selectedSymbol] ?? activeTicker?.price ?? activeTicker?.markPrice ?? 0;
 
   return (
     <div className="space-y-5 font-mono text-xs select-none">
@@ -32,6 +33,7 @@ export function MarketsView() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {SUPPORTED_SYMBOLS.map((sym) => {
           const t = tickers[sym];
+          const price = livePrice[sym] ?? t?.price ?? 0;
           const isSelected = selectedSymbol === sym;
           const isPos = (t?.change24h || 0) >= 0;
 
@@ -54,7 +56,7 @@ export function MarketsView() {
                 )}
               </div>
               <div className="text-sm font-black text-white">
-                ${(t?.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
               </div>
               <div className={`text-[10px] font-bold mt-0.5 ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
                 {isPos ? '+' : ''}{(t?.change24h || 0).toFixed(2)}%
@@ -80,7 +82,7 @@ export function MarketsView() {
             <div className="flex flex-wrap items-center gap-6 text-[11px]">
               <div>
                 <span className="text-gray-500 text-[10px] block">Mark Price</span>
-                <span className="font-bold text-white">${activeTicker?.markPrice || activeTicker?.price || 0}</span>
+                <span className="font-bold text-white">${activeLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-[10px] block">24h High</span>
@@ -150,7 +152,7 @@ export function MarketsView() {
                   <div className="bg-[#080c14] py-1.5 px-3 rounded-lg border border-[#1b2537] flex items-center justify-between text-[11px] font-bold mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-white font-mono">
-                        {formatCurrency(activeTicker?.price || orderbook?.last, selectedSymbol)}
+                        {formatCurrency(activeLtp || orderbook?.last, selectedSymbol)}
                       </span>
                       <span className="text-[9px] text-gray-500 font-mono">
                         Spread: {formatCurrency(orderbook?.spread, selectedSymbol)}
