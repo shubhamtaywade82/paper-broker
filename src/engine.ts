@@ -439,9 +439,11 @@ export async function startEngine(): Promise<EngineHandle> {
   // the market regime, builds regime-adjusted trade plans, and submits
   // signals through the same StrategyEngine pipeline regular strategies use.
   //
-  // Disabled by default (AUTONOMOUS_AGENT_ENABLED=true to opt in) so existing
-  // deployments keep their current always-candle-driven behaviour until the
-  // operator is ready.
+  // ENABLED BY DEFAULT — `pnpm start` boots the engine in fully autonomous
+  // mode. Operators who need the legacy candle-driven-only behaviour (e.g. to
+  // debug the strategy fleet in isolation) can opt out by setting
+  // AUTONOMOUS_AGENT_ENABLED=false, or use `pnpm paper:candle-only` which
+  // sets that flag for them.
   const modelManager = new ModelManager({
     llmEndpoints: [
       // Ollama Cloud accounts (when configured) come first for capacity.
@@ -489,7 +491,7 @@ export async function startEngine(): Promise<EngineHandle> {
   });
 
   let autonomousAgent: AutonomousTradingAgent | undefined;
-  if (env.AUTONOMOUS_AGENT_ENABLED) {
+  if (env.AUTONOMOUS_AGENT_ENABLED !== false) {
     // --- The agent's brain: 4 modules wired before the agent itself ----------
     // Each one is a single-purpose class so the agent's main loop stays
     // focused on the per-symbol scan. Order matters here: the health
@@ -610,7 +612,7 @@ export async function startEngine(): Promise<EngineHandle> {
       'Autonomous trading agent enabled and will run on its own clock'
     );
   } else {
-    logger.info('Autonomous trading agent disabled (set AUTONOMOUS_AGENT_ENABLED=true to enable)');
+    logger.info('Autonomous trading agent explicitly disabled via AUTONOMOUS_AGENT_ENABLED=false — running candle-driven strategies only');
   }
 
   strategyEngine.register(

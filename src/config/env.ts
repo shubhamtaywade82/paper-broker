@@ -86,15 +86,21 @@ const EnvSchema = z.object({
   STRATEGY_FEEDBACK_MIN_WIN_RATE: z.coerce.number().min(0).max(1).default(0.3),
 
   // Autonomous trading agent (src/agent/AutonomousTradingAgent.ts).
-  // When enabled, the agent runs on its own clock independent of candle-close
-  // events, surveys every symbol across the MTF stack on each cycle, detects
-  // FORMING setups (state WATCHING..RETEST) and READY setups, validates HTF
-  // regime + LTF trigger alignment, adapts risk parameters per regime, and
-  // submits signals through the same StrategyEngine pipeline.
+  // ENABLED BY DEFAULT — `pnpm start` boots the engine in fully autonomous
+  // mode. The agent runs on its own clock independent of candle-close events,
+  // surveys every symbol across the MTF stack on each cycle, detects FORMING
+  // setups (state WATCHING..RETEST) and READY setups, validates HTF regime +
+  // LTF trigger alignment, adapts risk parameters per regime, and submits
+  // signals through the same StrategyEngine pipeline regular strategies use.
+  //
+  // Opt-out: set AUTONOMOUS_AGENT_ENABLED=false for the legacy candle-driven-
+  // only behaviour (used to debug the strategy fleet in isolation, or for the
+  // explicit paper:candle-only script which sets this for you).
   AUTONOMOUS_AGENT_ENABLED: z
     .string()
     .optional()
-    .transform((val) => val === 'true'),
+    // Default true (autonomous-first). Only an explicit "false" disables it.
+    .transform((val) => val !== 'false'),
   AUTONOMOUS_CYCLE_MS: z.coerce.number().int().min(5_000).default(30_000),
   AUTONOMOUS_MIN_CONFLUENCE: z.coerce.number().min(0).max(100).default(65),
   AUTONOMOUS_MIN_RR: z.coerce.number().positive().default(1.5),

@@ -15,18 +15,43 @@ import type { ReplayConfig } from './research/replay/types.js';
 const SYMBOLS = symbols;
 const TIMEFRAMES = ['1m', '5m', '15m'];
 
-async function runTrade(): Promise<void> {
+/**
+ * Unified engine startup. `pnpm start`, `pnpm dev`, `pnpm paper:trade`, and
+ * `pnpm paper:autonomous` all flow through here. The engine itself boots in
+ * fully autonomous mode by default (env.AUTONOMOUS_AGENT_ENABLED defaults to
+ * true in src/config/env.ts); the only way to opt out is to explicitly set
+ * AUTONOMOUS_AGENT_ENABLED=false, or use `pnpm paper:candle-only` which sets
+ * that flag for you.
+ *
+ * The banner reflects the *effective* mode (autonomous vs candle-only) so the
+ * operator always knows which brain is driving decisions at startup.
+ */
+async function runEngine(label: 'trade' | 'autonomous' = 'autonomous'): Promise<void> {
+  const autonomousActive = env.AUTONOMOUS_AGENT_ENABLED !== false;
   console.log('='.repeat(60));
-  console.log('CRYPTO FUTURES PAPER TRADING ENGINE');
+  console.log(autonomousActive
+    ? 'AUTONOMOUS AI TRADING AGENT — runs on its own clock'
+    : 'PAPER TRADING ENGINE — candle-driven (autonomous agent disabled)');
   console.log('='.repeat(60));
-  console.log(`Symbols: ${SYMBOLS.join(', ')}`);
-  console.log(`Timeframes: ${TIMEFRAMES.join(', ')}`);
-  console.log(`Starting USDT: ${env.PAPER_STARTING_USDT}`);
+  console.log(`Symbols:           ${SYMBOLS.join(', ')}`);
+  console.log(`Timeframes:        ${TIMEFRAMES.join(', ')}`);
+  console.log(`Starting USDT:     ${env.PAPER_STARTING_USDT}`);
+  if (autonomousActive) {
+    console.log(`Cycle interval:   ${env.AUTONOMOUS_CYCLE_MS}ms`);
+    console.log(`Min confluence:   ${env.AUTONOMOUS_MIN_CONFLUENCE}`);
+    console.log(`Min RR:           ${env.AUTONOMOUS_MIN_RR}`);
+    console.log(`Max open pos:     ${env.AUTONOMOUS_MAX_OPEN_POSITIONS}`);
+    console.log(`Model:            ${env.OLLAMA_MODEL}`);
+    console.log('✓  Autonomous agent active — decisions driven by the agent loop,');
+    console.log('   not by Binance candle-close events. Existing strategies remain active.');
+  } else {
+    console.log('⚠️  AUTONOMOUS_AGENT_ENABLED=false — running candle-driven strategies only.');
+    console.log('   Use `pnpm start` (default) or `AUTONOMOUS_AGENT_ENABLED=true` for the agent loop.');
+  }
   console.log('='.repeat(60));
 
   const engine = await startEngine();
-
-  console.log('[Main] Engine started. Press Ctrl+C to stop.');
+  console.log(`[${label}] Engine started. Press Ctrl+C to stop.`);
 
   // Medium finding ("process.exit(0) skips cleanup handlers"): this used to
   // duplicate index.ts's original unguarded shutdown pattern (no
@@ -39,43 +64,11 @@ async function runTrade(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-/**
- * `autonomous` is `trade` with a banner that explicitly tells the operator
- * the autonomous agent is what's driving decisions. The agent is only
- * actually active when AUTONOMOUS_AGENT_ENABLED=true; if it's disabled,
- * this command logs a warning and falls back to the candle-driven pipeline.
- */
-async function runAutonomous(): Promise<void> {
-  console.log('='.repeat(60));
-  console.log('AUTONOMOUS AI TRADING AGENT — runs on its own clock');
-  console.log('='.repeat(60));
-  console.log(`Symbols:           ${SYMBOLS.join(', ')}`);
-  console.log(`Timeframes:        ${TIMEFRAMES.join(', ')}`);
-  console.log(`Starting USDT:     ${env.PAPER_STARTING_USDT}`);
-  console.log(`Cycle interval:   ${env.AUTONOMOUS_CYCLE_MS}ms`);
-  console.log(`Min confluence:   ${env.AUTONOMOUS_MIN_CONFLUENCE}`);
-  console.log(`Min RR:           ${env.AUTONOMOUS_MIN_RR}`);
-  console.log(`Max open pos:     ${env.AUTONOMOUS_MAX_OPEN_POSITIONS}`);
-  console.log(`Model:            ${env.OLLAMA_MODEL}`);
-  console.log('='.repeat(60));
-  if (!env.AUTONOMOUS_AGENT_ENABLED) {
-    console.warn(
-      '⚠️  AUTONOMOUS_AGENT_ENABLED is false — the agent will NOT run.\n' +
-        '   Set AUTONOMOUS_AGENT_ENABLED=true in .env to enable autonomous mode.\n' +
-        '   Falling back to the candle-driven strategy pipeline.'
-    );
-  } else {
-    console.log('✓  Autonomous agent enabled — decisions are driven by the agent loop,');
-    console.log('   not by Binance candle-close events. Existing strategies remain active.');
-  }
-
-  const engine = await startEngine();
-  console.log('[Autonomous] Engine started. Press Ctrl+C to stop.');
-
-  const shutdown = createShutdownHandler(engine);
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-}
+// Backward-compat aliases — both `trade` and `autonomous` now flow through the
+// same autonomous-first startup. Kept so existing operator docs / scripts that
+// reference `paper:trade` or `paper:autonomous` keep working unchanged.
+const runTrade = (): Promise<void> => runEngine('trade');
+const runAutonomous = (): Promise<void> => runEngine('autonomous');
 
 async function runMonitor(): Promise<void> {
   console.log('[Monitor] Connecting to Binance Futures WebSocket...');
@@ -242,10 +235,11 @@ async function runBacktestCmd(): Promise<void> {
 
 function printUsage(): void {
   console.log('Usage: node dist/cli.js <trade|autonomous|monitor|backtest> [--help]');
-  console.log('  trade:       Start paper trading engine (candle-driven strategies)');
-  console.log('  autonomous:  Start the engine with the autonomous AI agent enabled');
-  console.log('               (set AUTONOMOUS_AGENT_ENABLED=true to actually run the loop)');
-  console.log('  monitor:    Stream Binance market data without trading');
+  console.log('  trade:        Start the engine — autonomous by default (alias of `autonomous`)');
+  console.log('  autonomous:   Start the engine — autonomous by default');
+  console.log('                (set AUTONOMOUS_AGENT_ENABLED=false, or use `pnpm paper:candle-only`,');
+  console.log('                for the legacy candle-driven-only fallback)');
+  console.log('  monitor:      Stream Binance market data without trading');
   console.log('  backtest options:');
   console.log('    SMC engine (default):        --engine=smc --symbol=SOLUSDT --days=3');
   console.log('    Legacy indicator engine:     --engine=indicators --start=YYYY-MM-DD --end=YYYY-MM-DD --strategies=all|ema-trend,...');

@@ -15,6 +15,7 @@
     "cli": "node dist/cli.js",
     "paper:trade": "tsx src/cli.ts trade",
     "paper:autonomous": "tsx src/cli.ts autonomous",
+    "paper:candle-only": "AUTONOMOUS_AGENT_ENABLED=false tsx src/cli.ts trade",
     "paper:monitor": "tsx src/cli.ts monitor",
     "paper:backtest": "tsx src/cli.ts backtest",
     "docker:build": "docker build -t paper-broker .",
