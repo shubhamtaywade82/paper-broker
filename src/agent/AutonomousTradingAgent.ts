@@ -341,7 +341,8 @@ export class AutonomousTradingAgent {
     const exits = await this.deps.exitManager.evaluateExits(this.perSymbol, cycleId, now);
 
     const account = this.deps.getAccount();
-    const openPositions = this.deps.getPositions();
+    const allPositions = this.deps.getPositions();
+    const openPositions = allPositions.filter((p) => p.status === 'OPEN' && p.qty !== 0);
     const portfolioFull = openPositions.length >= this.config.maxOpenPositions;
 
     for (const symbol of this.config.symbols) {

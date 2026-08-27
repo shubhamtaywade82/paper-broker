@@ -217,6 +217,17 @@ export const AutonomousLearningSchema = z.object({
   rollingSampleSize: z.number(),
 });
 
+export const KlineClosedSchema = z.object({
+  symbol: z.string(),
+  interval: z.string(),
+  openTime: z.number(),
+  open: z.number(),
+  high: z.number(),
+  low: z.number(),
+  close: z.number(),
+  volume: z.number(),
+});
+
 export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('market.tick'), payload: TickSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('position.updated'), payload: PositionUpdatedSchema, timestampUtc: z.string().optional() }),
@@ -234,6 +245,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('agent.autonomous.health'), payload: AutonomousHealthSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.exit'), payload: AutonomousExitSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.learning'), payload: AutonomousLearningSchema, timestampUtc: z.string().optional() }),
+  z.object({ type: z.literal('kline.closed'), payload: KlineClosedSchema, timestampUtc: z.string().optional() }),
 ]);
 
 export type WsMessage = z.infer<typeof WsMessageSchema>;

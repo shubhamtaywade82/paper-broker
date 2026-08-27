@@ -429,6 +429,7 @@ export async function startEngine(): Promise<EngineHandle> {
     apiKeys: cloudKeys,
     cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
     cloudModel: env.OLLAMA_CLOUD_MODEL,
+    timeoutMs: 15_000,
   });
 
   // Non-blocking: the agent debate already falls back to a safe NEUTRAL decision when

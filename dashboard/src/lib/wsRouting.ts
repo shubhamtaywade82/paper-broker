@@ -22,6 +22,9 @@ export function setupWsRouting(): () => void {
       case 'market.tick':
         useStore.getState().setLivePrice(m.payload.symbol, m.payload.price);
         break;
+      case 'kline.closed':
+        useStore.getState().setClosedCandle(m.payload);
+        break;
 
       // --- Trading -------------------------------------------------------
       case 'position.updated':
