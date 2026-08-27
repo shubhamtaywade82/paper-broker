@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   createSeriesMarkers,
+  LastPriceAnimationMode,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
@@ -113,6 +114,7 @@ export function TradingChart({
       borderVisible: false,
       wickUpColor: '#05cd99',
       wickDownColor: '#ff4d4f',
+      lastPriceAnimation: LastPriceAnimationMode.Continuous,
     });
 
     let volumeSeries: ISeriesApi<'Histogram'> | null = null;
