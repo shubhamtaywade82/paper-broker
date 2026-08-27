@@ -91,9 +91,9 @@ export class PaperBroker implements ExecutionBroker {
 
     this.risk = {
       maxLeverage: 10,
-      maxOrderNotional: 5000,
+      maxOrderNotional: 10000,
       maxPositionNotional: 20000,
-      maxDailyLoss: 1000,
+      maxDailyLoss: 3500,
       maxOpenOrders: 50,
       allowMarketOrders: true,
       allowLimitOrders: true,
