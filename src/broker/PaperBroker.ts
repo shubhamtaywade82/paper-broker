@@ -128,6 +128,26 @@ export class PaperBroker implements ExecutionBroker {
       }
     }
 
+    // Load and replay fills to reconstruct wallet balance, fees, realized PnL
+    if (this.persister?.loadFills) {
+      const persistedFills = this.persister.loadFills(config.accountId);
+      let realizedPnlSum = 0;
+      let feesSum = 0;
+      const fundingSum = 0;
+      for (const fill of persistedFills) {
+        this.fills.push(fill);
+        realizedPnlSum += fill.realizedPnl;
+        feesSum += fill.fee;
+        // funding is not stored in fills, would need separate tracking
+      }
+      this.totalRealizedPnl = realizedPnlSum;
+      this.totalFees = feesSum;
+      this.totalFunding = fundingSum;
+      // realizedPnlSum is negative for losses, positive for gains
+      // walletBalance = startingBalance + realizedPnl - fees - funding
+      this.walletBalance = config.startingUsdt + realizedPnlSum - feesSum - fundingSum;
+    }
+
     this.account = this.calculateAccountState();
   }
 

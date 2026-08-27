@@ -329,6 +329,7 @@ export interface BrokerPersister {
   savePosition(position: Position): void;
   loadOpenPositions?(accountId?: string): Position[];
   loadOpenOrders?(accountId?: string): Order[];
+  loadFills?(accountId?: string): Fill[];
 }
 
 export interface PaperBrokerConfig {

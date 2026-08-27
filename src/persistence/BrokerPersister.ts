@@ -254,4 +254,50 @@ export class SQLiteBrokerPersister implements BrokerPersister {
       updatedAtUtc: r.updated_at_utc || new Date().toISOString(),
     }));
   }
+
+  loadFills(accountId = 'paper-main'): Fill[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM fills
+      WHERE account_id = ?
+      ORDER BY fill_ts_utc
+    `).all(accountId) as Array<{
+      id: string;
+      order_id: string;
+      account_id: string;
+      symbol: string;
+      strategy_id: string | null;
+      signal_id: string | null;
+      side: string;
+      quantity: string;
+      price: string;
+      notional: string;
+      fee: string;
+      fee_asset: string;
+      liquidity: string;
+      realized_pnl: string;
+      position_qty_before: string;
+      position_qty_after: string;
+      fill_ts_utc: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      orderId: r.order_id,
+      accountId: r.account_id,
+      symbol: r.symbol,
+      strategyId: r.strategy_id ?? undefined,
+      signalId: r.signal_id ?? undefined,
+      side: r.side as Fill['side'],
+      quantity: parseFloat(r.quantity || '0'),
+      price: parseFloat(r.price || '0'),
+      notional: parseFloat(r.notional || '0'),
+      fee: parseFloat(r.fee || '0'),
+      feeAsset: r.fee_asset,
+      liquidity: r.liquidity as Fill['liquidity'],
+      realizedPnl: parseFloat(r.realized_pnl || '0'),
+      positionQtyBefore: parseFloat(r.position_qty_before || '0'),
+      positionQtyAfter: parseFloat(r.position_qty_after || '0'),
+      fillTsUtc: r.fill_ts_utc,
+    }));
+  }
 }
