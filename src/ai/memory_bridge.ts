@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.AGENT_DB_PATH || path.resolve(__dirname, "../../../../local-agent-stack/db/shared-agent-memory.db");
+const DB_PATH = process.env['AGENT_DB_PATH'] || path.resolve(__dirname, "../../../../local-agent-stack/db/shared-agent-memory.db");
 
 // Ensure directory exists before connecting
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
