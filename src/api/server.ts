@@ -606,13 +606,21 @@ export class ApiServer {
     }));
 
     this.app.get('/api/v1/klines', async (request, reply) => {
-      const query = request.query as { symbol?: string; interval?: string; limit?: string };
+      const query = request.query as { symbol?: string; interval?: string; limit?: string; before?: string };
       const symbol = (query.symbol || 'SOLUSDT').toUpperCase();
       if (!isValidSymbol(symbol)) {
         return reply.code(400).send({ error: 'INVALID_SYMBOL' });
       }
       const interval = query.interval || '15m';
       const limit = parseLimit(query.limit, 100);
+
+      if (query.before) {
+        const beforeTs = Number(query.before);
+        if (Number.isFinite(beforeTs) && beforeTs > 0) {
+          return await this.klines?.fetchHistoricalKlinesBefore(symbol, interval, beforeTs, limit) ?? [];
+        }
+      }
+
       let cached = this.klines?.getCandles(symbol, interval, limit) ?? [];
       if (cached.length === 0 && this.klines) {
         cached = await this.klines.fetchHistoricalKlines(symbol, interval, limit);

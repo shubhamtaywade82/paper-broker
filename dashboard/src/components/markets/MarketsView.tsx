@@ -5,6 +5,7 @@ import {
   useOrderbook,
   useTrades,
   useKlines,
+  useKlinesBefore,
 } from '../../hooks/useApi';
 import { TradingChart } from '../charts/TradingChart';
 import {
@@ -18,14 +19,34 @@ import {
 export function MarketsView() {
   const { selectedSymbol, setSelectedSymbol, timeframe, setTimeframe, tickers, livePrice } = useStore();
   const [depthLimit, setDepthLimit] = useState<number>(10);
+  const [beforeTs, setBeforeTs] = useState<number | null>(null);
 
   useTickers();
   const { data: orderbook } = useOrderbook(selectedSymbol, depthLimit);
   const { data: trades = [] } = useTrades(selectedSymbol);
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 100);
+  const { data: olderKlines = [] } = useKlinesBefore(selectedSymbol, timeframe, beforeTs);
 
   const activeTicker = tickers[selectedSymbol];
   const activeLtp = livePrice[selectedSymbol] ?? activeTicker?.price ?? activeTicker?.markPrice ?? 0;
+
+  // Merge older candles with current ones
+  const allKlines = (() => {
+    if (olderKlines.length === 0) return klines;
+    const merged = [...olderKlines, ...klines];
+    const seen = new Set<number>();
+    return merged
+      .filter((c) => {
+        if (seen.has(c.openTime)) return false;
+        seen.add(c.openTime);
+        return true;
+      })
+      .sort((a, b) => a.openTime - b.openTime);
+  })();
+
+  const handleLoadMore = (oldestCandleTime: number) => {
+    setBeforeTs(oldestCandleTime * 1000);
+  };
 
   return (
     <div className="space-y-5 font-mono text-xs select-none">
@@ -103,12 +124,13 @@ export function MarketsView() {
 
           {/* Interactive Chart */}
           <TradingChart
-            candles={klines}
+            candles={allKlines}
             symbol={selectedSymbol}
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
+            onLoadMore={handleLoadMore}
             height={420}
-            loading={klinesLoading && klines.length === 0}
+            loading={klinesLoading && allKlines.length === 0}
           />
         </div>
 

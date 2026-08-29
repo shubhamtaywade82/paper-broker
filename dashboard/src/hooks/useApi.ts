@@ -247,6 +247,24 @@ export function useKlines(symbol: string, interval = '15m', limit = 100) {
   });
 }
 
+export function useKlinesBefore(symbol: string, interval: string, before: number | null, limit = 200) {
+  return useQuery({
+    queryKey: ['klines', symbol, interval, limit, 'before', before],
+    queryFn: () =>
+      fetchJson<Array<{
+        openTime: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        closeTime: number;
+      }>>(`/api/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}&before=${before}`),
+    enabled: before !== null && before > 0,
+    staleTime: Infinity,
+  });
+}
+
 export function useCycles(symbol?: string) {
   const setCycles = useStore((s) => s.setCycles);
 

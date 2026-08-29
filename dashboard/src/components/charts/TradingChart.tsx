@@ -49,6 +49,7 @@ export interface TradingChartProps {
   symbol?: string;
   timeframe?: string;
   onTimeframeChange?: (tf: string) => void;
+  onLoadMore?: (oldestCandleTime: number) => void;
   showVolume?: boolean;
   loading?: boolean;
 }
@@ -60,6 +61,7 @@ export function TradingChart({
   symbol = 'SOLUSDT',
   timeframe = '15m',
   onTimeframeChange,
+  onLoadMore,
   showVolume = true,
   loading = false,
 }: TradingChartProps) {
@@ -69,6 +71,8 @@ export function TradingChart({
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastBarRef = useRef<CandlestickData<Time> | null>(null);
   const initialFitDoneRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const candlesCountRef = useRef(candles.length);
 
   const livePrice = useStore((s) => s.livePrice[symbol] ?? s.tickers[symbol]?.price);
   const closedCandle = useStore((s) => s.closedCandle[`${symbol}:${timeframe}`]);
@@ -148,6 +152,42 @@ export function TradingChart({
       lastBarRef.current = null;
     };
   }, [height, showVolume]);
+
+  // Scroll-to-left lazy loading: detect when user scrolls to the left edge
+  useEffect(() => {
+    if (!chartRef.current || !onLoadMore) return;
+
+    const chart = chartRef.current;
+    const handleVisibleRangeChange = () => {
+      if (loadingMoreRef.current) return;
+
+      const visibleRange = chart.timeScale().getVisibleLogicalRange();
+      if (!visibleRange || !candleSeriesRef.current) return;
+
+      // When the left edge of the visible range is near the first candle, load more
+      if (visibleRange.from <= 2 && candles.length > 0) {
+        const oldestCandle = candles[0];
+        if (oldestCandle && !loadingMoreRef.current) {
+          loadingMoreRef.current = true;
+          onLoadMore(oldestCandle.openTime);
+        }
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+    };
+  }, [onLoadMore, candles]);
+
+  // Reset loading flag when new candles are prepended
+  useEffect(() => {
+    if (candles.length > candlesCountRef.current) {
+      loadingMoreRef.current = false;
+    }
+    candlesCountRef.current = candles.length;
+  }, [candles.length]);
 
   // Update historical dataset when candles or symbol changes
   useEffect(() => {

@@ -10,6 +10,7 @@ import {
   useCycles,
   useRiskSummary,
   useKlines,
+  useKlinesBefore,
   usePerformance,
   useTriggerCycle,
   useOpenOrders,
@@ -57,11 +58,38 @@ export function DashboardView() {
   const liveEquity = account ? rawBalance + totalUnrealizedPnl : 10000;
 
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
+  const [beforeTs, setBeforeTs] = React.useState<number | null>(null);
+  const { data: olderKlines = [] } = useKlinesBefore(selectedSymbol, timeframe, beforeTs);
   const triggerCycle = useTriggerCycle();
 
   const [agentStreamFilter, setAgentStreamFilter] = React.useState<string>('ALL');
 
   const latestCycle = cycles.length > 0 ? cycles[0] : null;
+
+  // Merge older candles with current ones
+  const allKlines = React.useMemo(() => {
+    if (olderKlines.length === 0) return klines;
+    const merged = [...olderKlines, ...klines];
+    const seen = new Set<number>();
+    return merged
+      .filter((c) => {
+        if (seen.has(c.openTime)) return false;
+        seen.add(c.openTime);
+        return true;
+      })
+      .sort((a, b) => a.openTime - b.openTime);
+  }, [klines, olderKlines]);
+
+  const handleLoadMore = React.useCallback((oldestCandleTime: number) => {
+    // Convert seconds to milliseconds for the API
+    const beforeMs = oldestCandleTime * 1000;
+    setBeforeTs(beforeMs);
+  }, []);
+
+  // Reset beforeTs when symbol or timeframe changes
+  React.useEffect(() => {
+    setBeforeTs(null);
+  }, [selectedSymbol, timeframe]);
 
   // Convert cycles into chart markers for visual context
   const chartMarkers: ChartMarker[] = cycles
@@ -123,13 +151,14 @@ export function DashboardView() {
         {/* Market Context Chart (2 cols) */}
         <div className="lg:col-span-2 space-y-2">
           <TradingChart
-            candles={klines}
+            candles={allKlines}
             markers={chartMarkers}
             symbol={selectedSymbol}
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
+            onLoadMore={handleLoadMore}
             height={360}
-            loading={klinesLoading && klines.length === 0}
+            loading={klinesLoading && allKlines.length === 0}
           />
         </div>
 
