@@ -194,7 +194,22 @@ export class PaperBroker implements ExecutionBroker {
 
     const quantity = D(command.quantity);
     const stepSize = D(instrument.stepSize);
-    const roundedQuantity = roundStep(quantity, stepSize);
+    let roundedQuantity = roundStep(quantity, stepSize);
+
+    // Exchange semantics: a reduce-only order is clamped to the position it is
+    // reducing, never rejected and never allowed through at full size. Without
+    // this, an oversized reduce-only (a resting full-size SL left behind by a
+    // partial close / SCALE_OUT) lands in applyPositionFill's FLIP branch and
+    // OPENS an opposite-side position — a reduce-only order creating new
+    // exposure, which CONTRACTS.md forbids. checkOrderRisk's
+    // REDUCE_ONLY_WOULD_INCREASE guard does not catch it, because a flip to a
+    // smaller absolute size is not an "increase" by |newQty| > |currentQty|.
+    if (command.reduceOnly) {
+      const openQty = D(Math.abs(this.positions.get(command.symbol)?.qty ?? 0));
+      if (roundedQuantity.gt(openQty)) {
+        roundedQuantity = roundStep(openQty, stepSize);
+      }
+    }
 
     const price = command.price !== undefined
       ? roundTick(D(command.price), D(instrument.tickSize))

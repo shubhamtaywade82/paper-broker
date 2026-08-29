@@ -131,7 +131,10 @@ export class SignalExecutor {
       return true;
     } catch (error) {
       log.error(error, 'Signal order submission failed');
-      signals.updateStatus(signal.id, 'REJECTED', 'ORDER_SUBMISSION_ERROR');
+      // updateStatus(id, status, orderId?, rejectReason?) — the reason belongs
+      // in the 4th slot; passing it 3rd wrote 'ORDER_SUBMISSION_ERROR' into the
+      // signal's order_id column and left reject_reason null.
+      signals.updateStatus(signal.id, 'REJECTED', undefined, 'ORDER_SUBMISSION_ERROR');
       return false;
     }
   }

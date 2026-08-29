@@ -75,6 +75,12 @@ interface BacktestResult {
   byStrategy: Record<string, { trades: number; pnl: number; winRate: number }>;
 }
 
+const INTERVAL_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 300_000,
+  '15m': 900_000,
+};
+
 function msToDate(ms: number): string {
   return new Date(ms).toISOString();
 }
@@ -206,12 +212,39 @@ export class BacktestRunner {
     this.strategyEngine.start();
   }
 
+  /**
+   * Closed candles visible at the current replay timestamp.
+   *
+   * The cache is fully populated by loadKlines() before run() starts, so the
+   * previous `slice(-limit)` returned bars from the END of the dataset no
+   * matter where the replay actually was — every indicator a strategy computed
+   * was reading the future. Cut the series at the last bar that had already
+   * closed by `replayTs` (openTime + intervalMs <= replayTs) before slicing.
+   */
   private getCandles(symbol: string, interval: string, limit: number): Candle[] {
-    const key = `${symbol}:${interval}`;
-    return this.candleCache.get(key)?.slice(-limit) ?? [];
+    const series = this.candleCache.get(`${symbol}:${interval}`);
+    if (!series || series.length === 0) return [];
+
+    const intervalMs = INTERVAL_MS[interval];
+    if (intervalMs === undefined) {
+      throw new Error(`BacktestRunner.getCandles: unsupported interval '${interval}'`);
+    }
+
+    // Series is sorted ascending by openTime — binary search the cut point.
+    let lo = 0;
+    let hi = series.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (series[mid]!.openTime + intervalMs <= this.replayTs) lo = mid + 1;
+      else hi = mid;
+    }
+
+    return series.slice(Math.max(0, lo - limit), lo);
   }
 
   private candleCache = new Map<string, Candle[]>();
+  /** Current replay timestamp — the open time of the 1m bar being processed. */
+  private replayTs = 0;
 
   private async loadKlines(symbol: string): Promise<void> {
     const startIso = new Date(this.config.startTime).toISOString();
@@ -336,6 +369,7 @@ export class BacktestRunner {
 
     for (const ts of sortedTimes) {
       if (ts < this.config.startTime || ts > this.config.endTime) continue;
+      this.replayTs = ts;
 
       for (const symbol of this.config.symbols) {
         const candle = candleMaps.get(symbol)?.get(ts);
@@ -433,9 +467,13 @@ export class BacktestRunner {
       if (!this.strategyStats[stratId]) {
         this.strategyStats[stratId] = { trades: 0, wins: 0, pnl: 0 };
       }
-      this.strategyStats[stratId]!.trades++;
       this.strategyStats[stratId]!.pnl += fill.realizedPnl;
-      if (fill.realizedPnl > 0) this.strategyStats[stratId]!.wins++;
+      // Same round-trip rule as computeResults(): an opening fill carries
+      // realizedPnl 0 and is not a trade for win-rate purposes.
+      if (fill.realizedPnl !== 0) {
+        this.strategyStats[stratId]!.trades++;
+        if (fill.realizedPnl > 0) this.strategyStats[stratId]!.wins++;
+      }
     }
   }
 
@@ -480,18 +518,25 @@ export class BacktestRunner {
     let grossLoss = 0;
     const tradeReturns: number[] = [];
 
-    for (const t of this.trades) {
+    // Only fills that actually closed exposure are round trips. `this.trades`
+    // holds EVERY fill, and an opening fill always carries realizedPnl 0 —
+    // counting those as trades roughly halved winRate and inflated
+    // totalTrades. profitFactor / avgWin / avgLoss were already immune (they
+    // divide by wins/losses, not by the fill count).
+    const closingTrades = this.trades.filter((t) => t.realizedPnl !== 0);
+
+    for (const t of closingTrades) {
       if (t.realizedPnl > 0) {
         wins++;
         grossProfit += t.realizedPnl;
-      } else if (t.realizedPnl < 0) {
+      } else {
         losses++;
         grossLoss += Math.abs(t.realizedPnl);
       }
       tradeReturns.push(t.realizedPnl);
     }
 
-    const totalTrades = this.trades.length;
+    const totalTrades = closingTrades.length;
     const winRate = totalTrades > 0 ? wins / totalTrades : 0;
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
     const avgWin = wins > 0 ? grossProfit / wins : 0;
@@ -503,7 +548,17 @@ export class BacktestRunner {
     const stdReturn = tradeReturns.length > 1
       ? Math.sqrt(tradeReturns.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / (tradeReturns.length - 1))
       : 0;
-    const sharpeRatio = stdReturn > 0 ? (meanReturn / stdReturn) * Math.sqrt(252 * 24 * 60) : 0;
+    // Annualize by the OBSERVED trade frequency. The old sqrt(252*24*60)
+    // treated each round trip as a one-minute observation, inflating Sharpe by
+    // roughly sqrt(minutes per trade) — a strategy trading hourly was reported
+    // ~8x too high, which corrupts any strategy ranking done on this number.
+    const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const years = (this.config.endTime - this.config.startTime) / YEAR_MS;
+    const tradesPerYear = years > 0 ? totalTrades / years : 0;
+    const sharpeRatio =
+      stdReturn > 0 && tradesPerYear > 0
+        ? (meanReturn / stdReturn) * Math.sqrt(tradesPerYear)
+        : 0;
 
     const byStrategy: Record<string, { trades: number; pnl: number; winRate: number }> = {};
     for (const [strat, stats] of Object.entries(this.strategyStats)) {

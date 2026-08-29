@@ -292,8 +292,11 @@ export function supertrend(candles: Candle[], atrPeriod = 10, multiplier = 3): S
   const upperBand: number[] = candles.map(() => NaN);
   const lowerBand: number[] = candles.map(() => NaN);
 
-  let finalUpper = 0;
-  let finalLower = 0;
+  // Bands and trend test are defined against the PREVIOUS bar's final bands —
+  // see the same fix in adaptive-supertrend/calculator.ts for why comparing
+  // against the just-updated band reported a sustained downtrend as bullish.
+  let prevFinalUpper = Infinity;
+  let prevFinalLower = -Infinity;
   let prevSt = 0;
   let prevDir = 1;
 
@@ -306,10 +309,12 @@ export function supertrend(candles: Candle[], atrPeriod = 10, multiplier = 3): S
     const basicUpper = hl2 + multiplier * curAtr;
     const basicLower = hl2 - multiplier * curAtr;
 
-    finalUpper = basicUpper < finalUpper || prevC.close > finalUpper ? basicUpper : finalUpper;
-    finalLower = basicLower > finalLower || prevC.close < finalLower ? basicLower : finalLower;
+    const finalUpper =
+      basicUpper < prevFinalUpper || prevC.close > prevFinalUpper ? basicUpper : prevFinalUpper;
+    const finalLower =
+      basicLower > prevFinalLower || prevC.close < prevFinalLower ? basicLower : prevFinalLower;
 
-    if (prevSt === finalUpper) {
+    if (prevSt === prevFinalUpper) {
       prevDir = c.close <= finalUpper ? -1 : 1;
     } else {
       prevDir = c.close >= finalLower ? 1 : -1;
@@ -321,6 +326,8 @@ export function supertrend(candles: Candle[], atrPeriod = 10, multiplier = 3): S
     upperBand[i] = finalUpper;
     lowerBand[i] = finalLower;
     prevSt = currentSt;
+    prevFinalUpper = finalUpper;
+    prevFinalLower = finalLower;
   }
 
   return { supertrend: st, direction: dir, upperBand, lowerBand };

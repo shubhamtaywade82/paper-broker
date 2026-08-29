@@ -723,4 +723,48 @@ describe('PaperBroker onFill hook', () => {
     const order = b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.01 });
     expect(order.status).toBe('FILLED');
   });
+
+
+});
+
+describe('PaperBroker reduce-only clamping', () => {
+  let broker: PaperBroker;
+
+  beforeEach(() => {
+    broker = createBroker();
+  });
+
+  // Regression: an oversized reduce-only order (a full-size resting stop left
+  // behind after a partial close) used to slip past REDUCE_ONLY_WOULD_INCREASE
+  // — a flip to a SMALLER absolute size is not an "increase" — and land in
+  // applyPositionFill's FLIP branch, opening an opposite-side position from a
+  // reduce-only order. Exchange semantics clamp to the open position instead.
+  it('clamps an oversized reduce-only order to the open position', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 100,
+      ask: 100.1,
+      last: 100.05,
+      mark: 100,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+    expect(broker.getPosition('BTCUSDT')?.qty).toBe(1);
+
+    const oversizedClose = broker.submitOrder({
+      symbol: 'BTCUSDT',
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: 1.5,
+      leverage: 5,
+      reduceOnly: true,
+    });
+
+    expect(oversizedClose.status).toBe('FILLED');
+    expect(oversizedClose.quantity).toBe(1);
+    expect(broker.getPosition('BTCUSDT')?.qty).toBe(0);
+    expect(broker.getPosition('BTCUSDT')?.status).toBe('CLOSED');
+  });
 });

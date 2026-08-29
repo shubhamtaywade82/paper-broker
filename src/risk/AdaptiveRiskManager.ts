@@ -110,7 +110,12 @@ export class AdaptiveRiskManager {
     const closes = candles.map((c) => c.close);
     const atrRes = atr(candles, 14);
     const lastIdx = candles.length - 1;
-    const atrVal = atrRes[lastIdx] ?? closes[lastIdx]! * 0.01;
+    // `??` does not catch NaN, and atr() returns NaN for every index it could
+    // not compute. A NaN ATR propagated silently into stopLossPrice /
+    // takeProfitPrice and past the `rr < minRR` gate (NaN comparisons are
+    // false), handing the agent a plan with NaN stop and target.
+    const rawAtr = atrRes[lastIdx];
+    const atrVal = Number.isFinite(rawAtr) && rawAtr! > 0 ? rawAtr! : closes[lastIdx]! * 0.01;
     const entry = this.deps.getLastPrice(symbol) ?? closes[lastIdx]!;
     if (!Number.isFinite(entry) || entry <= 0) return null;
 

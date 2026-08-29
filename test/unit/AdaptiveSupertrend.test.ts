@@ -439,3 +439,83 @@ describe('Adaptive Supertrend Strategy Integration', () => {
     learnSpy.mockRestore();
   });
 });
+
+describe('Supertrend trend-direction correctness (band carry-over)', () => {
+  /** Deterministic random walk so the assertions below are reproducible. */
+  function walk(count: number, driftPerBar: number): Candle[] {
+    let seed = 42;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const candles: Candle[] = [];
+    let price = 100;
+
+    for (let i = 0; i < count; i++) {
+      const close = price * (1 + (rnd() - 0.5) * 0.012 + driftPerBar);
+      candles.push({
+        symbol: 'BTCUSDT',
+        interval: '15m',
+        openTime: 1700000000000 + i * 900_000,
+        open: price,
+        high: Math.max(price, close) * (1 + rnd() * 0.002),
+        low: Math.min(price, close) * (1 - rnd() * 0.002),
+        close,
+        volume: 1000,
+      });
+      price = close;
+    }
+    return candles;
+  }
+
+  function directionShare(dir: number[], want: number, warmup: number): number {
+    const computed = dir.slice(warmup).filter((d) => !Number.isNaN(d));
+    return computed.filter((d) => d === want).length / computed.length;
+  }
+
+  function flipCount(dir: number[], warmup: number): number {
+    const computed = dir.slice(warmup).filter((d) => !Number.isNaN(d));
+    return computed.filter((d, i) => i > 0 && d !== computed[i - 1]).length;
+  }
+
+  const ATR_PERIOD = 10;
+
+  // Regression: the trend test used to compare the previous supertrend against
+  // the JUST-UPDATED upper band instead of the previous bar's. The upper band
+  // tightens on every falling bar, so the comparison failed and the wrong
+  // branch ran — a sustained downtrend was reported bullish on ~91% of bars
+  // with 88 whipsaws. The strategy consumes this direction to pick LONG/SHORT.
+  it('stays bearish through a sustained downtrend', () => {
+    const candles = walk(500, -0.0015);
+    expect(candles.at(-1)!.close).toBeLessThan(60);
+
+    const { direction } = calculateAdaptiveSupertrend(candles, {
+      atrPeriod: ATR_PERIOD,
+      multiplier: 3,
+    });
+
+    expect(directionShare(direction, -1, ATR_PERIOD)).toBeGreaterThan(0.85);
+    expect(flipCount(direction, ATR_PERIOD)).toBeLessThan(10);
+  });
+
+  it('stays bullish through a sustained uptrend', () => {
+    const candles = walk(500, 0.0015);
+    expect(candles.at(-1)!.close).toBeGreaterThan(160);
+
+    const { direction } = calculateAdaptiveSupertrend(candles, {
+      atrPeriod: ATR_PERIOD,
+      multiplier: 3,
+    });
+
+    expect(directionShare(direction, 1, ATR_PERIOD)).toBeGreaterThan(0.85);
+    expect(flipCount(direction, ATR_PERIOD)).toBeLessThan(10);
+  });
+
+  it('indicators.supertrend agrees with the adaptive calculator', () => {
+    const candles = walk(300, -0.0015);
+    const viaIndicator = supertrend(candles, ATR_PERIOD, 3);
+    const viaCalculator = calculateAdaptiveSupertrend(candles, {
+      atrPeriod: ATR_PERIOD,
+      multiplier: 3,
+    });
+
+    expect(viaIndicator.direction).toEqual(viaCalculator.direction);
+  });
+});
