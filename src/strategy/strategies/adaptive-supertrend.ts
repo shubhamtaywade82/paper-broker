@@ -181,7 +181,11 @@ function buildSignalInput(
 ): SignalInput | null {
   const instrument = deps.getInstrument(symbol);
   const account = ctx.getAccount();
-  const equity = account.equity > 0 ? account.equity : 10000;
+  // CONTRACTS.md: never invent balances. This used to fall back to a literal
+  // 10000 when the account read came back at zero or negative, sizing real
+  // orders off a balance the account did not have.
+  const equity = account.equity;
+  if (!Number.isFinite(equity) || equity <= 0) return null;
   const riskPct = deps.riskFraction ?? 0.02;
   const stopDist = Math.abs(signal.currentPrice - signal.stopLossPrice);
 

@@ -24,6 +24,12 @@ export interface CircuitBreakerConfig {
   cooldownMs: number;
   /** If true, an unhealthy market/model also trips the breaker. */
   requireHealthyMarket: boolean;
+  /**
+   * Size multiplier applied while a consecutive-loss streak is at or above
+   * {@link maxConsecutiveLosses}. Consecutive losses dampen risk rather than
+   * veto entries — see {@link CircuitBreaker.check}. Default 0.5.
+   */
+  consecutiveLossDampener?: number;
 }
 
 export interface CircuitBreakerDeps {
@@ -50,12 +56,18 @@ export interface CircuitBreakerState {
 /**
  * Self-preservation layer.
  *
- * The circuit breaker is a single boolean the agent consults before every
- * new entry. It trips when ANY of:
+ * The agent consults this before every new entry. It trips — blocking entries
+ * for {@link CircuitBreakerConfig.cooldownMs} — on capital-preservation
+ * breaches only:
  *   - daily realized loss exceeds {@link CircuitBreakerConfig.maxDailyLossPct} * equity
  *   - peak-to-trough drawdown exceeds {@link CircuitBreakerConfig.maxDrawdownPct}
- *   - N consecutive losing trades (from {@link PerformanceTracker})
  *   - market data is unhealthy (if {@link CircuitBreakerConfig.requireHealthyMarket})
+ *
+ * A consecutive-loss streak does NOT block. It returns a `riskDampener` the
+ * agent folds into its runtime risk multiplier, so a losing run shrinks size
+ * while the agent keeps analysing and keeps taking gated entries. Entry
+ * quality is enforced upstream by the cost-adjusted netRR gate in
+ * AdaptiveRiskManager.computeTradePlan.
  *
  * Once tripped, the agent refuses to open new positions for
  * {@link CircuitBreakerConfig.cooldownMs}. Existing positions continue to be
@@ -92,13 +104,18 @@ export class CircuitBreaker {
    * trips the breaker if any threshold is breached, and auto-clears it once
    * the cooldown elapses.
    */
-  check(now = Date.now()): { allowEntries: boolean; reason: CircuitBreakerReason | null } {
+  check(now = Date.now()): {
+    allowEntries: boolean;
+    reason: CircuitBreakerReason | null;
+    /** Multiply the agent's runtime risk multiplier by this. 1 = no dampening. */
+    riskDampener: number;
+  } {
     // 1. If tripped, see if cooldown has elapsed.
     if (this.state.tripped) {
       if (now >= this.state.cooldownEndsAt) {
         this.clear(now, 'COOLDOWN_ELAPSED');
       } else {
-        return { allowEntries: false, reason: this.state.reason };
+        return { allowEntries: false, reason: this.state.reason, riskDampener: 1 };
       }
     }
 
@@ -113,21 +130,18 @@ export class CircuitBreaker {
     }
 
     // 4. Evaluate each threshold. First breach wins.
+    // Capital-preservation stops. These are hard: they bound how much the
+    // account can lose, and clearing them is an operator decision.
     const dailyLossPct = this.computeDailyLossPct(account);
     if (dailyLossPct >= this.config.maxDailyLossPct) {
       this.trip('MAX_DAILY_LOSS', now, { dailyLossPct, threshold: this.config.maxDailyLossPct });
-      return { allowEntries: false, reason: 'MAX_DAILY_LOSS' };
+      return { allowEntries: false, reason: 'MAX_DAILY_LOSS', riskDampener: 1 };
     }
 
     const drawdownPct = this.peakEquity > 0 ? Math.max(0, (this.peakEquity - account.equity) / this.peakEquity) : 0;
     if (drawdownPct >= this.config.maxDrawdownPct) {
       this.trip('MAX_DRAWDOWN', now, { drawdownPct, peakEquity: this.peakEquity, equity: account.equity });
-      return { allowEntries: false, reason: 'MAX_DRAWDOWN' };
-    }
-
-    if (consecutiveLosses >= this.config.maxConsecutiveLosses) {
-      this.trip('CONSECUTIVE_LOSSES', now, { consecutiveLosses, threshold: this.config.maxConsecutiveLosses });
-      return { allowEntries: false, reason: 'CONSECUTIVE_LOSSES' };
+      return { allowEntries: false, reason: 'MAX_DRAWDOWN', riskDampener: 1 };
     }
 
     if (this.config.requireHealthyMarket && !health.healthy) {
@@ -135,11 +149,26 @@ export class CircuitBreaker {
       // "I haven't probed yet".
       if (health.issues.length > 0) {
         this.trip('MARKET_UNHEALTHY', now, { issues: health.issues });
-        return { allowEntries: false, reason: 'MARKET_UNHEALTHY' };
+        return { allowEntries: false, reason: 'MARKET_UNHEALTHY', riskDampener: 1 };
       }
     }
 
-    return { allowEntries: true, reason: null };
+    // Consecutive losses DAMPEN size, they do not veto entries.
+    //
+    // As a veto this was unreleasable: the streak resets only on a win, a win
+    // needs an entry, and the veto blocked every entry. Cooldown expiry cleared
+    // the latch and the very same check() re-tripped it on the unchanged streak
+    // — observed live as 99 trips / 75 clears over 15-minute cycles with the
+    // agent standing aside on every symbol for 2239 consecutive cycles. Even
+    // forceClear() could not recover it. Entry *quality* is now gated where it
+    // belongs, on the cost-adjusted netRR in AdaptiveRiskManager.computeTradePlan;
+    // a losing streak means trade smaller, not stop forever.
+    const riskDampener =
+      consecutiveLosses >= this.config.maxConsecutiveLosses
+        ? this.config.consecutiveLossDampener ?? 0.5
+        : 1;
+
+    return { allowEntries: true, reason: null, riskDampener };
   }
 
   /** Force-trip the breaker (operator override via API). */

@@ -1026,3 +1026,94 @@ describe('AutonomousTradingAgent correlation-aware entry gate (Finding 8)', () =
     expect(h.submitted).toHaveLength(1);
   });
 });
+
+describe('AdaptiveRiskManager cost-adjusted entry gate', () => {
+  /** Flat-ish candles whose ATR is a controllable fraction of price. */
+  function candlesWithAtr(price: number, atrValue: number): Candle[] {
+    return Array.from({ length: 40 }, (_, i) => ({
+      symbol: 'SOLUSDT',
+      interval: '1h',
+      openTime: 1700000000000 + i * 3_600_000,
+      open: price,
+      high: price + atrValue / 2,
+      low: price - atrValue / 2,
+      close: price,
+      volume: 1000,
+      isClosed: true,
+    }));
+  }
+
+  const adaptation = {
+    regime: 'TRENDING_STRONG',
+    stopAtrMultiplier: 2.0,
+    targetAtrMultiplier: 6.0,
+    minRR: 2.5,
+    maxLeverage: 5,
+    riskMultiplier: 1,
+    trailingActivationPct: 0.02,
+    trailingDistancePct: 0.015,
+    breakevenTriggerPct: 0.01,
+    rationale: 'test',
+  } as unknown as Parameters<AdaptiveRiskManager['computeTradePlan']>[2];
+
+  function managerFor(price: number, atrValue: number): AdaptiveRiskManager {
+    return new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => 10_000,
+      getLastPrice: () => price,
+      getCandles: () => candlesWithAtr(price, atrValue),
+    });
+  }
+
+  // The pre-existing gate was `rr < adaptation.minRR` where
+  // rr = (atr * targetMult) / (atr * stopMult) — the ATR cancels, leaving a
+  // constant drawn from the same table that supplies minRR. It passed
+  // 1817/1817 live signals at exactly RR=3.00 and rejected nothing, ever.
+  it('gross RR is a per-regime constant and cannot discriminate', () => {
+    const wide = managerFor(150, 6)!.computeTradePlan('SOLUSDT', 'LONG', adaptation)!;
+    const narrow = managerFor(150, 3)!.computeTradePlan('SOLUSDT', 'LONG', adaptation)!;
+    expect(wide.rr).toBeCloseTo(3.0, 6);
+    expect(narrow.rr).toBeCloseTo(3.0, 6);
+    // netRR does vary with ATR — that is the whole point.
+    expect(wide.netRR).toBeGreaterThan(narrow.netRR);
+  });
+
+  it('accepts a setup whose stop clears the round-trip cost', () => {
+    const plan = managerFor(150, 6).computeTradePlan('SOLUSDT', 'LONG', adaptation);
+    expect(plan).not.toBeNull();
+    // 8bps of 150 = 0.12 per unit round trip; stop distance is 2 x 6 = 12.
+    expect(plan!.roundTripCost).toBeCloseTo(0.12, 6);
+    expect(plan!.netRR).toBeGreaterThanOrEqual(adaptation.minRR);
+  });
+
+  it('rejects a setup whose stop is inside the round-trip cost floor', () => {
+    // ATR 0.02 → stop distance 0.04, under 4 x 0.12 = 0.48.
+    expect(managerFor(150, 0.02).computeTradePlan('SOLUSDT', 'LONG', adaptation)).toBeNull();
+  });
+
+  it('rejects when cost drags netRR below the regime minimum', () => {
+    // Stop clears the floor (2 x 0.3 = 0.6 > 0.48) but the cost still pulls
+    // netRR under minRR 2.5.
+    const plan = managerFor(150, 0.3).computeTradePlan('SOLUSDT', 'LONG', adaptation);
+    expect(plan).toBeNull();
+  });
+
+  it('a higher assumed cost rejects setups a lower one accepts', () => {
+    const cheap = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => 10_000,
+      getLastPrice: () => 150,
+      getCandles: () => candlesWithAtr(150, 0.5),
+      roundTripCostBps: 8,
+    });
+    const expensive = new AdaptiveRiskManager({
+      baseConfig: DEFAULT_RISK_CONFIG,
+      getEquity: () => 10_000,
+      getLastPrice: () => 150,
+      getCandles: () => candlesWithAtr(150, 0.5),
+      roundTripCostBps: 40,
+    });
+    expect(cheap.computeTradePlan('SOLUSDT', 'LONG', adaptation)).not.toBeNull();
+    expect(expensive.computeTradePlan('SOLUSDT', 'LONG', adaptation)).toBeNull();
+  });
+});

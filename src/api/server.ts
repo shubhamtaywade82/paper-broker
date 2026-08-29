@@ -382,7 +382,9 @@ export class ApiServer {
         this.broker.getPositions(),
       ]);
 
-      const equity = account?.equity || 10000;
+      // Report what the broker actually holds — a fabricated 10000 here made the
+      // risk endpoint show healthy utilisation for an account it could not read.
+      const equity = Number.isFinite(account?.equity) ? account.equity : 0;
       let totalNotional = 0;
       let totalMarginUsed = 0;
       for (const pos of positions) {

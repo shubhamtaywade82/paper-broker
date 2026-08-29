@@ -46,8 +46,18 @@ export interface TradePlan {
    * `adaptation.riskMultiplier * regimeBias`.
    */
   regimeBias: number;
-  /** Realised reward:risk ratio (target distance / stop distance). */
+  /** Gross reward:risk ratio (target distance / stop distance). */
   rr: number;
+  /**
+   * Reward:risk after round-trip execution cost, which is what the trade
+   * actually has to clear. Unlike {@link rr} — where the ATR cancels out of
+   * both distances, making it a per-regime constant that can never fail its
+   * own minRR check — this varies with ATR, price and the fee schedule, so it
+   * genuinely discriminates between setups.
+   */
+  netRR: number;
+  /** Round-trip execution cost per unit (entry + exit fees, quote units). */
+  roundTripCost: number;
   /** ATR value used to compute distances (informational). */
   atr: number;
   /** Entry price assumed for the plan. */
@@ -83,6 +93,19 @@ export interface AdaptiveRiskManagerDeps {
    * overlay's static riskMultiplier is used unchanged.
    */
   getRegimeStats?: (regime: MarketRegime) => RegimePerformanceStats | null;
+  /**
+   * Round-trip execution cost in basis points of notional — entry fee + exit
+   * fee. Defaults to 8bps (two 4bps taker legs, the PaperBroker/Binance USDM
+   * VIP0 rate). Raise it to include expected slippage.
+   */
+  roundTripCostBps?: number;
+  /**
+   * Reject a plan whose stop distance is smaller than this multiple of the
+   * round-trip cost. At 1x, a stop-out and a scratch cost the same and fees
+   * eat the whole edge; the default 4x means the loss leg is at least 4x the
+   * cost of transacting.
+   */
+  minStopCostMultiple?: number;
 }
 
 export class AdaptiveRiskManager {
@@ -127,8 +150,21 @@ export class AdaptiveRiskManager {
     const takeProfitPrice =
       direction === 'LONG' ? entry + targetDistance : entry - targetDistance;
 
-    const rr = targetDistance / (stopDistance > 0 ? stopDistance : 1);
-    if (rr < adaptation.minRR) return null;
+    if (stopDistance <= 0) return null;
+    const rr = targetDistance / stopDistance;
+
+    // Cost-adjusted gate. `rr` above is targetAtrMultiplier/stopAtrMultiplier —
+    // the ATR cancels, so it is a constant per regime, drawn from the same
+    // adaptation table that supplies minRR. It passed 1817/1817 live signals at
+    // exactly RR=3.00 and rejected nothing, ever. Cost is what actually varies:
+    // a 3500-notional round trip costs ~2.80 against trades whose realized PnL
+    // is single digits, so the loss leg must clear the cost by a real margin.
+    const roundTripCost = entry * ((this.deps.roundTripCostBps ?? 8) / 10_000);
+    const minStopCostMultiple = this.deps.minStopCostMultiple ?? 4;
+    if (stopDistance < minStopCostMultiple * roundTripCost) return null;
+
+    const netRR = (targetDistance - roundTripCost) / (stopDistance + roundTripCost);
+    if (netRR < adaptation.minRR) return null;
 
     // Leverage: regime ceiling AND base config ceiling, take the lower.
     const leverage = Math.min(
@@ -161,6 +197,8 @@ export class AdaptiveRiskManager {
       riskMultiplier,
       regimeBias,
       rr,
+      netRR,
+      roundTripCost,
       atr: atrVal,
       entryPrice: entry,
       direction,

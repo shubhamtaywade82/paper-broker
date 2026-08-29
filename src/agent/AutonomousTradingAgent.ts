@@ -191,6 +191,12 @@ export class AutonomousTradingAgent {
   /** Most recent runtime risk multiplier suggested by the learning loop. */
   private runtimeRiskMultiplier = 1.0;
   /**
+   * Size dampener from the circuit breaker's consecutive-loss streak. A losing
+   * run shrinks position size instead of vetoing entries — see
+   * CircuitBreaker.check. 1 = no dampening.
+   */
+  private lossStreakDampener = 1.0;
+  /**
    * Cache of the most recently completed cycle summary. Surfaced via
    * {@link getSnapshot} for the REST endpoint `/api/v1/autonomous/snapshot`
    * so the dashboard can bootstrap initial state on mount instead of
@@ -336,6 +342,7 @@ export class AutonomousTradingAgent {
     // --- (3) Circuit breaker — may stand-aside the entire cycle.
     const breaker = this.deps.circuitBreaker.check(now);
     const breakerTripped = !breaker.allowEntries;
+    this.lossStreakDampener = breaker.riskDampener;
 
     // --- (4) Exits — always run, regardless of breaker.
     const exits = await this.deps.exitManager.evaluateExits(this.perSymbol, cycleId, now);
@@ -1162,8 +1169,10 @@ export class AutonomousTradingAgent {
   ): { sizePct: number; quantity: number; notional: number; margin: number } {
     const planFeatures = this.deps.riskManager.planToFeatures(plan);
     const baseSizePct = planFeatures['sizePct'] as number;
-    // Apply the learning-loop multiplier on top of the regime overlay.
-    const sizePct = baseSizePct * this.runtimeRiskMultiplier;
+    // Apply the learning-loop multiplier and the loss-streak dampener on top of
+    // the regime overlay. Both flow through this one choke point so the
+    // exposure the correlation gate approves is the exposure submitted.
+    const sizePct = baseSizePct * this.runtimeRiskMultiplier * this.lossStreakDampener;
     const entry = plan.entryPrice;
     const stopDistance = Math.abs(entry - plan.stopLossPrice);
     // Risk-based qty: (equity * sizePct) / stopDistance.

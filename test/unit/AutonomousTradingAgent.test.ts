@@ -396,7 +396,12 @@ describe('CircuitBreaker', () => {
     expect((tripCall![1] as { action: string }).action).toBe('tripped');
   });
 
-  it('trips on consecutive losses', () => {
+  // Behaviour change: a consecutive-loss streak DAMPENS size instead of vetoing
+  // entries. As a veto it was unreleasable — the streak only resets on a win, a
+  // win needs an entry, and the veto blocked every entry, so cooldown expiry
+  // cleared the latch and the same check() re-tripped it on the unchanged
+  // streak. Observed live as 2239 consecutive stand-aside cycles.
+  it('dampens size on consecutive losses instead of blocking entries', () => {
     const eventLog = makeEventLog();
     const wsGateway = { broadcast: vi.fn() } as unknown as WebSocketGateway;
     const breaker = new CircuitBreaker(
@@ -410,8 +415,48 @@ describe('CircuitBreaker', () => {
       }
     );
     const result = breaker.check(1000);
-    expect(result.allowEntries).toBe(false);
-    expect(result.reason).toBe('CONSECUTIVE_LOSSES');
+    expect(result.allowEntries).toBe(true);
+    expect(result.reason).toBeNull();
+    expect(result.riskDampener).toBe(0.5);
+    expect(breaker.getState().tripped).toBe(false);
+  });
+
+  it('does not dampen below the consecutive-loss threshold', () => {
+    const eventLog = makeEventLog();
+    const wsGateway = { broadcast: vi.fn() } as unknown as WebSocketGateway;
+    const breaker = new CircuitBreaker(
+      { maxDailyLossPct: 0.03, maxConsecutiveLosses: 3, maxDrawdownPct: 0.08, cooldownMs: 60_000, requireHealthyMarket: false },
+      {
+        eventLog,
+        wsGateway,
+        getAccount: () => makeFakeAccount(10000, 0),
+        getConsecutiveLosses: () => 2,
+        getHealth: () => ({ healthy: true, issues: [], lastCheckedAt: 0 }),
+      }
+    );
+    const result = breaker.check(1000);
+    expect(result.allowEntries).toBe(true);
+    expect(result.riskDampener).toBe(1);
+  });
+
+  // A losing streak must never keep the agent out of the market forever: after
+  // the streak is recognised it still allows entries on every subsequent cycle.
+  it('keeps allowing entries across many cycles while the streak persists', () => {
+    const eventLog = makeEventLog();
+    const wsGateway = { broadcast: vi.fn() } as unknown as WebSocketGateway;
+    const breaker = new CircuitBreaker(
+      { maxDailyLossPct: 0.03, maxConsecutiveLosses: 3, maxDrawdownPct: 0.08, cooldownMs: 60_000, requireHealthyMarket: false },
+      {
+        eventLog,
+        wsGateway,
+        getAccount: () => makeFakeAccount(10000, 0),
+        getConsecutiveLosses: () => 99,
+        getHealth: () => ({ healthy: true, issues: [], lastCheckedAt: 0 }),
+      }
+    );
+    for (let cycle = 0; cycle < 50; cycle++) {
+      expect(breaker.check(1000 + cycle * 30_000).allowEntries).toBe(true);
+    }
   });
 
   it('auto-clears after the cooldown elapses', () => {
