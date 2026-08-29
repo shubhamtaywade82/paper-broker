@@ -220,4 +220,26 @@ describe('SignalExecutor', () => {
     expect(stopOrder?.quantity).toBe(0.25);
     expect(stopOrder?.leverage).toBe(4);
   });
+
+  it('preserves strategyId and signalId on the submitted market order and fill', async () => {
+    const signal = toSignal(
+      parseSignalInput({
+        strategyId: 'test-strategy-123',
+        symbol: 'BTCUSDT',
+        action: 'OPEN_LONG',
+        confidence: 0.85,
+        features: { quantity: 1.0, leverage: 3 },
+      })
+    );
+    db.signals.insert(signal);
+
+    const result = await executor.execute(signal);
+    expect(result).toBe(true);
+
+    const fills = broker.getFills();
+    const openFill = fills.find((f) => f.symbol === 'BTCUSDT');
+    expect(openFill).toBeDefined();
+    expect(openFill?.strategyId).toBe('test-strategy-123');
+    expect(openFill?.signalId).toBe(signal.id);
+  });
 });

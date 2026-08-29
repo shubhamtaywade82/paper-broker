@@ -34,8 +34,17 @@ export class FuzzySignalAI {
     const { rsi, macdHist, volumeRatio, atr } = features;
 
     // Fuzzify Supertrend Direction & Freshness
-    const stBullish = stDirection === 1 ? (isCrossover ? 1.0 : 0.85) : 0;
-    const stBearish = stDirection === -1 ? (isCrossover ? 1.0 : 0.85) : 0;
+    // Fresh crossovers get full weight (1.0). Pullbacks near the Supertrend line (<=1.5 ATR)
+    // get healthy trend-continuation weight (0.75). Overextended bars decay to prevent buying tops/selling bottoms.
+    const distAtr = atr > 0 ? Math.abs(currentPrice - supertrendValue) / atr : 1.0;
+    const trendFreshness = isCrossover
+      ? 1.0
+      : distAtr <= 1.5
+      ? 0.75
+      : Math.max(0.2, 0.75 - (distAtr - 1.5) * 0.25);
+
+    const stBullish = stDirection === 1 ? trendFreshness : 0;
+    const stBearish = stDirection === -1 ? trendFreshness : 0;
 
     // RSI Momentum (Bullish if RSI > 50 heading up, Bearish if RSI < 50)
     const rsiBullish = this.fuzzyMembership(rsi, 40, 70);

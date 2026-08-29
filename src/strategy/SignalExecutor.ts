@@ -85,14 +85,16 @@ export class SignalExecutor {
       return false;
     }
 
-    const orderCommand = {
+    const orderCommand = orderFactory.buildOrder({ signal, quantity, leverage }) ?? {
       symbol: signal.symbol,
       side: signal.action === 'OPEN_LONG' || signal.action === 'CLOSE_SHORT' ? 'BUY' : 'SELL',
       type: 'MARKET',
       quantity,
       leverage,
       reduceOnly: signal.action.startsWith('CLOSE'),
-    } as const;
+      strategyId: signal.strategyId,
+      signalId: signal.id,
+    };
 
     try {
       const order = await broker.submitOrder(orderCommand);

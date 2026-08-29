@@ -251,9 +251,16 @@ export class ExitManager {
       // now ranging or transitioning, that's a flip regardless of direction.
       const enteredTrend = entryRegime === 'TRENDING_STRONG' || entryRegime === 'TRENDING_NORMAL';
       const nowChoppy = currentRegime === 'RANGING_HIGH_VOL' || currentRegime === 'TRANSITIONING';
+      // Use the HTF trend direction from the live snapshot to determine whether
+      // the current trending regime is adverse to the position. TRENDING_STRONG
+      // is direction-agnostic — a bearish TRENDING_STRONG should NOT kill shorts.
+      // We only flag a mismatch when the trend direction explicitly opposes the
+      // position (BULLISH trend vs SHORT, or BEARISH trend vs LONG).
+      const currentHtfTrend = current?.htfTrend;
       const directionMismatch =
-        (directionLong && (currentRegime === 'RANGING_HIGH_VOL')) ||
-        (!directionLong && currentRegime === 'TRENDING_STRONG');
+        (directionLong && currentRegime === 'RANGING_HIGH_VOL') ||
+        (directionLong && (currentRegime === 'TRENDING_STRONG' || currentRegime === 'TRENDING_NORMAL') && currentHtfTrend === 'BEARISH') ||
+        (!directionLong && (currentRegime === 'TRENDING_STRONG' || currentRegime === 'TRENDING_NORMAL') && currentHtfTrend === 'BULLISH');
       if (riskMultDrop >= 0.3 || (enteredTrend && nowChoppy) || directionMismatch) {
         return {
           symbol: sym,
@@ -263,6 +270,7 @@ export class ExitManager {
           context: {
             entryRegime,
             currentRegime,
+            currentHtfTrend,
             riskMultDrop,
             directionLong,
             directionMismatch,
