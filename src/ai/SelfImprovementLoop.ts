@@ -1,6 +1,6 @@
 import type { Fill } from '../broker/types.js';
 import { ReflectionSchema, type Reflection } from './schemas.js';
-import { AgentMemoryStore, type RetrieveLessonsQuery } from './memory/AgentMemoryStore.js';
+import type { AgentMemoryStore, RetrieveLessonsQuery } from './memory/AgentMemoryStore.js';
 import type { ModelManager, CompletionRequest } from './ModelManager.js';
 import { logger } from '../telemetry/logger.js';
 

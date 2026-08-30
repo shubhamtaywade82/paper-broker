@@ -92,7 +92,7 @@ export function createMarketDataTool(deps: MarketDataToolDeps): ToolDefinition<M
     inputSchema: InputSchema,
     outputSchema: OutputSchema,
     readonly: true,
-    async execute(input, ctx): Promise<ToolResult<MarketDataToolOutput>> {
+    async execute(input, _ctx): Promise<ToolResult<MarketDataToolOutput>> {
       const startedAt = Date.now();
       try {
         const snapshot = deps.get(input.symbol) ?? null;

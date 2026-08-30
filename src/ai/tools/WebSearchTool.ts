@@ -25,8 +25,6 @@ import type { ToolDefinition, ToolResult } from './types.js';
  * cannot blow out the analyst prompt's token budget.
  */
 
-type SearchMode = 'symbol' | 'sentiment' | 'funding' | 'web';
-
 const InputSchema = z.object({
   query: z.string().min(1).max(200).describe('What to look up — a symbol, a news topic, or a free-text question.'),
   mode: z
