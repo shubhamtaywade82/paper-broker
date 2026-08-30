@@ -1113,6 +1113,14 @@ export async function startEngine(): Promise<EngineHandle> {
     liveGuard,
     reconciler,
     riskConfig: DEFAULT_RISK_CONFIG,
+    // Agentic layer handles (feature/agentic-upgrade) — all undefined when
+    // their env flag is off; the API endpoints return {enabled: false}.
+    toolRegistry,
+    agentMemoryStore,
+    selfImprovementLoop,
+    strategyParamLearner,
+    strategySelector,
+    abTestRunner,
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
       aggressiveMode = enabled;
