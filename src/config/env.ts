@@ -163,6 +163,37 @@ const EnvSchema = z.object({
   // How often to evaluate and promote (ms).
   AGENT_AB_TESTING_EVAL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(3_600_000),
 
+  // Classic indicator strategies (src/strategy/strategies/{ema-trend, rsi-mean-
+  // reversion, momentum, mean-reversion, breakout, grid}-*.ts). These were the
+  // original candle-driven fleet from BacktestRunner, but were never registered
+  // in the live engine because they emitted signals without features.quantity
+  // and SignalExecutor rejected them with ZERO_QUANTITY. Now that SignalExecutor
+  // falls back to SizingEngine for OPEN signals lacking an explicit quantity,
+  // they produce valid orders again — but they remain OFF by default so live
+  // deployments must explicitly opt in (the autonomous agent + SMC + Adaptive
+  // Supertrend stack is the default trading fleet).
+  CLASSIC_STRATEGIES_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Comma-separated list of classic strategy IDs to register when
+  // CLASSIC_STRATEGIES_ENABLED=true. Default: all six. Use to enable a subset.
+  // Valid IDs: ema-trend-5m, breakout-15m, rsi-mean-reversion-5m,
+  // momentum-5m, grid-15m, mean-reversion-5m.
+  CLASSIC_STRATEGIES_LIST: z.string().default('ema-trend-5m,breakout-15m,rsi-mean-reversion-5m,momentum-5m,grid-15m,mean-reversion-5m'),
+
+  // SizingEngine fallback (src/strategy/SizingEngine.ts). When an OPEN signal
+  // arrives at SignalExecutor without features.quantity (or with quantity = 0),
+  // SignalExecutor computes a size from account equity, instrument lot size,
+  // entry price, and stop-loss distance (or a fallback notional if no SL).
+  // Risk per trade as a fraction of equity. Default 0.5%.
+  SIZING_RISK_PER_TRADE: z.coerce.number().min(0).max(0.1).default(0.005),
+  // Hard cap on notional per order. Default $5000.
+  SIZING_MAX_NOTIONAL: z.coerce.number().positive().default(5000),
+  // Fallback notional as a fraction of equity when no stop-loss is supplied.
+  // Default 10%.
+  SIZING_FALLBACK_RISK_PER_TRADE: z.coerce.number().min(0).max(1).default(0.1),
+
   PAPER_STARTING_USDT: z.coerce.number().positive().default(10000),
 
   // Profit goals (src/trading/goals). Disabled by default so existing

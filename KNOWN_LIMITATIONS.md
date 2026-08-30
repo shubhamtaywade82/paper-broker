@@ -635,16 +635,28 @@ exactly until opted in.
   Magazine). Optional Brave Search when `AGENT_WEB_SEARCH_PROVIDER=brave`
   + `AGENT_WEB_SEARCH_BRAVE_KEY`.
 
-### Classic indicator strategies produce zero trades
+### Classic indicator strategies (revived, opt-in)
 
-**Still deferred.** The `SizingEngine.ts` + classic strategy files remain
-on disk and produce zero trades because `SignalExecutor` rejects signals
-without `features.sizing`. The StrategyParamLearner + StrategySelector
-landed here do NOT require classic strategies to be revived — they work
-on any registered strategy. A follow-up commit could revive one or two
-classic strategies under the unified signal contract to feed the
-StrategySelector with a wider candidate pool, but that's not in scope
-for this branch.
+**Resolved.** `SignalExecutor` now optionally accepts a `SizingEngine`,
+`getAccount`, and `getInstrument` trio. When an OPEN signal arrives without
+`features.quantity` (the classic strategy signature — they emit only
+indicators + stop-loss / take-profit), the executor computes a size from
+account equity, instrument lot size, entry price, and stop-loss distance
+(or a fallback notional when no SL is set) and submits the order as usual.
+The fallback is wired in `engine.ts` and `BacktestRunner.ts`; existing
+strategies that pre-compute a quantity (smc-agent, adaptive-supertrend) are
+unaffected — their `features.quantity` still wins.
+
+The six classic strategies remain **OFF by default** — set
+`CLASSIC_STRATEGIES_ENABLED=true` to register them in the live engine.
+`CLASSIC_STRATEGIES_LIST` (comma-separated IDs) picks a subset; default is
+all six (`ema-trend-5m`, `breakout-15m`, `rsi-mean-reversion-5m`,
+`momentum-5m`, `grid-15m`, `mean-reversion-5m`). Sizing defaults are tunable
+via `SIZING_RISK_PER_TRADE`, `SIZING_MAX_NOTIONAL`, and
+`SIZING_FALLBACK_RISK_PER_TRADE`. When the resulting notional is below the
+instrument's minNotional (e.g. equity too small or stop too tight),
+`SizingEngine` throws and `SignalExecutor` records a `SIZING_FAILED`
+rejection so the operator sees it in the dashboard — never a silent drop.
 
 ### New (additive) limitations introduced by this branch
 

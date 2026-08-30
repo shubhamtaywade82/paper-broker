@@ -113,9 +113,19 @@ These must NOT change without an ADR:
   records a tick and `validateFailover()` correctly refuses to promote it. The
   divergence guard is armed but has only one price source to compare.
 
-### Deferred
+### Revived (opt-in)
 
-- ⏸️ `SizingEngine.ts`, the classic indicator strategy files, and `BacktestRunner.ts` remain on disk and are reachable via `cli.ts --engine=indicators`, but produce zero trades because `SignalExecutor` no longer computes sizing for signals that do not carry it. Retired pending a unification plan, not a working alternative to the default `--engine=smc` path.
+- ✅ `SizingEngine.ts` is now wired into `SignalExecutor` as the fallback size
+  resolver for OPEN signals that arrive without `features.quantity`. Classic
+  indicator strategies (`ema-trend-5m`, `rsi-mean-reversion-5m`, `momentum-5m`,
+  `mean-reversion-5m`, `breakout-15m`, `grid-15m`) — previously dead because
+  they emit only indicators + stop-loss / take-profit — now produce real
+  orders. Operators opt in via `CLASSIC_STRATEGIES_ENABLED=true`; subset via
+  `CLASSIC_STRATEGIES_LIST`. Existing strategies that pre-compute a quantity
+  (`smc-agent`, `adaptive-supertrend`) are unaffected — their `features.quantity`
+  still wins. Sizing knobs: `SIZING_RISK_PER_TRADE` (0.5%), `SIZING_MAX_NOTIONAL`
+  ($5000), `SIZING_FALLBACK_RISK_PER_TRADE` (10%). BacktestRunner was wired
+  the same way so backtests produce real trades for the classic fleet again.
 
 ### Planned
 

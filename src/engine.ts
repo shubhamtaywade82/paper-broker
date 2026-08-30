@@ -13,9 +13,10 @@ import { DatabaseManager } from './persistence/db.js';
 import { SQLiteBrokerPersister } from './persistence/BrokerPersister.js';
 import { EventLog } from './persistence/EventLog.js';
 import { SnapshotStore } from './persistence/SnapshotStore.js';
-import { StrategyEngine } from './strategy/StrategyEngine.js';
+import { StrategyEngine, type Strategy } from './strategy/StrategyEngine.js';
 import { OrderFactory } from './strategy/OrderFactory.js';
 import { SignalExecutor } from './strategy/SignalExecutor.js';
+import { SizingEngine } from './strategy/SizingEngine.js';
 import { MtfStateEngine } from './market/MtfStateEngine.js';
 import { MarketStructureEngine } from './market/structure/MarketStructureEngine.js';
 import { SmcLocationEngine } from './market/smc/SmcLocationEngine.js';
@@ -402,11 +403,28 @@ export async function startEngine(): Promise<EngineHandle> {
   }
 
   const orderFactory = new OrderFactory({ defaultLeverage: 5 });
+  // SizingEngine is the fallback size resolver for OPEN signals that arrive
+  // without features.quantity. The autonomous agent + SMC + Adaptive Supertrend
+  // stack pre-computes quantity themselves; classic indicator strategies
+  // (ema-trend-5m, rsi-mean-reversion-5m, momentum-5m, mean-reversion-5m,
+  // breakout-15m, grid-15m) don't, so they rely on this fallback. Even with
+  // classic strategies disabled (default), SizingEngine is harmless — the
+  // existing strategies always supply features.quantity so the fallback is
+  // never invoked for them. The wiring stays on so flipping
+  // CLASSIC_STRATEGIES_ENABLED=true "just works" without an engine restart.
+  const sizingEngine = new SizingEngine({
+    riskPerTrade: env.SIZING_RISK_PER_TRADE,
+    maxNotional: env.SIZING_MAX_NOTIONAL,
+    fallbackRiskPerTrade: env.SIZING_FALLBACK_RISK_PER_TRADE,
+  });
   const signalExecutor = new SignalExecutor({
     broker: executionBroker,
     orderFactory,
     signals: db.signals,
     getMarketState: (symbol) => marketState.getState(symbol),
+    sizingEngine,
+    getAccount: () => broker.getAccount(),
+    getInstrument: (symbol) => broker.getInstrument(symbol),
     logger: {
       warn: (msg) => logger.warn(msg),
       error: (error, msg) => logger.error({ error }, msg),
@@ -1068,6 +1086,73 @@ export async function startEngine(): Promise<EngineHandle> {
       },
     })
   );
+
+  // Classic indicator strategies (ema-trend-5m, rsi-mean-reversion-5m,
+  // momentum-5m, mean-reversion-5m, breakout-15m, grid-15m). Default OFF — the
+  // autonomous agent + SMC + Adaptive Supertrend stack is the default trading
+  // fleet. Set CLASSIC_STRATEGIES_ENABLED=true to add the classic fleet back.
+  // They were previously dead because they emit signals without
+  // features.quantity, and SignalExecutor rejected them with ZERO_QUANTITY.
+  // Now that SignalExecutor has a SizingEngine fallback (see the SizingEngine
+  // wiring above), classic signals resolve to real orders. The strategies
+  // remain OFF by default so existing deployments are unchanged until an
+  // operator opts in — see KNOWN_LIMITATIONS.md "Classic strategies" section.
+  if (env.CLASSIC_STRATEGIES_ENABLED) {
+    const requested = new Set(
+      env.CLASSIC_STRATEGIES_LIST.split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    );
+
+    const { createEmaTrendStrategy } = await import('./strategy/strategies/ema-trend-5m.js');
+    const { createRsiMeanReversionStrategy } = await import(
+      './strategy/strategies/rsi-mean-reversion-5m.js'
+    );
+    const { createMomentumStrategy } = await import('./strategy/strategies/momentum-5m.js');
+    const { createMeanReversionStrategy } = await import(
+      './strategy/strategies/mean-reversion-5m.js'
+    );
+    const { createBreakoutStrategy } = await import('./strategy/strategies/breakout-15m.js');
+    const { createGridStrategy } = await import('./strategy/strategies/grid-15m.js');
+
+    const registerIfRequested = (id: string, factory: () => Strategy): void => {
+      if (!requested.has(id)) return;
+      try {
+        strategyEngine.register(factory());
+        logger.info({ id }, 'Registered classic strategy');
+      } catch (err) {
+        logger.warn({ err, id }, 'Failed to register classic strategy');
+      }
+    };
+
+    registerIfRequested('ema-trend-5m', () =>
+      createEmaTrendStrategy({ symbols, cooldownMs: 300_000 })
+    );
+    registerIfRequested('breakout-15m', () =>
+      createBreakoutStrategy({ symbols, cooldownMs: 300_000 })
+    );
+    registerIfRequested('rsi-mean-reversion-5m', () =>
+      createRsiMeanReversionStrategy({ symbols, cooldownMs: 300_000 })
+    );
+    registerIfRequested('momentum-5m', () =>
+      createMomentumStrategy({ symbols, cooldownMs: 300_000 })
+    );
+    registerIfRequested('grid-15m', () =>
+      createGridStrategy({ symbols, gridLevels: 5, gridSpacing: 0.005, baseQty: 0.5, leverage: 2 })
+    );
+    registerIfRequested('mean-reversion-5m', () =>
+      createMeanReversionStrategy({ symbols, cooldownMs: 300_000 })
+    );
+
+    logger.info(
+      { count: requested.size, ids: Array.from(requested) },
+      'Classic strategies registered (CLASSIC_STRATEGIES_ENABLED=true)'
+    );
+  } else {
+    logger.info(
+      'Classic strategies disabled (set CLASSIC_STRATEGIES_ENABLED=true to enable ema-trend-5m, rsi-mean-reversion-5m, momentum-5m, mean-reversion-5m, breakout-15m, grid-15m)'
+    );
+  }
 
   await strategyEngine.start();
 
