@@ -27,7 +27,8 @@ export type WebSocketEventType =
   | 'agent.autonomous.exit'
   | 'agent.autonomous.learning'
   | 'setup.performance'
-  | 'reconciliation.report';
+  | 'reconciliation.report'
+  | 'account.reset';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

@@ -1006,6 +1006,17 @@ export async function startEngine(): Promise<EngineHandle> {
         wsGateway.broadcast('agent.cycle', cycle);
       },
       onCycleStep: (step: AgentCycleStep) => {
+        // Persist as well as broadcast. Broadcast-only meant the live debate
+        // transcript was empty on every page load — the dashboard had no
+        // history to replay because none was ever written. Debate cycles are
+        // operator- or candle-triggered (a handful of stages each), so this is
+        // not the high-frequency path; the synthetic per-signal step emitted by
+        // the adaptive-supertrend strategy below is deliberately NOT persisted.
+        events.appendSystemEvent({
+          eventType: 'AGENT_STEP',
+          payload: step as unknown as Record<string, unknown>,
+          createdAtUtc: new Date().toISOString(),
+        });
         wsGateway.broadcast('agent.step', step);
       },
     })
@@ -1217,6 +1228,34 @@ export async function startEngine(): Promise<EngineHandle> {
       logger.info({ aggressiveMode }, 'Aggressive simulation mode updated and persisted');
     },
     onTriggerEvaluation: evaluateAllSymbols,
+    onResetPaperAccount: async (startingBalance?: number) => {
+      const startUsdt = startingBalance && startingBalance > 0 ? startingBalance : 10_000;
+      const account = broker.resetAccount(startUsdt);
+
+      if (profitGoals) {
+        profitGoals.resetDaily(startUsdt);
+        profitGoals.resetWeekly(startUsdt);
+        profitGoals.resetMonthly(startUsdt);
+        profitGoalStore.save(profitGoals);
+      }
+
+      for (const stat of strategyPerformance.listStats()) {
+        if (stat.quarantined) {
+          strategyPerformance.release(stat.strategyId);
+        }
+      }
+
+      events.appendSystemEvent({
+        eventType: 'PROFIT_GOAL_RESET',
+        payload: { action: 'ACCOUNT_RESET', startingBalance: startUsdt, resetAt: new Date().toISOString() },
+        createdAtUtc: new Date().toISOString(),
+      });
+
+      wsGateway.broadcast('account.reset', { account, startingBalance: startUsdt });
+
+      logger.info({ startingBalance: startUsdt }, '[Engine] Paper trading account reset completed');
+      return account;
+    },
   });
 
   await api.start();

@@ -453,6 +453,7 @@ export class TradingAgentsPipeline {
   private async generateSchemaWithFallback<T>(
     prompt: string,
     system: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     schema: z.ZodType<T, any, any>,
     temperature = 0.2
   ): Promise<T> {

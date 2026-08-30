@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { z } from 'zod';
-import type { ExecutionBroker } from '../broker/types.js';
+import type { AccountState, ExecutionBroker } from '../broker/types.js';
 import type { StrategyEngine } from '../strategy/StrategyEngine.js';
 import type { SignalRepository } from '../persistence/repositories/SignalRepository.js';
 import type { EventLog } from '../persistence/EventLog.js';
@@ -144,6 +144,7 @@ export interface ApiServerOptions {
   onSetAggressiveMode?: (enabled: boolean) => void;
   getAggressiveMode?: () => boolean;
   onTriggerEvaluation?: () => Promise<number>;
+  onResetPaperAccount?: (startingBalance?: number) => Promise<AccountState> | AccountState;
   /** When set, requires `Authorization: Bearer <apiKey>` (or `x-api-key`) on all order/engine/mode control endpoints. */
   apiKey?: string;
   /** When set, `/api/v1/mode/arm` requires a matching `passcode` in the request body. */
@@ -702,6 +703,22 @@ export class ApiServer {
         ts: e.ts,
         payload: e.payload,
       }));
+    });
+
+    // Recent persisted debate steps, newest-first — lets the dashboard replay
+    // the transcript after a reload instead of showing an empty feed until the
+    // next cycle happens to run. Same shape as the `agent.step` WS broadcast so
+    // the client can feed both into one list.
+    this.app.get('/api/v1/agents/steps', async (request) => {
+      const query = request.query as { symbol?: string; limit?: string };
+      const limit = parseLimit(query.limit, 100);
+      // event_type is indexed (idx_events_type_time), so this is a range scan
+      // rather than a walk of the whole events table.
+      const events = this.events.getEvents({ type: 'AGENT_STEP', limit });
+      const steps = events
+        .map((e) => e.payload as Record<string, unknown>)
+        .filter((p) => !query.symbol || p['symbol'] === query.symbol);
+      return { steps };
     });
 
     this.app.get('/api/v1/fills', async (request) => {
@@ -1317,6 +1334,39 @@ export class ApiServer {
       return { killSwitch: true };
     });
 
+    this.app.post('/api/v1/account/reset', { preHandler: this.requireApiKey }, async (request, reply) => {
+      if (this.options.profile?.mode === 'live') {
+        return reply.code(400).send({
+          error: 'CANNOT_RESET_LIVE_ACCOUNT',
+          message: 'Account reset is only available in paper trading mode.',
+        });
+      }
+
+      const body = (request.body as { startingBalance?: number } | undefined) ?? {};
+      const startingBalance =
+        typeof body.startingBalance === 'number' && body.startingBalance > 0
+          ? body.startingBalance
+          : 10_000;
+
+      let account: AccountState;
+      if (this.options.onResetPaperAccount) {
+        account = await this.options.onResetPaperAccount(startingBalance);
+      } else if ('resetAccount' in this.broker && typeof (this.broker as unknown as { resetAccount: (val?: number) => AccountState }).resetAccount === 'function') {
+        account = await (this.broker as unknown as { resetAccount: (val?: number) => Promise<AccountState> | AccountState }).resetAccount(startingBalance);
+      } else {
+        return reply.code(501).send({
+          error: 'RESET_NOT_SUPPORTED',
+          message: 'The current broker implementation does not support account resets.',
+        });
+      }
+
+      return {
+        success: true,
+        message: `Paper trading account reset to $${startingBalance.toLocaleString()} successfully.`,
+        account,
+      };
+    });
+
     this.app.post('/api/v1/agents/cycle', { preHandler: this.requireApiKey }, async (request, reply) => {
       const body = (request.body as { symbol?: string; model?: string } | undefined) ?? {};
       const symbol = (body.symbol || 'SOLUSDT').toUpperCase();
@@ -1351,7 +1401,16 @@ export class ApiServer {
             fundingRate: 0.0001,
             openInterest: 50000,
           },
-          (step) => this.wsGateway.broadcast('agent.step', step)
+          (step) => {
+            // Same as engine.ts's onCycleStep: persist so the transcript can be
+            // replayed after a reload, then broadcast for live viewers.
+            this.events.appendSystemEvent({
+              eventType: 'AGENT_STEP',
+              payload: step as unknown as Record<string, unknown>,
+              createdAtUtc: new Date().toISOString(),
+            });
+            this.wsGateway.broadcast('agent.step', step);
+          }
         );
 
         this.events.logAgentCycle(cycle);

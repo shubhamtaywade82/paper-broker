@@ -300,4 +300,9 @@ export class SQLiteBrokerPersister implements BrokerPersister {
       fillTsUtc: r.fill_ts_utc,
     }));
   }
+
+  resetAccountData(accountId = 'paper-main'): void {
+    this.db.prepare(`DELETE FROM positions WHERE account_id = ?`).run(accountId);
+    this.db.prepare(`UPDATE orders SET status = 'CANCELED', reject_reason = 'ACCOUNT_RESET' WHERE account_id = ? AND status IN ('NEW', 'PARTIALLY_FILLED')`).run(accountId);
+  }
 }

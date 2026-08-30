@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useStore, type LiveEventItem } from '../../store/useStore';
 import { useCycles, useCycleDetail, useTriggerCycle, useAgentModels } from '../../hooks/useApi';
 import { Play, CheckCircle2, XCircle, Shield, Layers, ArrowLeft, Radio } from 'lucide-react';
@@ -218,6 +218,34 @@ export function AgentControlCenterView() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const { data: detailData } = useCycleDetail(selectedRunId);
+
+  // Replay persisted steps once on mount. liveEvents is in-memory only, so
+  // without this the transcript is empty after every reload even though the
+  // backend has the history. Deliberately fetched here rather than through
+  // useApi.ts to keep this self-contained.
+  const hydrateLiveEvents = useStore((st) => st.hydrateLiveEvents);
+  const { data: replayedSteps } = useQuery<{ steps: Array<Record<string, unknown>> }>({
+    queryKey: ['agent-steps', selectedSymbol],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/agents/steps?symbol=${encodeURIComponent(selectedSymbol)}&limit=100`);
+      if (!res.ok) throw new Error(`steps failed: ${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!replayedSteps?.steps?.length) return;
+    hydrateLiveEvents(
+      replayedSteps.steps.map((payload, i) => ({
+        type: 'agent_step',
+        payload,
+        // Stable id so a refetch dedupes instead of duplicating the transcript.
+        id: `replay_${String(payload['cycleId'] ?? 'unknown')}_${String(payload['stage'] ?? i)}_${String(payload['status'] ?? i)}_${String(payload['timestamp'] ?? i)}`,
+        timestamp: Number(payload['timestamp'] ?? 0),
+      }))
+    );
+  }, [replayedSteps, hydrateLiveEvents]);
 
   const steps = useMemo(
     () => liveEvents.map(asStep).filter((s): s is AgentStepPayload => s !== null),
@@ -569,9 +597,9 @@ function LiveTranscript({ symbol, steps }: { symbol: string; steps: AgentStepPay
         <div className="py-4 text-gray-500 text-[11px] space-y-1">
           <p>Nothing streaming. Steps appear here while a cycle runs.</p>
           <p className="text-gray-600">
-            This feed only shows steps broadcast while this tab is open and connected — it
-            does not replay history. Click &quot;Run Cycle ({symbol})&quot; above, or wait for
-            the autonomous loop to evaluate a setup on this symbol.
+            The last 100 persisted steps for {symbol} are replayed on load, and live steps
+            append as they arrive. Run a cycle above, or wait for the autonomous loop to
+            evaluate a setup on this symbol.
           </p>
         </div>
       ) : (

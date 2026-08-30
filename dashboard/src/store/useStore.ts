@@ -231,6 +231,13 @@ interface StoreState {
   setOperatingMode: (mode: 'paper' | 'shadow' | 'live', armed?: boolean) => void;
   setAggressiveMode: (aggressive: boolean) => void;
   addLiveEvent: (event: { type: string; payload: Record<string, unknown>; stream?: string; id?: string }) => void;
+  /**
+   * Merge historical events fetched from the server into the live feed.
+   * Deduped by id and appended AFTER the live entries — replayed events are
+   * always older than anything received over the socket, so this preserves the
+   * newest-first ordering `asStep` and `stageStats` rely on.
+   */
+  hydrateLiveEvents: (events: Array<{ type: string; payload: Record<string, unknown>; id: string; timestamp: number }>) => void;
   setLivePrice: (symbol: string, price: number) => void;
   setClosedCandle: (candle: ClosedCandle) => void;
   setTickers: (tickers: Record<string, TickerData>) => void;
@@ -416,6 +423,13 @@ export const useStore = create<StoreState>((set) => ({
         ...state.liveEvents.slice(0, 199),
       ],
     })),
+  hydrateLiveEvents: (events) =>
+    set((state) => {
+      const seen = new Set(state.liveEvents.map((e) => e.id));
+      const fresh = events.filter((e) => !seen.has(e.id));
+      if (fresh.length === 0) return {};
+      return { liveEvents: [...state.liveEvents, ...fresh].slice(0, 200) };
+    }),
   setLivePrice: (symbol, price) =>
     set((state) => ({ livePrice: { ...state.livePrice, [symbol]: price } })),
   setClosedCandle: (candle) =>

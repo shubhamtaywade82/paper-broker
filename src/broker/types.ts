@@ -330,6 +330,7 @@ export interface BrokerPersister {
   loadOpenPositions?(accountId?: string): Position[];
   loadOpenOrders?(accountId?: string): Order[];
   loadFills?(accountId?: string): Fill[];
+  resetAccountData?(accountId?: string): void;
 }
 
 export interface PaperBrokerConfig {
@@ -416,7 +417,10 @@ export interface SystemEventType {
     | 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED'
     | 'AUTONOMOUS_SCALE_IN'
     | 'AUTONOMOUS_SCALE_OUT'
-    | 'AUTONOMOUS_LLM_VETO';
+    | 'AUTONOMOUS_LLM_VETO'
+    /** One stage transition of a debate cycle, persisted so the dashboard's
+     *  live transcript can replay after a page reload. */
+    | 'AGENT_STEP';
   payload?: Record<string, unknown>;
   createdAtUtc: string;
 }
@@ -429,6 +433,7 @@ export interface ExecutionBroker {
   getPositions(): Promise<Position[]> | Position[];
   getPosition(symbol: string): Promise<Position | undefined> | Position | undefined;
   getAccount(): Promise<AccountState> | AccountState;
+  resetAccount?(startingUsdt?: number): Promise<AccountState> | AccountState;
 }
 
 export type MarketDataProviderType = 'BINANCE' | 'COINDCX';

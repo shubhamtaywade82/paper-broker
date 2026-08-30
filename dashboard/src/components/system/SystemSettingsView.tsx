@@ -9,6 +9,7 @@ import {
   useSetAggressiveMode,
   useTriggerEvaluation,
   useAgentPoolConfig,
+  useResetAccount,
   type ProviderHealthState,
 } from '../../hooks/useApi';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -32,6 +33,7 @@ import {
   Sparkles,
   Database,
   Layers,
+  RotateCcw,
 } from 'lucide-react';
 
 function errorMessage(err: unknown): string | null {
@@ -66,12 +68,14 @@ export function SystemSettingsView() {
   const engineControl = useEngineControl();
   const setAggressive = useSetAggressiveMode();
   const triggerEval = useTriggerEvaluation();
+  const resetAccount = useResetAccount();
 
   const engineRunning = dashboardData?.engineRunning ?? false;
 
   const [isArmModalOpen, setIsArmModalOpen] = useState(false);
   const [isDisarmModalOpen, setIsDisarmModalOpen] = useState(false);
   const [isKillSwitchModalOpen, setIsKillSwitchModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   return (
     <div className="space-y-5 font-mono text-xs select-none">
@@ -263,6 +267,16 @@ export function SystemSettingsView() {
           >
             <Square className="w-4 h-4" /> Pause Engine
           </button>
+
+          {operatingMode === 'paper' && (
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              disabled={resetAccount.isPending}
+              className="flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+            >
+              <RotateCcw className="w-4 h-4" /> {resetAccount.isPending ? 'Resetting...' : 'Reset Paper Account'}
+            </button>
+          )}
 
           <button
             onClick={() => setIsKillSwitchModalOpen(true)}
@@ -499,6 +513,26 @@ export function SystemSettingsView() {
         onCancel={() => {
           engineControl.reset();
           setIsKillSwitchModalOpen(false);
+        }}
+      />
+
+      {/* Reset Paper Account Modal */}
+      <ConfirmationModal
+        isOpen={isResetModalOpen}
+        title="Reset Paper Trading Account"
+        message="This will cancel all active paper orders, close all open paper positions, and reset your simulated balance back to $10,000 USDT. Daily profit goals and circuit limits will also be cleared."
+        confirmLabel="Reset Account ($10,000)"
+        confirmVariant="warning"
+        isLoading={resetAccount.isPending}
+        error={errorMessage(resetAccount.error)}
+        onConfirm={() => {
+          resetAccount.mutate(10000, {
+            onSuccess: () => setIsResetModalOpen(false),
+          });
+        }}
+        onCancel={() => {
+          resetAccount.reset();
+          setIsResetModalOpen(false);
         }}
       />
     </div>

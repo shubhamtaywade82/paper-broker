@@ -691,3 +691,23 @@ export function useAgentModels() {
     refetchInterval: 60000,
   });
 }
+
+export function useResetAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (startingBalance?: number) =>
+      fetchJson<{ success: boolean; message: string; account: unknown }>('/api/v1/account/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startingBalance }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['account'] });
+      queryClient.invalidateQueries({ queryKey: ['positions'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['riskSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['autonomousSnapshot'] });
+    },
+  });
+}

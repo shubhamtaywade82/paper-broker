@@ -275,6 +275,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   // discarded at the socket boundary and never reached any store.
   z.object({ type: z.literal('agent.step'), payload: AgentStepSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.cycle'), payload: AgentCycleSchema, timestampUtc: z.string().optional() }),
+  z.object({ type: z.literal('account.reset'), payload: z.object({}).passthrough(), timestampUtc: z.string().optional() }),
 ]);
 
 export type WsMessage = z.infer<typeof WsMessageSchema>;

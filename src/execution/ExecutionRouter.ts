@@ -122,4 +122,12 @@ export class ExecutionRouter implements ExecutionBroker {
   public async getAccount(): Promise<AccountState> {
     return this.getActiveBroker().getAccount();
   }
+
+  public async resetAccount(startingUsdt?: number): Promise<AccountState> {
+    const broker = this.getActiveBroker();
+    if ('resetAccount' in broker && typeof (broker as unknown as { resetAccount: (val?: number) => AccountState }).resetAccount === 'function') {
+      return (broker as unknown as { resetAccount: (val?: number) => AccountState }).resetAccount(startingUsdt);
+    }
+    return this.getAccount();
+  }
 }

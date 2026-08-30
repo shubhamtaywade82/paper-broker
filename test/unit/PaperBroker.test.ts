@@ -767,4 +767,27 @@ describe('PaperBroker reduce-only clamping', () => {
     expect(broker.getPosition('BTCUSDT')?.qty).toBe(0);
     expect(broker.getPosition('BTCUSDT')?.status).toBe('CLOSED');
   });
+
+  it('resetAccount cancels open orders, clears positions, and resets balance', () => {
+    broker.onMarket({
+      symbol: 'BTCUSDT',
+      bid: 50000,
+      ask: 50001,
+      last: 50000,
+      mark: 50000,
+      localTsUtc: Date.now(),
+      stale: false,
+    });
+
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+    expect(broker.getPositions().length).toBeGreaterThan(0);
+
+    const account = broker.resetAccount(12000);
+    expect(account.walletBalance).toBe(12000);
+    expect(account.equity).toBe(12000);
+    expect(account.openPositionsCount).toBe(0);
+    expect(account.openOrdersCount).toBe(0);
+    expect(broker.getPositions().length).toBe(0);
+    expect(broker.getOpenOrders().length).toBe(0);
+  });
 });

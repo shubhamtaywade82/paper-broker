@@ -387,4 +387,51 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
 
     await server.stop();
   });
+
+  it('POST /api/v1/account/reset resets paper trading account balance and positions', async () => {
+    let resetCalledWith: number | undefined;
+    const mockReset = vi.fn((val?: number) => {
+      resetCalledWith = val;
+      return {
+        walletBalance: val ?? 10_000,
+        unrealizedPnl: 0,
+        equity: val ?? 10_000,
+        initialMargin: 0,
+        maintenanceMargin: 0,
+        availableBalance: val ?? 10_000,
+        totalFees: 0,
+        totalFunding: 0,
+        totalRealizedPnl: 0,
+        openPositionsCount: 0,
+        openOrdersCount: 0,
+        liquidations: 0,
+      };
+    });
+
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      onResetPaperAccount: mockReset,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/account/reset',
+      payload: { startingBalance: 15000 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(data.success).toBe(true);
+    expect(data.account.walletBalance).toBe(15000);
+    expect(mockReset).toHaveBeenCalledWith(15000);
+
+    await server.stop();
+  });
 });

@@ -72,8 +72,10 @@ export class PaperBroker implements ExecutionBroker {
   private peakEquity: number;
   private currentUtcDay: string;
   private isLiquidating = false;
+  private accountId: string;
 
   constructor(config: PaperBrokerConfig) {
+    this.accountId = config.accountId ?? 'paper-main';
     const fallback = (config as unknown as Record<string, unknown>)['initialBalance'];
     const startBalance = config.startingUsdt ?? (typeof fallback === 'number' ? fallback : 10_000);
     this.walletBalance = startBalance;
@@ -1107,6 +1109,30 @@ export class PaperBroker implements ExecutionBroker {
         positions: snapshot.positions,
       });
     }, 10000);
+  }
+
+  resetAccount(startingUsdt?: number): AccountState {
+    const startBalance = startingUsdt ?? 10_000;
+    this.cancelAllOrders();
+    this.positions.clear();
+    this.orders.clear();
+    this.fills = [];
+    this.walletBalance = startBalance;
+    this.totalFees = 0;
+    this.totalFunding = 0;
+    this.totalRealizedPnl = 0;
+    this.liquidations = 0;
+    this.dayStartEquity = startBalance;
+    this.peakEquity = startBalance;
+    this.currentUtcDay = new Date().toISOString().slice(0, 10);
+    this.isLiquidating = false;
+
+    if (this.persister?.resetAccountData) {
+      this.persister.resetAccountData(this.accountId);
+    }
+
+    this.recalculateAccount();
+    return this.getAccount();
   }
 
   shutdown(): void {

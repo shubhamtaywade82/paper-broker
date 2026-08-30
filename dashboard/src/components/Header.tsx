@@ -5,6 +5,7 @@ import {
   useEngineControl,
   useSetAggressiveMode,
   useTriggerEvaluation,
+  useResetAccount,
 } from '../hooks/useApi';
 import { ConfirmationModal } from './common/ConfirmationModal';
 import { OrderModal } from './common/OrderModal';
@@ -17,6 +18,7 @@ import {
   Plus,
   PowerOff,
   Zap,
+  RotateCcw,
 } from 'lucide-react';
 import { calculateTotalUnrealizedPnl } from '../store/useStore.js';
 
@@ -36,11 +38,13 @@ export function Header() {
 
   const [isKillSwitchOpen, setIsKillSwitchOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   const triggerCycle = useTriggerCycle();
   const engineControl = useEngineControl();
   const setAggressive = useSetAggressiveMode();
   const triggerEval = useTriggerEvaluation();
+  const resetAccount = useResetAccount();
 
   const totalUnrealizedPnl = calculateTotalUnrealizedPnl(
     positions,
@@ -234,6 +238,18 @@ export function Header() {
               <span>{triggerEval.isPending ? 'Scanning...' : 'Scan Pairs'}</span>
             </button>
 
+            {operatingMode === 'paper' && (
+              <button
+                onClick={() => setIsResetModalOpen(true)}
+                disabled={resetAccount.isPending}
+                title="Reset Paper Trading Account back to initial balance ($10,000 USDT) and clear all simulated positions"
+                className="flex items-center gap-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{resetAccount.isPending ? 'Resetting...' : 'Reset Paper'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsKillSwitchOpen(true)}
               className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
@@ -268,6 +284,22 @@ export function Header() {
           });
         }}
         onCancel={() => setIsKillSwitchOpen(false)}
+      />
+
+      {/* Reset Paper Account Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={isResetModalOpen}
+        title="Reset Paper Trading Account"
+        message="This will cancel all simulated orders, close all open paper positions, and reset your paper wallet balance to $10,000 USDT. Daily profit goals and circuit limits will also be reset."
+        confirmLabel="Reset Account ($10,000)"
+        confirmVariant="warning"
+        isLoading={resetAccount.isPending}
+        onConfirm={() => {
+          resetAccount.mutate(10000, {
+            onSuccess: () => setIsResetModalOpen(false),
+          });
+        }}
+        onCancel={() => setIsResetModalOpen(false)}
       />
 
       {/* Order Entry Modal */}
