@@ -21,7 +21,7 @@ export class PaperAccount {
     }
 
     const equity = this.balance + unrealizedPnl;
-    const availableBalance = Math.max(0, this.balance - usedMargin);
+    const availableBalance = Math.max(0, equity - usedMargin);
 
     return {
       balance: Number(this.balance.toFixed(2)),

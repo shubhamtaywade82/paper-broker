@@ -1,4 +1,4 @@
-import { BinanceClient } from '@nemesis-oss/binance-sdk';
+import type { BinanceClient } from '@nemesis-oss/binance-sdk';
 import type { Instrument } from '../broker/types.js';
 import { env } from '../config/env.js';
 
@@ -93,32 +93,4 @@ export async function bootstrapFromBinance(
   }
 
   return { instruments, markPrices, fundingRates };
-}
-
-export function createBinanceClient(): BinanceClient {
-  return new BinanceClient({
-    testnet: env.BINANCE_ENV === 'testnet',
-    apiKey: env.BINANCE_API_KEY,
-    apiSecret: env.BINANCE_API_SECRET,
-  });
-}
-
-type KlineInterval = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '6h' | '8h' | '12h' | '1d' | '3d' | '1w' | '1M';
-
-export function getBinanceStreams(client: BinanceClient, symbols: string[], timeframes: KlineInterval[]): string[] {
-  const streams: string[] = [];
-
-  for (const symbol of symbols) {
-    streams.push(
-      client.futures.ws.bookTicker(symbol),
-      client.futures.ws.aggTrade(symbol),
-      client.futures.ws.markPrice(symbol, '1s')
-    );
-
-    for (const interval of timeframes) {
-      streams.push(client.futures.ws.kline(symbol, interval));
-    }
-  }
-
-  return streams;
 }

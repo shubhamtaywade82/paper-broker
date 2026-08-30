@@ -929,7 +929,8 @@ export class PaperBroker implements ExecutionBroker {
 
     const equity = D(this.walletBalance).add(unrealizedPnl).toNumber();
     const availableBalance = Math.max(0, D(equity).sub(initialMargin).toNumber());
-    const marginRatio = maintenanceMargin > 0 ? equity / maintenanceMargin : 0;
+    // Binance convention: maintMargin / marginBalance, approaches 1 at liquidation.
+    const marginRatio = equity > 0 ? maintenanceMargin / equity : 0;
 
     if (equity > this.peakEquity) {
       this.peakEquity = equity;

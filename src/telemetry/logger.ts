@@ -131,4 +131,3 @@ export function parseTraceparent(header: unknown): { traceId: string; spanId: st
 }
 
 export type { Logger, LoggerOptions };
-export default logger;

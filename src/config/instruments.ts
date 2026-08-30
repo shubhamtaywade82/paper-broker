@@ -68,17 +68,3 @@ export function getInstrumentConfig(symbol: string): Instrument {
     updatedAtUtc: new Date().toISOString(),
   };
 }
-
-export const riskLimits = {
-  maxLeverage: 10,
-  maxOrderNotional: 10000,
-  maxPositionNotional: 20000,
-  maxDailyLoss: 3500,
-  maxOpenOrders: 50,
-  allowMarketOrders: true,
-  allowLimitOrders: true,
-  allowStopOrders: true,
-  staleMarketMaxAgeMs: 5000,
-  maxPositionSize: 0.1,
-  riskPerTrade: 0.005,
-};

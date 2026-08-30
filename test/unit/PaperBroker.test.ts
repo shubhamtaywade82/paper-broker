@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PaperBroker } from '../../src/broker/PaperBroker.js';
+import { DatabaseManager } from '../../src/persistence/db.js';
+import { SQLiteBrokerPersister } from '../../src/persistence/BrokerPersister.js';
 import type { Fill, Instrument, OrderEventSink } from '../../src/broker/types.js';
 
 const BTC: Instrument = {
@@ -789,5 +794,162 @@ describe('PaperBroker reduce-only clamping', () => {
     expect(account.openOrdersCount).toBe(0);
     expect(broker.getPositions().length).toBe(0);
     expect(broker.getOpenOrders().length).toBe(0);
+  });
+});
+
+describe('PaperBroker account math (equity/margin/availableBalance/marginRatio)', () => {
+  // marketSlippageBps: 0 keeps fill prices exact so every expected number
+  // below is hand-computed from the standard futures formulas, not copied
+  // from the implementation:
+  //   equity           = walletBalance + unrealizedPnl
+  //   initialMargin    = notional / leverage
+  //   maintenanceMargin = notional * maintenanceMarginRate
+  //   availableBalance = max(0, equity - initialMargin)
+  //   marginRatio      = maintenanceMargin / equity   (Binance convention)
+  function createExactBroker() {
+    return new PaperBroker({
+      dataDir: '/tmp/paper-broker-test',
+      accountId: 'test-account',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+    });
+  }
+
+  it('computes initialMargin/maintenanceMargin/equity/availableBalance/marginRatio at entry', () => {
+    const b = createExactBroker();
+    b.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+
+    const fee = 1 * 100 * 0.0004; // notional * takerFeeRate
+    const expectedWallet = 10000 - fee;
+    const expectedInitialMargin = (1 * 100) / 5;
+    const expectedMaintMargin = 1 * 100 * 0.005; // BTC.maintenanceMarginRate
+
+    const acc = b.getAccount();
+    expect(acc.walletBalance).toBeCloseTo(expectedWallet, 8);
+    expect(acc.initialMargin).toBeCloseTo(expectedInitialMargin, 8);
+    expect(acc.maintenanceMargin).toBeCloseTo(expectedMaintMargin, 8);
+    expect(acc.equity).toBeCloseTo(expectedWallet, 8); // no unrealized PnL yet
+    expect(acc.availableBalance).toBeCloseTo(expectedWallet - expectedInitialMargin, 8);
+    expect(acc.marginRatio).toBeCloseTo(expectedMaintMargin / expectedWallet, 10);
+  });
+
+  it('rolls unrealized PnL into equity/availableBalance/marginRatio as mark price moves, without touching walletBalance', () => {
+    const b = createExactBroker();
+    b.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+    const walletAfterOpen = b.getAccount().walletBalance;
+
+    // Price drops 10: a losing long must shrink equity and availableBalance,
+    // and grow marginRatio (closer to liquidation) — this is the regression
+    // case for the PaperAccount.ts bug where availableBalance ignored
+    // unrealized PnL entirely.
+    b.onMarket({ symbol: 'BTCUSDT', bid: 90, ask: 90, last: 90, mark: 90, localTsUtc: Date.now(), stale: false });
+
+    const expectedUnrealized = 1 * (90 - 100);
+    const expectedEquity = walletAfterOpen + expectedUnrealized;
+    const expectedInitialMargin = (1 * 90) / 5;
+    const expectedMaintMargin = 1 * 90 * 0.005;
+
+    const acc = b.getAccount();
+    expect(acc.walletBalance).toBeCloseTo(walletAfterOpen, 8); // unrealized never touches wallet
+    expect(acc.unrealizedPnl).toBeCloseTo(expectedUnrealized, 8);
+    expect(acc.equity).toBeCloseTo(expectedEquity, 8);
+    expect(acc.availableBalance).toBeCloseTo(expectedEquity - expectedInitialMargin, 8);
+    expect(acc.marginRatio).toBeCloseTo(expectedMaintMargin / expectedEquity, 10);
+    // A losing position must always report LESS available balance than a
+    // flat account with the same wallet — this is exactly what the bug got
+    // backwards (it used raw balance, overstating free margin on a loss).
+    expect(acc.availableBalance).toBeLessThan(walletAfterOpen - expectedInitialMargin);
+  });
+
+  it('folds realized PnL and the closing fee into walletBalance and zeroes margin once flat', () => {
+    const b = createExactBroker();
+    b.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    b.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+    const walletAfterOpen = b.getAccount().walletBalance;
+
+    b.onMarket({ symbol: 'BTCUSDT', bid: 90, ask: 90, last: 90, mark: 90, localTsUtc: Date.now(), stale: false });
+    b.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 1, reduceOnly: true, leverage: 5 });
+
+    const realizedPnl = 1 * (90 - 100); // (exit - entry) * qty, long
+    const closingFee = 1 * 90 * 0.0004;
+    const expectedWallet = walletAfterOpen + realizedPnl - closingFee;
+
+    const acc = b.getAccount();
+    expect(acc.totalRealizedPnl).toBeCloseTo(realizedPnl, 8);
+    expect(acc.walletBalance).toBeCloseTo(expectedWallet, 8);
+    // Flat account: equity == walletBalance == availableBalance, zero margin held.
+    expect(acc.equity).toBeCloseTo(expectedWallet, 8);
+    expect(acc.availableBalance).toBeCloseTo(expectedWallet, 8);
+    expect(acc.initialMargin).toBe(0);
+    expect(acc.maintenanceMargin).toBe(0);
+    expect(acc.marginRatio).toBe(0);
+  });
+});
+
+describe('PaperBroker reset survives a process restart', () => {
+  // Regression test for a real user-reported incident: reset the paper
+  // account via the dashboard/API (-> PaperBroker.resetAccount), keep
+  // trading, then the process restarts (deploy/crash/tsx-watch reload).
+  // PaperBroker's constructor rehydrates walletBalance/totalFees/
+  // totalRealizedPnl by replaying every persisted fill for the account.
+  // If resetAccountData left old fills in the DB, that replay resurrected
+  // pre-reset losses and silently undid the reset.
+  let dataDir: string;
+  let dbManager: DatabaseManager;
+
+  afterEach(() => {
+    dbManager?.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function openPersister() {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'paper-broker-restart-test-'));
+    dbManager = new DatabaseManager(dataDir);
+    return new SQLiteBrokerPersister(dbManager.raw);
+  }
+
+  it('reports the reset starting balance after a simulated restart, not the pre-reset ledger', () => {
+    const persister = openPersister();
+
+    // Session 1: lose money, then reset.
+    const broker1 = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+      persister,
+    });
+    broker1.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    broker1.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+    broker1.onMarket({ symbol: 'BTCUSDT', bid: 50, ask: 50, last: 50, mark: 50, localTsUtc: Date.now(), stale: false });
+    broker1.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 1, reduceOnly: true, leverage: 5 });
+    expect(broker1.getAccount().totalRealizedPnl).toBeLessThan(0);
+
+    broker1.resetAccount(10000);
+    expect(broker1.getAccount().walletBalance).toBe(10000);
+
+    // Simulate a restart: a brand-new PaperBroker instance reading the same
+    // persisted DB, exactly what happens on redeploy/crash/watch-reload.
+    const broker2 = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+      persister,
+    });
+
+    const acc = broker2.getAccount();
+    expect(acc.walletBalance).toBe(10000);
+    expect(acc.equity).toBe(10000);
+    expect(acc.totalRealizedPnl).toBe(0);
+    expect(acc.totalFees).toBe(0);
   });
 });

@@ -304,5 +304,9 @@ export class SQLiteBrokerPersister implements BrokerPersister {
   resetAccountData(accountId = 'paper-main'): void {
     this.db.prepare(`DELETE FROM positions WHERE account_id = ?`).run(accountId);
     this.db.prepare(`UPDATE orders SET status = 'CANCELED', reject_reason = 'ACCOUNT_RESET' WHERE account_id = ? AND status IN ('NEW', 'PARTIALLY_FILLED')`).run(accountId);
+    // PaperBroker's constructor rebuilds walletBalance/totalFees/totalRealizedPnl
+    // by replaying every persisted fill (PaperBroker.ts loadFills rehydration).
+    // Leaving old fills behind resurrects pre-reset PnL/fees on the next restart.
+    this.db.prepare(`DELETE FROM fills WHERE account_id = ?`).run(accountId);
   }
 }
