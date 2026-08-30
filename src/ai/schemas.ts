@@ -124,3 +124,30 @@ export const CycleRecordSchema = z.object({
   executed: z.boolean(),
 });
 export type CycleRecord = z.infer<typeof CycleRecordSchema>;
+
+/* ============================================================
+ * AGENTIC LAYER — Reflection + Memory schemas (feature/agentic-upgrade)
+ * ============================================================
+ *
+ * After every closing fill, the SelfImprovementLoop asks the LLM to produce a
+ * structured ReflectionSchema — a short, evidence-grounded postmortem of why
+ * the trade won or lost. The reflection is persisted to the agent_memory
+ * SQLite DB and its distilled lessons are injected into the next analyst
+ * cycle's prompt as `ctx.agentMemory`.
+ *
+ * LLM Authority Contract (CONTRACTS.md §5) is preserved: the reflection is
+ * advisory-only, never mutates positions, and never influences the
+ * deterministic risk/fund-manager stages.
+ */
+
+export const ReflectionSchema = z.object({
+  /** What happened in plain language — the LLM's postmortem. */
+  reflection: z.string().min(10).max(2_000),
+  /** Short, tag-style lessons (e.g. ["SSL sweeps on SOL in ranging regime fade below the 50% retrace"]). */
+  lessons: z.array(z.string().min(3).max(300)).max(10).default([]),
+  /** Free-text confidence the LLM has in its own postmortem (0..1). */
+  selfConfidence: z.number().min(0).max(1).default(0.5),
+  /** What to do differently next time, in one sentence. */
+  nextTime: z.string().max(500).optional(),
+});
+export type Reflection = z.infer<typeof ReflectionSchema>;

@@ -132,6 +132,16 @@ export interface MarketFactContext {
    * per CONTRACTS.md Section 5 (LLM Authority Contract).
    */
   setupMemory?: string;
+  /**
+   * Agent memory block — distilled, decay-weighted lessons from past closed
+   * trades (see AgentMemoryStore / SelfImprovementLoop). Advisory only, same
+   * contract as setupMemory. Empty string when the memory store is empty or
+   * disabled; the analyst stage treats empty as "no memory" and proceeds
+   * normally.
+   *
+   * (feature/agentic-upgrade)
+   */
+  agentMemory?: string;
 }
 
 export class TradingAgentsPipeline {
@@ -312,6 +322,7 @@ export class TradingAgentsPipeline {
       `Mark Price: ${ctx.mark}, Funding: ${ctx.fundingRate ?? 0.0001}, OI: ${ctx.openInterest ?? 0}`,
       ctx.candlesSummary ? `Price Action:\n${ctx.candlesSummary}` : '',
       ctx.setupMemory ? `Historical track record for this setup: ${ctx.setupMemory}` : '',
+      ctx.agentMemory ? `Agent memory (lessons from past closed trades):\n${ctx.agentMemory}` : '',
     ].filter(Boolean).join('\n');
 
     try {
@@ -428,6 +439,7 @@ export class TradingAgentsPipeline {
       `Rationale: ${verdict.rationale}`,
       `Reports: ${JSON.stringify(reports)}`,
       ctx.setupMemory ? `Historical track record for this setup: ${ctx.setupMemory} Weigh a poor track record toward lower confidence or NEUTRAL.` : '',
+      ctx.agentMemory ? `Agent memory (advisory lessons from past closed trades):\n${ctx.agentMemory}` : '',
       'Formulate a trade decision. Output valid JSON with exactly these fields:',
       '- action: "LONG", "SHORT", or "NEUTRAL"',
       '- leverage: number between 1 and 20',
