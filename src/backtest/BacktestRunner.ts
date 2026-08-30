@@ -4,6 +4,7 @@ import { PaperBroker } from '../broker/PaperBroker.js';
 import { StrategyEngine } from '../strategy/StrategyEngine.js';
 import { OrderFactory } from '../strategy/OrderFactory.js';
 import { SignalExecutor } from '../strategy/SignalExecutor.js';
+import { SizingEngine } from '../strategy/SizingEngine.js';
 import { SignalRepository } from '../persistence/repositories/SignalRepository.js';
 import { DatabaseManager } from '../persistence/db.js';
 import { EventLog } from '../persistence/EventLog.js';
@@ -117,12 +118,26 @@ export class BacktestRunner {
     });
 
     const orderFactory = new OrderFactory({ defaultLeverage: 5 });
+    // Wire SizingEngine as the fallback size resolver for OPEN signals that
+    // arrive without features.quantity. Classic indicator strategies
+    // (ema-trend-5m, rsi-mean-reversion-5m, momentum-5m, mean-reversion-5m,
+    // breakout-15m, grid-15m) don't pre-compute quantity, so without this
+    // fallback every signal they emit hits ZERO_QUANTITY rejection and the
+    // backtest produces zero trades for them. Defaults match engine.ts.
+    const sizingEngine = new SizingEngine({
+      riskPerTrade: 0.005,
+      maxNotional: 5000,
+      fallbackRiskPerTrade: 0.1,
+    });
 
     this.signalExecutor = new SignalExecutor({
       broker: this.broker,
       orderFactory,
       signals: this.signalRepo,
       getMarketState: (s) => this.broker.getMarket(s),
+      sizingEngine,
+      getAccount: () => this.broker.getAccount(),
+      getInstrument: (s) => this.broker.getInstrument(s),
     });
 
     this.strategyEngine = new StrategyEngine(

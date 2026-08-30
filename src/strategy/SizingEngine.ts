@@ -1,5 +1,15 @@
 import { Decimal } from 'decimal.js';
-import type { AccountState, Instrument } from '../broker/types.js';
+import type { Instrument } from '../broker/types.js';
+
+/**
+ * Minimal account shape SizingEngine needs. Only `equity` is used — risk per
+ * trade is computed as a fraction of equity. Kept narrow so callers (e.g.
+ * SignalExecutor's fallback resolver) can pass a partial account view
+ * without constructing the full AccountState aggregate.
+ */
+export interface SizingAccount {
+  equity: number;
+}
 
 export interface SizingConfig {
   riskPerTrade: number;
@@ -31,7 +41,7 @@ export class SizingEngine {
   }
 
   sizePosition(params: {
-    account: AccountState;
+    account: SizingAccount;
     instrument: Instrument;
     entryPrice: number;
     stopLossPrice?: number;

@@ -32,6 +32,13 @@ import type { ExchangeReconciler } from '../execution/ExchangeReconciler.js';
 import type { RiskConfig } from '../trading/risk/types.js';
 import { DEFAULT_RISK_CONFIG } from '../trading/risk/RiskLimits.js';
 import { RateLimiter, DEFAULT_RATE_LIMITS, type RateLimiterOptions, type RateLimitScope } from './RateLimiter.js';
+// Agentic layer imports (feature/agentic-upgrade)
+import type { ToolRegistry } from '../ai/tools/registry.js';
+import type { AgentMemoryStore } from '../ai/memory/AgentMemoryStore.js';
+import type { SelfImprovementLoop } from '../ai/SelfImprovementLoop.js';
+import type { StrategyParamLearner } from '../strategy/learning/StrategyParamLearner.js';
+import type { StrategySelector } from '../strategy/learning/StrategySelector.js';
+import type { ABTestRunner } from '../strategy/abtesting/ABTestRunner.js';
 
 const CreateOrderSchema = z.object({
   symbol: z.string().min(1),
@@ -134,6 +141,22 @@ export interface ApiServerOptions {
    * is unaffected. Pass `false` to disable entirely (tests, trusted networks).
    */
   rateLimits?: RateLimiterOptions | false;
+
+  // --- Agentic layer (feature/agentic-upgrade) ---------------------------
+  // All optional + surfaced read-only at /api/v1/agent/* + /api/v1/ab-tests
+  // + /api/v1/strategy-selector. None mutate broker state.
+  /** Tool registry for the LLM analyst stage (when AGENT_TOOLS_ENABLED). */
+  toolRegistry?: ToolRegistry;
+  /** Agent memory store (when AGENT_MEMORY_ENABLED). */
+  agentMemoryStore?: AgentMemoryStore;
+  /** Self-improvement loop handle (for the /api/v1/agent/decay endpoint). */
+  selfImprovementLoop?: SelfImprovementLoop;
+  /** Strategy parameter learner (when AGENT_PARAM_LEARNING_ENABLED). */
+  strategyParamLearner?: StrategyParamLearner;
+  /** Per-regime strategy selector (when AGENT_STRATEGY_SELECTOR_ENABLED). */
+  strategySelector?: StrategySelector;
+  /** A/B testing runner (when AGENT_AB_TESTING_ENABLED). */
+  abTestRunner?: ABTestRunner;
 }
 
 export class ApiServer {
@@ -262,6 +285,7 @@ export class ApiServer {
     this.registerBacktestRoutes();
     this.registerCommandRoutes();
     this.registerDashboardRoutes();
+    this.registerAgenticLayerRoutes();
   }
 
   private registerWebSocketRoutes(): void {
@@ -903,6 +927,108 @@ export class ApiServer {
         riskOpinions: (cycle['risk_opinions'] as unknown[]) || [],
       };
     });
+  }
+
+  /**
+   * Agentic layer routes (feature/agentic-upgrade).
+   *
+   * All routes below are read-only GETs (no API key required — same pattern
+   * as /api/v1/strategies/performance) EXCEPT the A/B evaluate endpoint,
+   * which mutates state (promotes an instance) and therefore requires the
+   * API key (same pattern as /api/v1/strategies/:id/release).
+   *
+   * Every endpoint returns `{ enabled: boolean, ... }` so the dashboard can
+   * gracefully render the "feature is off" state.
+   */
+  private registerAgenticLayerRoutes(): void {
+    // --- Tools -------------------------------------------------------------
+    this.app.get('/api/v1/agent/tools', async () => {
+      const registry = this.options.toolRegistry;
+      return {
+        enabled: Boolean(registry),
+        tools: registry?.list() ?? [],
+        catalog: registry?.catalog() ?? [],
+        recentCalls: registry?.recentCalls(50) ?? [],
+      };
+    });
+
+    // --- Agent memory ------------------------------------------------------
+    this.app.get('/api/v1/agent/memory', async () => {
+      const store = this.options.agentMemoryStore;
+      return {
+        enabled: Boolean(store),
+        lessons: store?.listLessons(200) ?? [],
+      };
+    });
+
+    this.app.get('/api/v1/agent/reflections', async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = Math.min(200, Math.max(1, Number(query.limit ?? 50)));
+      const store = this.options.agentMemoryStore;
+      return {
+        enabled: Boolean(store),
+        reflections: store?.recentReflections(limit) ?? [],
+      };
+    });
+
+    /**
+     * Manually trigger lesson decay + reflection pruning. Operator-only,
+     * requires API key. Useful when the operator wants to immediately
+     * retire a noisy lesson without waiting for the next cycle.
+     */
+    this.app.post(
+      '/api/v1/agent/decay',
+      { preHandler: this.requireApiKey },
+      async () => {
+        const loop = this.options.selfImprovementLoop;
+        if (!loop) return { enabled: false, message: 'agent memory not enabled' };
+        const result = loop.runDecayAndPrune();
+        return { enabled: true, ...result };
+      }
+    );
+
+    // --- Strategy parameter learner --------------------------------------
+    this.app.get('/api/v1/agent/param-learning', async (request) => {
+      const learner = this.options.strategyParamLearner;
+      const query = request.query as { strategyId?: string; regime?: string; paramKey?: string; full?: string };
+      if (!learner) return { enabled: false, cells: [] };
+
+      if (query.strategyId && query.regime && query.paramKey) {
+        return {
+          enabled: true,
+          stats: learner.listParamStats(query.strategyId, query.regime, query.paramKey),
+        };
+      }
+      return {
+        enabled: true,
+        stats: query.full === 'true' ? learner.listAllStats() : learner.listAllStats().slice(0, 50),
+      };
+    });
+
+    // --- Strategy selector ------------------------------------------------
+    this.app.get('/api/v1/strategy-selector', async () => {
+      const selector = this.options.strategySelector;
+      if (!selector) return { enabled: false, demotedPairs: [] };
+      return selector.getState();
+    });
+
+    // --- A/B testing ------------------------------------------------------
+    this.app.get('/api/v1/ab-tests', async () => {
+      const runner = this.options.abTestRunner;
+      if (!runner) return { enabled: false, instances: [], promotedInstanceId: null };
+      return runner.getState();
+    });
+
+    this.app.post(
+      '/api/v1/ab-tests/evaluate',
+      { preHandler: this.requireApiKey },
+      async () => {
+        const runner = this.options.abTestRunner;
+        if (!runner) return { enabled: false, promotedInstanceId: null, summary: 'A/B testing not enabled' };
+        const result = runner.evaluate();
+        return { enabled: true, ...result };
+      }
+    );
   }
 
   private registerBacktestRoutes(): void {

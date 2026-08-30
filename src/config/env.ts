@@ -50,7 +50,149 @@ const EnvSchema = z.object({
   OLLAMA_API_KEY_2: z.string().optional(),
   OLLAMA_API_KEY_3: z.string().optional(),
   OLLAMA_CLOUD_BASE_URL: z.string().url().default('https://ollama.com'),
-  OLLAMA_CLOUD_MODEL: z.string().default('gemma4:cloud'),
+  // Default to gemma3:27b — the closest real public Ollama model to the user's
+  // requested "gemma4:31b" (no such model exists publicly). Override via env
+  // to point at any other Ollama Cloud-served open-weight model.
+  OLLAMA_CLOUD_MODEL: z.string().default('gemma3:27b'),
+
+  // ==========================================
+  // AGENTIC LAYER — web search, tools, memory, reflection (feature/agentic-upgrade)
+  // All flags below default-OFF to preserve the existing pipeline's behaviour
+  // exactly when operators have not opted in. None of these flags affect the
+  // execution path — they only enrich the LLM analyst stage's context and
+  // close the self-improvement loop.
+  // ==========================================
+
+  // --- Tool framework (MCP-style read-only tools) -------------------------
+  // When true, the TradingAgentsPipeline analyst stage is given a ToolRegistry
+  // and may invoke bounded, schema-validated, read-only tools (web search,
+  // news sentiment, macro/funding context, on-chain whale flows, docs lookup,
+  // market/position read-only inspectors) before forming its report.
+  AGENT_TOOLS_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Hard ceiling on tool-call iterations per analyst stage invocation.
+  // Mirrors the MAX_ITERATIONS=5 contract in skills/agentic-llm/SKILL.md.
+  AGENT_TOOLS_MAX_ITERATIONS: z.coerce.number().int().min(1).max(10).default(5),
+  // Hard per-tool-call timeout in ms. Tools MUST NOT exceed this — they fail
+  // closed (return empty result, never throw) so a slow tool never breaks the
+  // trading cycle.
+  AGENT_TOOLS_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+  // Total token budget summed across all tool outputs in one cycle. Tools
+  // truncate their textual output to stay under this so the analyst prompt
+  // cannot be blown out by a single chatty tool.
+  AGENT_TOOLS_TOTAL_OUTPUT_TOKENS: z.coerce.number().int().min(500).max(20_000).default(4_000),
+
+  // --- Web search provider ------------------------------------------------
+  // Default provider is the no-key "coingecko + alternate.me + binance-public"
+  // bundle so the agent works out of the box. Operators with a Brave Search API
+  // key can switch to 'brave' for richer web results.
+  // Allowed values: 'free' (default) | 'brave'
+  AGENT_WEB_SEARCH_PROVIDER: z.enum(['free', 'brave']).default('free'),
+  AGENT_WEB_SEARCH_BRAVE_KEY: z.string().optional(),
+  // Per-cycle rate cap. The free providers ask for ~5 req/min; we cap lower.
+  AGENT_WEB_SEARCH_RATE_PER_MIN: z.coerce.number().int().min(1).max(60).default(8),
+
+  // --- Agent memory (reflections + lessons) --------------------------------
+  // When true, closing fills trigger a reflection prompt to the LLM whose
+  // structured output (ReflectionSchema) is persisted to a separate
+  // `agent_memory` SQLite DB. Top-K lessons are then re-injected into the
+  // next cycle's analyst prompt as `ctx.agentMemory`.
+  AGENT_MEMORY_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Path to the agent memory SQLite DB. Defaults to data/agent_memory.sqlite3
+  // next to the existing paper.sqlite3. Separate file so the immutable event
+  // log contract (CONTRACTS.md §4) is not affected — reflections are mutable
+  // state (decayed, pruned), events are not.
+  AGENT_MEMORY_DB_PATH: z.string().default('data/agent_memory.sqlite3'),
+  // How many top lessons (by relevance × recency-decay) to inject into each
+  // analyst prompt. Too high dilutes signal; too low ignores learning.
+  AGENT_MEMORY_INJECT_TOP_K: z.coerce.number().int().min(0).max(20).default(5),
+  // Reflections older than this many ms are pruned. Default 90 days.
+  AGENT_MEMORY_PRUNE_MS: z.coerce.number().int().min(86_400_000).default(90 * 86_400_000),
+  // Lessons decay score floor — a lesson below this score is retired.
+  AGENT_MEMORY_LESSON_DECAY_FLOOR: z.coerce.number().min(0).max(1).default(0.05),
+  // Reflection generation needs an LLM. If model is unreachable, skip silently
+  // (do not block trading or veto). Same soft-dependency contract as the
+  // debate pipeline (see PROJECT_STATE.md § Ollama reachability).
+  AGENT_MEMORY_REFLECT_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(120_000).default(30_000),
+
+  // --- Strategy parameter learner (per-strategy per-regime Q-learning) ----
+  // Extends the existing Q-learning (currently only on Supertrend params) to a
+  // generic per-(strategyId, regime, paramKey) learner. Off by default.
+  AGENT_PARAM_LEARNING_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Learning rate α and discount γ for the Q-learner.
+  AGENT_PARAM_LEARNING_ALPHA: z.coerce.number().min(0).max(1).default(0.1),
+  AGENT_PARAM_LEARNING_GAMMA: z.coerce.number().min(0).max(1).default(0.9),
+  // ε-greedy exploration rate. 0.1 = take a random param 10% of the time.
+  AGENT_PARAM_LEARNING_EPSILON: z.coerce.number().min(0).max(1).default(0.1),
+  // Min trades per (strategyId, regime, paramKey) before the learned value
+  // is trusted. Below this, the default value is used.
+  AGENT_PARAM_LEARNING_MIN_TRADES: z.coerce.number().int().min(2).default(5),
+
+  // --- Strategy selector (per-regime promotion) ----------------------------
+  // When true, the engine consults per-regime win rate (via
+  // StrategyPerformanceTracker) and dynamically promotes / demotes strategies
+  // for the current regime. Off by default — strategies remain registered
+  // unconditionally.
+  AGENT_STRATEGY_SELECTOR_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Minimum trades per (strategyId, regime) before the selector trusts the
+  // win rate enough to demote a loser.
+  AGENT_STRATEGY_SELECTOR_MIN_TRADES: z.coerce.number().int().min(2).default(10),
+
+  // --- A/B testing framework ----------------------------------------------
+  // When true, the engine runs N parallel "shadow" paper brokers each with a
+  // candidate parameter set. Promotes the rolling-window winner to the live
+  // paper broker. Off by default — see src/strategy/abtesting/ABTestRunner.ts.
+  AGENT_AB_TESTING_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  AGENT_AB_TESTING_INSTANCES: z.coerce.number().int().min(2).max(8).default(2),
+  // Rolling evaluation window in closed trades per instance.
+  AGENT_AB_TESTING_WINDOW_TRADES: z.coerce.number().int().min(10).default(50),
+  // How often to evaluate and promote (ms).
+  AGENT_AB_TESTING_EVAL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(3_600_000),
+
+  // Classic indicator strategies (src/strategy/strategies/{ema-trend, rsi-mean-
+  // reversion, momentum, mean-reversion, breakout, grid}-*.ts). These were the
+  // original candle-driven fleet from BacktestRunner, but were never registered
+  // in the live engine because they emitted signals without features.quantity
+  // and SignalExecutor rejected them with ZERO_QUANTITY. Now that SignalExecutor
+  // falls back to SizingEngine for OPEN signals lacking an explicit quantity,
+  // they produce valid orders again — but they remain OFF by default so live
+  // deployments must explicitly opt in (the autonomous agent + SMC + Adaptive
+  // Supertrend stack is the default trading fleet).
+  CLASSIC_STRATEGIES_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  // Comma-separated list of classic strategy IDs to register when
+  // CLASSIC_STRATEGIES_ENABLED=true. Default: all six. Use to enable a subset.
+  // Valid IDs: ema-trend-5m, breakout-15m, rsi-mean-reversion-5m,
+  // momentum-5m, grid-15m, mean-reversion-5m.
+  CLASSIC_STRATEGIES_LIST: z.string().default('ema-trend-5m,breakout-15m,rsi-mean-reversion-5m,momentum-5m,grid-15m,mean-reversion-5m'),
+
+  // SizingEngine fallback (src/strategy/SizingEngine.ts). When an OPEN signal
+  // arrives at SignalExecutor without features.quantity (or with quantity = 0),
+  // SignalExecutor computes a size from account equity, instrument lot size,
+  // entry price, and stop-loss distance (or a fallback notional if no SL).
+  // Risk per trade as a fraction of equity. Default 0.5%.
+  SIZING_RISK_PER_TRADE: z.coerce.number().min(0).max(0.1).default(0.005),
+  // Hard cap on notional per order. Default $5000.
+  SIZING_MAX_NOTIONAL: z.coerce.number().positive().default(5000),
+  // Fallback notional as a fraction of equity when no stop-loss is supplied.
+  // Default 10%.
+  SIZING_FALLBACK_RISK_PER_TRADE: z.coerce.number().min(0).max(1).default(0.1),
 
   PAPER_STARTING_USDT: z.coerce.number().positive().default(10000),
 
