@@ -104,6 +104,7 @@ IDE-level enforcement:
 | `docs/configuration.md` | Configuration reference |
 | `docs/strategies.md` | Strategy documentation |
 | `docs/api.md` | API reference |
+| `docs/wallet-lifecycle.md` | Signal→entry→exit flow, wallet state machine, long/short PnL formulas with worked examples |
 
 ## Configuration (`config/`)
 

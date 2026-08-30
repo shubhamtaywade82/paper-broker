@@ -59,7 +59,7 @@
 
 ### `broker/` — paper execution
 
-`PaperBroker` is the heart of the simulator. It reproduces exchange semantics without any real exchange call:
+`PaperBroker` is the heart of the simulator. It reproduces exchange semantics without any real exchange call (full signal→entry→exit flow, wallet formulas and worked long/short examples: `docs/wallet-lifecycle.md`):
 
 - **Matching** — MARKET fills at the market bid/ask with configurable slippage; LIMIT orders rest at their price and fill when price crosses; STOP_MARKET / TAKE_PROFIT_MARKET brackets trigger on stop price.
 - **Fees** — taker/maker rates, applied per fill and tracked in `totalFees`.
