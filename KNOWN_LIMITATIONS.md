@@ -597,6 +597,78 @@ When you complete work that addresses a limitation:
 
 ---
 
-**Last Updated**: 2026-08-26
+## Opt-in Agentic Layer (feature/agentic-upgrade branch)
+
+The following limitations recorded above are now addressable on the
+`feature/agentic-upgrade` branch by enabling the corresponding opt-in flag.
+All flags default OFF — existing deployments keep their current behaviour
+exactly until opted in.
+
+### LLM agent has no memory beyond one summarized line
+
+**Resolved (opt-in)** by `AGENT_MEMORY_ENABLED=true`:
+- `src/ai/memory/AgentMemoryStore.ts` persists structured reflections
+  (one per closed trade) and distilled lessons to a separate
+  `data/agent_memory.sqlite3` file (preserves the Event Log Contract §4).
+- `src/ai/SelfImprovementLoop.ts` is wired to `broker.onFill` (closing
+  fills only) and dispatches an async reflection LLM call (parsed against
+  `ReflectionSchema`, soft-fail). Top-K lessons (FTS-ranked × recency-
+  decayed) are re-injected into the next analyst + trader prompts as
+  `ctx.agentMemory`.
+- Operator-triggered decay+prune: `POST /api/v1/agent/decay` (API key).
+- Observability: `GET /api/v1/agent/memory`, `GET /api/v1/agent/reflections`.
+
+### MCP not implemented — agent is prompt-in/JSON-out only
+
+**Resolved (opt-in)** by `AGENT_TOOLS_ENABLED=true`:
+- `src/ai/tools/` ships a bounded, read-only, schema-validated tool layer
+  with 6 tools (MarketData, PositionInfo, WebSearch, NewsSentiment,
+  MacroFunding, OnChainWhale, DocsLookup).
+- The analyst stage runs a bounded tool loop (max 5 iterations) before
+  its LLM call. Tools are read-only by contract (CONTRACTS.md §5
+  preserved), fail-closed (return `{ok:false}` rather than throw), and
+  respect a hard deadline.
+- Observability: `GET /api/v1/agent/tools` returns the catalog + recent
+  call log.
+- Web search sources: free by default (CoinGecko + alt.me + Binance
+  public funding/OI + RSS feeds from CoinDesk/CoinTelegraph/Bitcoin
+  Magazine). Optional Brave Search when `AGENT_WEB_SEARCH_PROVIDER=brave`
+  + `AGENT_WEB_SEARCH_BRAVE_KEY`.
+
+### Classic indicator strategies produce zero trades
+
+**Still deferred.** The `SizingEngine.ts` + classic strategy files remain
+on disk and produce zero trades because `SignalExecutor` rejects signals
+without `features.sizing`. The StrategyParamLearner + StrategySelector
+landed here do NOT require classic strategies to be revived — they work
+on any registered strategy. A follow-up commit could revive one or two
+classic strategies under the unified signal contract to feed the
+StrategySelector with a wider candidate pool, but that's not in scope
+for this branch.
+
+### New (additive) limitations introduced by this branch
+
+- The `ABTestRunner` ships the evaluation contract only (recordOutcome +
+  evaluate + promote). Parallel-instance hosting (N separate
+  `PaperBroker` instances each with a candidate parameter set) is left
+  to a follow-up ADR.
+- The SelfImprovementLoop uses gemma3:27b by default. Smaller / local
+  models may produce lower-quality reflections; the operator can swap
+  via `OLLAMA_CLOUD_MODEL`. The schema validation in `ReflectionSchema`
+  protects against malformed output, but cannot protect against a model
+  that confidently produces the wrong reflection.
+- The tool framework is intentionally NOT given native tool-calling
+  capability (gemma3:27b is a base chat model). The deterministic loop
+  pulls macro-funding + news-sentiment for the cycle's symbol
+  proactively; richer tool-use patterns (e.g. "agent decides to call
+  onchain-whale when news mentions whale activity") would require a
+  fine-tuned or native tool-calling model.
+- The StrategySelector's per-regime demotion is gated by min-trades. A
+  strategy that loses 5 trades in a row in `RANGING` will be demoted for
+  that regime only — the existing global quarantine still applies on top.
+
+---
+
+**Last Updated**: 2026-08-30 (feature/agentic-upgrade branch)
 
 **Agent Reminder**: If you discover a capability claimed in documentation that doesn't match implementation, add it here before proceeding.

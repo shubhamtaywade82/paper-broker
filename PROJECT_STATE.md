@@ -35,8 +35,13 @@ Every order submission goes through `ExecutionRouter`, which is constructed in
 | Agent pipeline  | implemented | `TradingAgentsPipeline`, driven by `createSmcAgentStrategy`. **LLM-backed stages:** analyst team, bull/bear debate (`debateRounds`, default 2), debate verdict, trader decision. **Deterministic stages:** risk team, fund manager. Each emitted `AgentCycleStep` carries `engine: 'llm' \| 'deterministic'` so consumers cannot conflate them. |
 | Agent authority | advisory only | The pipeline **confirms or vetoes** a candidate the deterministic SMC engine already produced (`smc-agent.ts`: a NEUTRAL or mismatched direction returns null). It cannot originate a trade, pick a symbol, set a stop, or size a position. |
 | Ollama reachability | soft dependency | If unreachable, the debate resolves to NEUTRAL and no SMC trades occur. `engine.ts` logs a startup warning; startup is not gated. |
-| MCP             | not implemented | No tool orchestration. Agents are prompt-in / JSON-out. |
-| Learning        | implemented | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. **Also:** per-SMC-setup-archetype performance memory (`StrategyPerformanceTracker` reused, keyed by setup type e.g. `SSL_SWEEP_REVERSAL_LONG`, persisted to `data/setup_performance.json`). Closing fills from `smc-agent-v1` are attributed to the setup archetype that opened them via `SetupOutcomeTracker` (in-memory, per-symbol correlation). A setup archetype's realized track record is (a) surfaced to the LLM analyst/trader prompts as advisory `setupMemory` context — informational only, never routed to the deterministic risk/fund-manager stages — and (b) deterministically gates future entries of that archetype when quarantined, same mechanism as strategy-level quarantine but scoped narrower. Off by default (`SETUP_FEEDBACK_ENABLED=true` to enforce; stats accumulate either way). Operator-releasable via `POST /api/v1/setups/:id/release`, observable via `GET /api/v1/setups/performance`. The LLM debate/analyst/trader stages themselves still have no memory beyond this one summarized line — no broader agentic memory or MCP-tool-based recall exists. |
+| Cloud model | corrected | `OLLAMA_CLOUD_MODEL` default is now `gemma3:27b` (was `gemma4:cloud`, which is not a real public model). Override via env to point at any other Ollama Cloud-served open-weight model. (feature/agentic-upgrade) |
+| MCP / tool framework | implemented (opt-in) | `src/ai/tools/` ships a bounded, read-only, schema-validated tool layer: `ToolRegistry` + 6 tools (MarketData, PositionInfo, WebSearch, NewsSentiment, MacroFunding, OnChainWhale, DocsLookup). The analyst stage runs a bounded tool loop before its LLM call when `AGENT_TOOLS_ENABLED=true`. All tools fail-closed (return `{ok:false}` rather than throw) and respect a hard deadline. **Off by default** — backward-compatible. (feature/agentic-upgrade) |
+| Agent memory | implemented (opt-in) | `src/ai/memory/AgentMemoryStore.ts` + `src/ai/SelfImprovementLoop.ts`. Closing fills trigger an async reflection LLM call (parsed against `ReflectionSchema`, persisted to `data/agent_memory.sqlite3` — separate file, preserves the Event Log Contract §4). Top-K lessons (FTS-ranked × recency-decayed) are re-injected into the next analyst + trader prompts as `ctx.agentMemory`. Soft-fail: model unreachable → skip silently. **Off by default** (`AGENT_MEMORY_ENABLED=true` to enable). (feature/agentic-upgrade) |
+| Strategy param learning | implemented (opt-in) | `src/strategy/learning/StrategyParamLearner.ts` — generic per-`(strategyId, regime, paramKey)` Q-learning. Extends the existing Q-learning (only on Supertrend params) to any strategy's tunable parameter. ε-greedy selection. Persisted to `data/strategy_param_qtable.json`. **Off by default** (`AGENT_PARAM_LEARNING_ENABLED=true` to enable). (feature/agentic-upgrade) |
+| Strategy selector | implemented (opt-in) | `src/strategy/learning/StrategySelector.ts` — per-`(strategyId, regime)` promotion/demotion. Wraps the existing global `StrategyPerformanceTracker` quarantine with regime-aware granularity. Persisted to `data/strategy_selector_state.json`. **Off by default** (`AGENT_STRATEGY_SELECTOR_ENABLED=true` to enable). (feature/agentic-upgrade) |
+| A/B testing | skeleton (opt-in) | `src/strategy/abtesting/ABTestRunner.ts` — parallel-paper-instance evaluation contract. Ships the recordOutcome/evaluate API; the parallel-instance hosting itself (N `PaperBroker` instances) is left to a follow-up ADR. **Off by default** (`AGENT_AB_TESTING_ENABLED=true` to enable). (feature/agentic-upgrade) |
+| Learning (existing) | implemented | Q-learning over Supertrend parameters per market regime (`parameter-ai.ts`), reward = realized directional return on position close, persisted to `data/adaptive_supertrend_qtable.json`. **Also:** per-SMC-setup-archetype performance memory (`StrategyPerformanceTracker` reused, keyed by setup type e.g. `SSL_SWEEP_REVERSAL_LONG`, persisted to `data/setup_performance.json`). Closing fills from `smc-agent-v1` are attributed to the setup archetype that opened them via `SetupOutcomeTracker` (in-memory, per-symbol correlation). A setup archetype's realized track record is (a) surfaced to the LLM analyst/trader prompts as advisory `setupMemory` context — informational only, never routed to the deterministic risk/fund-manager stages — and (b) deterministically gates future entries of that archetype when quarantined, same mechanism as strategy-level quarantine but scoped narrower. Off by default (`SETUP_FEEDBACK_ENABLED=true` to enforce; stats accumulate either way). Operator-releasable via `POST /api/v1/setups/:id/release`, observable via `GET /api/v1/setups/performance`. |
 
 ## Persistence
 
@@ -114,10 +119,10 @@ These must NOT change without an ADR:
 
 ### Planned
 
-- ⏳ MCP tool orchestration loop
-- ⏳ A second market-data feed, without which failover cannot engage
 - ⏳ Real leverage-bracket data from the exchange (the liquidation model accepts brackets but ships none)
 - ⏳ Backtest engine visualization
+- ⏳ Parallel-instance hosting for the ABTestRunner (currently ships the evaluation contract only)
+- ⏳ Live Binance execution path behind LiveTradingGuard (out of scope for feature/agentic-upgrade — user explicitly asked to stay paper-only)
 
 ## Known Constraints
 
@@ -126,10 +131,11 @@ These must NOT change without an ADR:
 - SQLite limits concurrency; migration path to PostgreSQL planned
 - API control endpoints require `API_KEY` when set; without it they are unauthenticated and localhost-only is assumed
 - Live mode has never been validated against a real CoinDCX account in this repository
+- All `AGENT_*_ENABLED` flags default OFF — operators must opt in to each agentic-layer feature independently. See `.env.example` for the full list.
 
 ## Last Updated
 
-2026-08-26
+2026-08-30 (feature/agentic-upgrade branch)
 
 ---
 

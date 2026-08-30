@@ -20,6 +20,7 @@ Crypto **futures paper trading engine** powered by live Binance market data. It 
 - **Two live strategies** — `smc-agent-v1` (SMC structure detection confirmed by a multi-agent LLM debate) and an adaptive Supertrend strategy with Q-learning parameter selection per market regime. The classic indicator strategies remain on disk behind `cli.ts --engine=indicators` but produce no trades; see PROJECT_STATE.md.
 - **Reinforcement learning** — the adaptive Supertrend strategy learns which parameter set suits which regime from realized trade outcomes, persisted to `data/adaptive_supertrend_qtable.json`.
 - **Docker Background Deployment** — multi-stage Alpine image + `docker-compose` with persistent data volumes.
+- **Agentic Layer (opt-in, `feature/agentic-upgrade`)** — MCP-style read-only tool framework (`src/ai/tools/`), agent memory + self-improvement loop (`src/ai/memory/`, `src/ai/SelfImprovementLoop.ts`), per-strategy per-regime Q-learning (`StrategyParamLearner`), per-regime strategy promotion/demotion (`StrategySelector`), A/B testing skeleton (`ABTestRunner`). All features default OFF — operators opt in via `AGENT_*_ENABLED` env flags. See `.env.example` and `docs/decisions/0005-agentic-layer-upgrade.md`.
 
 ---
 
@@ -130,6 +131,14 @@ Base URL `http://localhost:8080`. Full reference: [`docs/api.md`](docs/api.md).
 | POST | `/api/v1/strategies/:id/release` | Lift a strategy quarantine (operator action) |
 | GET | `/api/v1/reconcile` | Last exchange reconciliation report and safe-mode state |
 | POST | `/api/v1/reconcile` | Re-run reconciliation; resumes trading only if clean |
+| GET | `/api/v1/agent/tools` | Tool catalog + recent tool calls (when `AGENT_TOOLS_ENABLED=true`) |
+| GET | `/api/v1/agent/memory` | Top-K decay-weighted lessons (when `AGENT_MEMORY_ENABLED=true`) |
+| GET | `/api/v1/agent/reflections` | Recent post-trade reflections |
+| POST | `/api/v1/agent/decay` | Operator-triggered decay+prune (API key) |
+| GET | `/api/v1/agent/param-learning` | Per-(strategy,regime,param) Q-table (when `AGENT_PARAM_LEARNING_ENABLED=true`) |
+| GET | `/api/v1/strategy-selector` | Per-regime demoted pairs (when `AGENT_STRATEGY_SELECTOR_ENABLED=true`) |
+| GET | `/api/v1/ab-tests` | A/B test instances + promoted id (when `AGENT_AB_TESTING_ENABLED=true`) |
+| POST | `/api/v1/ab-tests/evaluate` | Operator-triggered promotion (API key) |
 | GET | `/health` | Liveness + uptime |
 | GET | `/account` | Wallet balance, equity, fees, daily P&L |
 | GET | `/positions` | Open positions |
