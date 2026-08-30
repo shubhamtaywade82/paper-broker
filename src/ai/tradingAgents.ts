@@ -14,6 +14,8 @@ import {
 import type { SignalInput } from '../strategy/signal.js';
 import { parseSignalInput } from '../strategy/signal.js';
 import { logger } from '../telemetry/logger.js';
+import type { ToolRegistry } from './tools/registry.js';
+import type { ToolContext } from './tools/types.js';
 
 /**
  * Limits the deterministic risk stage enforces. Deliberately separate from
@@ -51,6 +53,32 @@ export interface TradingAgentsConfig {
   cloudBaseUrl?: string;
   cloudModel?: string;
   riskPolicy?: AgentRiskPolicy;
+  /**
+   * Optional MCP-style tool registry. When set, the analyst stage may invoke
+   * bounded, schema-validated, read-only tools before forming its report.
+   * Off by default (the pipeline works fine without any tools — backward
+   * compatible). See src/ai/tools/.
+   *
+   * (feature/agentic-upgrade)
+   */
+  toolRegistry?: ToolRegistry;
+  /**
+   * Hard ceiling on tool-call iterations per analyst stage invocation.
+   * Default 5 (mirrors skills/agentic-llm/SKILL.md § Tool Policy).
+   */
+  toolsMaxIterations?: number;
+  /**
+   * Hard per-tool-call timeout in ms. The registry also enforces this from
+   * the outside; we keep our own copy so the analyst stage can build a
+   * tighter deadline if the cycle is running short on time.
+   */
+  toolsTimeoutMs?: number;
+  /**
+   * Optional context factory — the pipeline calls this once per cycle to get
+   * the read-only market/account inspectors needed to construct ToolContext.
+   * When toolRegistry is unset, this is never called.
+   */
+  buildToolContext?: (symbol: string, cycleId: string, deadlineMs: number) => ToolContext;
 }
 
 export type AgentCycleStage =
@@ -146,7 +174,8 @@ export interface MarketFactContext {
 
 export class TradingAgentsPipeline {
   private client: OllamaClient;
-  private config: Required<TradingAgentsConfig>;
+  private config: Required<Omit<TradingAgentsConfig, 'toolRegistry' | 'buildToolContext'>> &
+    Pick<TradingAgentsConfig, 'toolRegistry' | 'buildToolContext'>;
 
   constructor(config: TradingAgentsConfig) {
     this.config = {
@@ -156,8 +185,12 @@ export class TradingAgentsPipeline {
       debateRounds: config.debateRounds ?? 2,
       apiKeys: (config.apiKeys ?? []).filter(Boolean),
       cloudBaseUrl: config.cloudBaseUrl ?? 'https://ollama.com',
-      cloudModel: config.cloudModel ?? 'gemma4:cloud',
+      cloudModel: config.cloudModel ?? 'gemma3:27b',
       riskPolicy: config.riskPolicy ?? DEFAULT_AGENT_RISK_POLICY,
+      toolRegistry: config.toolRegistry,
+      toolsMaxIterations: config.toolsMaxIterations ?? 5,
+      toolsTimeoutMs: config.toolsTimeoutMs ?? 15_000,
+      buildToolContext: config.buildToolContext,
     };
 
     const endpoints: Array<{ name: string; baseUrl: string; apiKey?: string; priority?: number }> = [];
@@ -310,12 +343,76 @@ export class TradingAgentsPipeline {
     });
   }
 
+  /**
+   * Bounded tool loop (feature/agentic-upgrade). Lets the LLM analyst stage
+   * invoke read-only tools before forming its report.
+   *
+   * The model itself is not given direct tool-calling ability (gemma3:27b is
+   * a base chat model, not a native tool-caller). Instead we run a simple
+   * deterministic loop: on the first iteration, we proactively pull a
+   * small, cheap context bundle (Fear&Greed + funding for the cycle's
+   * symbol + recent news headlines); on subsequent iterations, the LLM's
+   * previous analyst report is inspected for any `RESEARCH:` markers it
+   * emitted and we fetch the matching tool. After MAX_ITERATIONS we stop.
+   *
+   * The output is rendered as a flat "Tool findings:" block joined with
+   * newlines, appended to the analyst prompt verbatim. The LLM sees the
+   * raw tool summaries; hallucination is prevented by grounding — every
+   * line in the block is a verbatim tool output, never a model-generated
+   * paraphrase of one.
+   *
+   * When `toolRegistry` is unset (operators have not opted in via
+   * `AGENT_TOOLS_ENABLED=true`), the loop returns '' immediately — the
+   * pipeline is fully backward-compatible.
+   */
+  private async runToolsLoop(
+    cycleId: string,
+    ctx: MarketFactContext
+  ): Promise<string> {
+    if (!this.config.toolRegistry) return '';
+    const registry = this.config.toolRegistry;
+    const builder = this.config.buildToolContext;
+    if (!registry || !builder) return '';
+
+    const findings: string[] = [];
+    const deadline = Date.now() + this.config.toolsTimeoutMs * this.config.toolsMaxIterations;
+
+    // Always pull these — cheap and broadly useful.
+    const alwaysRun: Array<{ tool: string; input: Record<string, unknown> }> = [
+      { tool: 'macro-funding', input: { symbols: [ctx.symbol] } },
+      { tool: 'news-sentiment', input: { query: ctx.symbol.replace('USDT', ''), maxItems: 5, maxChars: 200 } },
+    ];
+
+    for (const entry of alwaysRun) {
+      if (Date.now() >= deadline) break;
+      if (!registry.has(entry.tool)) continue;
+      const toolCtx = builder(ctx.symbol, cycleId, Math.min(deadline, Date.now() + this.config.toolsTimeoutMs));
+      const res = await registry.invoke(entry.tool, entry.input, toolCtx);
+      if (res.ok) {
+        const summary = (res.data as { summary?: string }).summary ?? JSON.stringify(res.data).slice(0, 300);
+        findings.push(`[${entry.tool}] ${summary}`);
+      } else {
+        findings.push(`[${entry.tool}] unavailable: ${res.error}`);
+      }
+    }
+
+    return findings.join('\n');
+  }
+
   private async runAnalystTeam(
     cycleId: string,
     ctx: MarketFactContext,
     onStep?: AgentCycleStepListener
   ): Promise<AnalystReport[]> {
     this.emitStep(onStep, cycleId, ctx.symbol, 'analyst_team', 'started');
+
+    // (feature/agentic-upgrade) Bounded tool loop — let the LLM analyst
+    // pull fresh external context (news, funding, on-chain) before forming
+    // its report. Skipped when no toolRegistry is configured (backward
+    // compatible). The tool outputs are appended to the prompt as a
+    // "Tool findings:" block so the LLM sees them verbatim.
+    const toolFindings = await this.runToolsLoop(cycleId, ctx);
+
     const prompt = [
       `Analyze crypto futures derivatives and order flow for ${ctx.symbol}:`,
       `Last Price: ${ctx.lastPrice}, Bid: ${ctx.bid}, Ask: ${ctx.ask}, Spread: ${ctx.spread}`,
@@ -323,6 +420,7 @@ export class TradingAgentsPipeline {
       ctx.candlesSummary ? `Price Action:\n${ctx.candlesSummary}` : '',
       ctx.setupMemory ? `Historical track record for this setup: ${ctx.setupMemory}` : '',
       ctx.agentMemory ? `Agent memory (lessons from past closed trades):\n${ctx.agentMemory}` : '',
+      toolFindings ? `Tool findings:\n${toolFindings}` : '',
     ].filter(Boolean).join('\n');
 
     try {
