@@ -39,6 +39,22 @@ import { StrategyPerformanceStore } from './strategy/StrategyPerformanceStore.js
 import { SetupOutcomeTracker } from './strategy/SetupOutcomeTracker.js';
 import { TradingAgentsPipeline, type AgentCycleStep } from './ai/tradingAgents.js';
 import { ModelManager } from './ai/ModelManager.js';
+import { ToolRegistry } from './ai/tools/registry.js';
+import {
+  createMarketDataTool,
+  createPositionInfoTool,
+  createWebSearchTool,
+  createNewsSentimentTool,
+  createMacroFundingTool,
+  createOnChainWhaleTool,
+  createDocsLookupTool,
+} from './ai/tools/index.js';
+import type { ToolContext } from './ai/tools/types.js';
+import { AgentMemoryStore } from './ai/memory/AgentMemoryStore.js';
+import { SelfImprovementLoop } from './ai/SelfImprovementLoop.js';
+import { StrategyParamLearner } from './strategy/learning/StrategyParamLearner.js';
+import { StrategySelector } from './strategy/learning/StrategySelector.js';
+import { ABTestRunner } from './strategy/abtesting/ABTestRunner.js';
 import { MarketRegimeDetector } from './analysis/MarketRegimeDetector.js';
 import { AdaptiveRiskManager } from './risk/AdaptiveRiskManager.js';
 import { AutonomousTradingAgent } from './agent/AutonomousTradingAgent.js';
@@ -199,6 +215,21 @@ export async function startEngine(): Promise<EngineHandle> {
     logger.info('Setup-archetype performance feedback is observe-only (set SETUP_FEEDBACK_ENABLED=true to quarantine)');
   }
 
+  // --- Agentic layer outer refs (feature/agentic-upgrade) -------------------
+  // These are declared before broker construction so the broker's onFill
+  // closure can reference them. They're assigned later (after ModelManager
+  // is constructed) and stay undefined when their env flag is off — the
+  // onFill closure uses optional chaining so a disabled feature is a no-op.
+  let selfImprovementLoop: SelfImprovementLoop | undefined;
+  let agentMemoryStore: AgentMemoryStore | undefined;
+  let strategyParamLearner: StrategyParamLearner | undefined;
+  let strategySelector: StrategySelector | undefined;
+  let abTestRunner: ABTestRunner | undefined;
+  let toolRegistry: ToolRegistry | undefined;
+  // Outer ref for the regime lookup — assigned after the regimeDetector is
+  // constructed, default returns undefined so disabled agents see no regime.
+  let getRegimeForSymbol: (symbol: string) => string | undefined = () => undefined;
+
   const broker = new PaperBroker({
     dataDir,
     accountId: 'paper-main',
@@ -223,6 +254,16 @@ export async function startEngine(): Promise<EngineHandle> {
           setupPerformance.recordRealizedPnl(setupType, fill.realizedPnl, fill.fillTsUtc);
           setupPerformanceStore.save(setupPerformance.listStats());
         }
+      }
+
+      // (feature/agentic-upgrade) Agentic layer hooks — fire-and-forget,
+      // soft-fail. The SelfImprovementLoop dispatches an async LLM call
+      // in the background; the StrategySelector records per-regime stats
+      // synchronously. Both are no-ops when their env flag is off.
+      const regime = getRegimeForSymbol(fill.symbol);
+      selfImprovementLoop?.onClosingFill(fill);
+      if (fill.strategyId) {
+        strategySelector?.recordOutcome(fill.strategyId, regime ?? 'unknown', fill.realizedPnl);
       }
 
       if (profitGoals) {
@@ -423,6 +464,157 @@ export async function startEngine(): Promise<EngineHandle> {
     profitGoals ? { profitGoalManager: profitGoals } : undefined
   );
   const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
+
+  // --- Agentic layer construction (feature/agentic-upgrade) ---------------
+  // All features below default OFF. When their env flag is true, they
+  // construct the corresponding module + wire it into the broker.onFill
+  // closure (which captured these `let` variables above) and into the
+  // TradingAgentsPipeline (via the toolRegistry + buildToolContext config
+  // below). When OFF, the existing pipeline behaviour is unchanged.
+  if (env.AGENT_TOOLS_ENABLED) {
+    toolRegistry = new ToolRegistry();
+    toolRegistry.register(
+      createMarketDataTool({
+        get: (sym) => {
+          const s = marketState.getState(sym);
+          if (!s) return undefined;
+          return {
+            symbol: s.symbol,
+            bid: s.bid ?? 0,
+            ask: s.ask ?? 0,
+            last: s.last ?? 0,
+            mark: s.mark ?? 0,
+            spread: s.spread ?? 0,
+            fundingRate: s.fundingRate,
+            openInterest: s.openInterest,
+            ts: new Date(s.localTsUtc).getTime(),
+            stale: s.spread === undefined,
+          };
+        },
+        candles: (sym, tf, count) =>
+          klines.getCandles(sym, tf as KlineInterval, count).map((c) => ({
+            openTime: c.openTime,
+            closeTime: c.closeTime ?? c.openTime,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+            isClosed: c.isClosed ?? false,
+          })),
+      })
+    );
+    toolRegistry.register(
+      createPositionInfoTool({
+        getAccount: () => {
+          const a = broker.getAccount();
+          return {
+            equity: a.equity,
+            walletBalance: a.walletBalance,
+            availableBalance: a.availableBalance,
+            totalUnrealizedPnl: a.unrealizedPnl,
+            totalRealizedPnl: a.totalRealizedPnl,
+            totalFees: a.totalFees,
+            totalFunding: a.totalFunding,
+            liquidations: a.liquidations,
+          };
+        },
+        getPositions: () =>
+          broker.getPositions().map((p) => ({
+            symbol: p.symbol,
+            side: p.positionSide === 'LONG' ? 'LONG' : p.positionSide === 'SHORT' ? 'SHORT' : 'FLAT',
+            quantity: p.qty,
+            entryPrice: p.entryPrice,
+            unrealizedPnl: p.unrealizedPnl,
+            realizedPnl: p.realizedPnl,
+            leverage: p.leverage,
+            openedAt: p.openedAtUtc ? new Date(p.openedAtUtc).getTime() : 0,
+          })),
+      })
+    );
+    toolRegistry.register(
+      createWebSearchTool({
+        provider: env.AGENT_WEB_SEARCH_PROVIDER,
+        braveKey: env.AGENT_WEB_SEARCH_BRAVE_KEY,
+        timeoutMs: env.AGENT_TOOLS_TIMEOUT_MS,
+        ratePerMin: env.AGENT_WEB_SEARCH_RATE_PER_MIN,
+      })
+    );
+    toolRegistry.register(createNewsSentimentTool(env.AGENT_TOOLS_TIMEOUT_MS));
+    toolRegistry.register(createMacroFundingTool(env.AGENT_TOOLS_TIMEOUT_MS));
+    toolRegistry.register(createOnChainWhaleTool(env.AGENT_TOOLS_TIMEOUT_MS));
+    toolRegistry.register(createDocsLookupTool());
+    logger.info(
+      { tools: toolRegistry.list() },
+      'Agentic layer: tool registry enabled — analyst stage will pull external context before each report'
+    );
+  } else {
+    logger.info('Agentic layer: tools disabled (set AGENT_TOOLS_ENABLED=true to enable)');
+  }
+
+  if (env.AGENT_MEMORY_ENABLED) {
+    agentMemoryStore = new AgentMemoryStore({
+      dbPath: path.isAbsolute(env.AGENT_MEMORY_DB_PATH)
+        ? env.AGENT_MEMORY_DB_PATH
+        : path.join(dataDir, path.basename(env.AGENT_MEMORY_DB_PATH)),
+      decayFloor: env.AGENT_MEMORY_LESSON_DECAY_FLOOR,
+      pruneOlderThanMs: env.AGENT_MEMORY_PRUNE_MS,
+      topK: env.AGENT_MEMORY_INJECT_TOP_K,
+    });
+    logger.info({ dbPath: env.AGENT_MEMORY_DB_PATH }, 'Agentic layer: agent memory store enabled');
+  } else {
+    logger.info('Agentic layer: agent memory disabled (set AGENT_MEMORY_ENABLED=true to enable)');
+  }
+
+  if (env.AGENT_PARAM_LEARNING_ENABLED) {
+    strategyParamLearner = new StrategyParamLearner({
+      persistencePath: path.join(dataDir, 'strategy_param_qtable.json'),
+      alpha: env.AGENT_PARAM_LEARNING_ALPHA,
+      gamma: env.AGENT_PARAM_LEARNING_GAMMA,
+      epsilon: env.AGENT_PARAM_LEARNING_EPSILON,
+      minTrades: env.AGENT_PARAM_LEARNING_MIN_TRADES,
+      enabled: true,
+    });
+    logger.info(
+      { alpha: env.AGENT_PARAM_LEARNING_ALPHA, gamma: env.AGENT_PARAM_LEARNING_GAMMA, epsilon: env.AGENT_PARAM_LEARNING_EPSILON },
+      'Agentic layer: strategy parameter learner enabled'
+    );
+  } else {
+    logger.info('Agentic layer: strategy parameter learning disabled (set AGENT_PARAM_LEARNING_ENABLED=true to enable)');
+  }
+
+  if (env.AGENT_STRATEGY_SELECTOR_ENABLED) {
+    strategySelector = new StrategySelector({
+      persistencePath: path.join(dataDir, 'strategy_selector_state.json'),
+      minTrades: env.AGENT_STRATEGY_SELECTOR_MIN_TRADES,
+      maxDrawdownUsdt: env.STRATEGY_FEEDBACK_MAX_DRAWDOWN_USDT,
+      minWinRate: env.STRATEGY_FEEDBACK_MIN_WIN_RATE,
+      enabled: true,
+    });
+    logger.info('Agentic layer: strategy selector enabled (per-regime promotion/demotion)');
+  } else {
+    logger.info('Agentic layer: strategy selector disabled (set AGENT_STRATEGY_SELECTOR_ENABLED=true to enable)');
+  }
+
+  if (env.AGENT_AB_TESTING_ENABLED) {
+    abTestRunner = new ABTestRunner(
+      {
+        enabled: true,
+        instances: env.AGENT_AB_TESTING_INSTANCES,
+        windowTrades: env.AGENT_AB_TESTING_WINDOW_TRADES,
+        evalIntervalMs: env.AGENT_AB_TESTING_EVAL_INTERVAL_MS,
+      },
+      []
+    );
+    logger.info({ instances: env.AGENT_AB_TESTING_INSTANCES }, 'Agentic layer: A/B testing runner enabled');
+  } else {
+    logger.info('Agentic layer: A/B testing disabled (set AGENT_AB_TESTING_ENABLED=true to enable)');
+  }
+
+  // The TradingAgentsPipeline needs the toolRegistry + a ToolContext factory
+  // so its analyst stage can invoke tools. Both stay undefined when
+  // AGENT_TOOLS_ENABLED is false — the pipeline falls back to its existing
+  // no-tools behaviour (backward compatible).
   const tradingAgentsPipeline = new TradingAgentsPipeline({
     model: env.OLLAMA_MODEL,
     baseUrl: env.OLLAMA_BASE_URL,
@@ -430,6 +622,76 @@ export async function startEngine(): Promise<EngineHandle> {
     cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
     cloudModel: env.OLLAMA_CLOUD_MODEL,
     timeoutMs: 15_000,
+    toolRegistry,
+    toolsMaxIterations: env.AGENT_TOOLS_MAX_ITERATIONS,
+    toolsTimeoutMs: env.AGENT_TOOLS_TIMEOUT_MS,
+    buildToolContext: toolRegistry
+      ? (symbol, cycleId, deadlineMs): ToolContext => ({
+          symbol,
+          cycleId,
+          deadlineMs,
+          marketState: {
+            get: (sym) => {
+              const s = marketState.getState(sym);
+              if (!s) return undefined;
+              return {
+                symbol: s.symbol,
+                bid: s.bid ?? 0,
+                ask: s.ask ?? 0,
+                last: s.last ?? 0,
+                mark: s.mark ?? 0,
+                spread: s.spread ?? 0,
+                fundingRate: s.fundingRate,
+                openInterest: s.openInterest,
+                ts: new Date(s.localTsUtc).getTime(),
+                stale: s.spread === undefined,
+              };
+            },
+            candles: (sym, tf, count) =>
+              klines.getCandles(sym, tf as KlineInterval, count).map((c) => ({
+                openTime: c.openTime,
+                closeTime: c.closeTime ?? c.openTime,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume,
+                isClosed: c.isClosed ?? false,
+              })),
+          },
+          accountState: {
+            get: () => {
+              const a = broker.getAccount();
+              return {
+                equity: a.equity,
+                walletBalance: a.walletBalance,
+                availableBalance: a.availableBalance,
+                totalUnrealizedPnl: a.unrealizedPnl,
+                totalRealizedPnl: a.totalRealizedPnl,
+                totalFees: a.totalFees,
+                totalFunding: a.totalFunding,
+                liquidations: a.liquidations,
+              };
+            },
+            positions: () =>
+              broker.getPositions().map((p) => ({
+                symbol: p.symbol,
+                side: p.positionSide === 'LONG' ? 'LONG' : p.positionSide === 'SHORT' ? 'SHORT' : 'FLAT',
+                quantity: p.qty,
+                entryPrice: p.entryPrice,
+                unrealizedPnl: p.unrealizedPnl,
+                realizedPnl: p.realizedPnl,
+                leverage: p.leverage,
+                openedAt: p.openedAtUtc ? new Date(p.openedAtUtc).getTime() : 0,
+              })),
+          },
+          logger: {
+            info: (msg, meta) => logger.info(meta ?? {}, `[tool] ${msg}`),
+            warn: (msg, meta) => logger.warn(meta ?? {}, `[tool] ${msg}`),
+            error: (msg, meta) => logger.error(meta ?? {}, `[tool] ${msg}`),
+          },
+        })
+      : undefined,
   });
 
   // Non-blocking: the agent debate already falls back to a safe NEUTRAL decision when
@@ -479,6 +741,20 @@ export async function startEngine(): Promise<EngineHandle> {
     defaultModel: cloudKeys.length > 0 ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL,
   });
 
+  // --- Agentic layer: SelfImprovementLoop wires ModelManager + AgentMemoryStore
+  // together so closing fills trigger reflection LLM calls and the lessons
+  // learned are re-injected into the next analyst cycle's prompt. Off when
+  // AGENT_MEMORY_ENABLED is false — both `selfImprovementLoop` and
+  // `agentMemoryStore` stay undefined and the onFill closure's optional
+  // chaining makes them no-ops. (feature/agentic-upgrade)
+  if (env.AGENT_MEMORY_ENABLED && agentMemoryStore) {
+    selfImprovementLoop = new SelfImprovementLoop(
+      { modelManager, store: agentMemoryStore },
+      { timeoutMs: env.AGENT_MEMORY_REFLECT_TIMEOUT_MS, temperature: 0.4, maxTokens: 1_500 }
+    );
+    logger.info('Agentic layer: self-improvement loop wired (broker.onFill → reflection → memory → next-cycle prompt)');
+  }
+
   const regimeDetector = new MarketRegimeDetector(
     (symbol, count) => {
       // Pull closed 4h candles for the regime feature extractor.
@@ -488,6 +764,16 @@ export async function startEngine(): Promise<EngineHandle> {
     (symbol) => structureEngine.computeMultiTimeframeStructure(symbol, Date.now()).timeframes['1h']?.trend,
     env.AUTONOMOUS_REGIME_CONFIRMATION_BARS
   );
+
+  // Wire the regime lookup outer ref so the broker.onFill closure can label
+  // each closing trade with the regime in force at close time. Cheap call
+  // (regimeDetector caches recent computations) and returns undefined when
+  // there's not enough HTF history — the strategySelector falls back to
+  // 'unknown'. (feature/agentic-upgrade)
+  getRegimeForSymbol = (symbol: string): string | undefined => {
+    const snap = regimeDetector.detect(symbol);
+    return snap?.regime;
+  };
   let autonomousAgent: AutonomousTradingAgent | undefined;
   if (env.AUTONOMOUS_AGENT_ENABLED !== false) {
     // --- The agent's brain: 4 modules wired before the agent itself ----------
@@ -1088,6 +1374,12 @@ export async function startEngine(): Promise<EngineHandle> {
       scheduler.stop();
       if (profitGoals) profitGoalStore.save(profitGoals);
       strategyPerformanceStore.save(strategyPerformance.listStats());
+      // Persist agentic-layer state (feature/agentic-upgrade). All save()
+      // calls are cheap no-ops when nothing changed since the last save.
+      strategyParamLearner?.save();
+      strategySelector?.save();
+      // abTestRunner has no on-disk persistence yet (skeleton).
+      agentMemoryStore?.close();
       await api.stop();
       streams.disconnect();
       broker.shutdown();
