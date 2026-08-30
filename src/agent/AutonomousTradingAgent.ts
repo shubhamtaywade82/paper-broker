@@ -888,6 +888,8 @@ export class AutonomousTradingAgent {
     runtimeRiskMultiplier: number;
     rollingWinRate: number;
     rollingSampleSize: number;
+    /** Size dampener currently applied by the consecutive-loss streak (1 = none). */
+    lossStreakDampener: number;
     breaker: ReturnType<CircuitBreaker['getState']>;
     health: ReturnType<HealthMonitor['getState']>;
     running: boolean;
@@ -899,6 +901,7 @@ export class AutonomousTradingAgent {
       runtimeRiskMultiplier: this.runtimeRiskMultiplier,
       rollingWinRate: rolling.winRate,
       rollingSampleSize: rolling.trades,
+      lossStreakDampener: this.lossStreakDampener,
       breaker: this.deps.circuitBreaker.getState(),
       health: this.deps.healthMonitor.getState(),
       running: this.running,

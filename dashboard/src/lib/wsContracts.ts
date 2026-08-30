@@ -228,6 +228,29 @@ export const KlineClosedSchema = z.object({
   volume: z.number(),
 });
 
+/**
+ * One stage transition inside a manually triggered or strategy-driven agent
+ * cycle. Broadcast from engine.ts (`onCycleStep`, adaptive-supertrend signals)
+ * and from the `/agents/trigger` route in server.ts.
+ *
+ * `payload` is intentionally permissive beyond the four fields consumers
+ * actually read — the backend adds context (detail, tokens, model) per stage
+ * and a strict schema here would silently drop frames again.
+ */
+export const AgentStepSchema = z
+  .object({
+    cycleId: z.string(),
+    symbol: z.string(),
+    stage: z.string(),
+    status: z.string(),
+    detail: z.string().optional(),
+    timestamp: z.number().optional(),
+  })
+  .passthrough();
+
+/** Completed agent cycle summary (distinct from `agent.autonomous.cycle`). */
+export const AgentCycleSchema = z.object({}).passthrough();
+
 export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('market.tick'), payload: TickSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('position.updated'), payload: PositionUpdatedSchema, timestampUtc: z.string().optional() }),
@@ -246,6 +269,12 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('agent.autonomous.exit'), payload: AutonomousExitSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.learning'), payload: AutonomousLearningSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('kline.closed'), payload: KlineClosedSchema, timestampUtc: z.string().optional() }),
+  // Debate-pipeline events. Omitting these from the union did not merely leave
+  // them unhandled — wsConnection parses every frame against this schema and
+  // drops parse failures silently, so the backend's agent.step broadcasts were
+  // discarded at the socket boundary and never reached any store.
+  z.object({ type: z.literal('agent.step'), payload: AgentStepSchema, timestampUtc: z.string().optional() }),
+  z.object({ type: z.literal('agent.cycle'), payload: AgentCycleSchema, timestampUtc: z.string().optional() }),
 ]);
 
 export type WsMessage = z.infer<typeof WsMessageSchema>;

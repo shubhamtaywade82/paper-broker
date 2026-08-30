@@ -1,26 +1,15 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useStore, type LiveEventItem } from '../../store/useStore';
-import { useCycles, useCycleDetail, useTriggerCycle } from '../../hooks/useApi';
-import {
-  Bot,
-  Play,
-  CheckCircle2,
-  XCircle,
-  ArrowRight,
-  Shield,
-  Layers,
-  Sparkles,
-  ArrowLeft,
-  Radio,
-} from 'lucide-react';
+import { useCycles, useCycleDetail, useTriggerCycle, useAgentModels } from '../../hooks/useApi';
+import { Play, CheckCircle2, XCircle, Shield, Layers, ArrowLeft, Radio } from 'lucide-react';
 import { AdaptiveSupertrendInspector } from './AdaptiveSupertrendInspector';
 import { AutonomousAgentPanel } from './AutonomousAgentPanel';
+import { AgentStateBar } from './AgentStateBar';
+import { AgentVitals } from './AgentVitals';
+import { useAutonomousStore } from '../../stores/autonomousStore';
+import { useQuery } from '@tanstack/react-query';
 
-// Models confirmed present on the local Ollama instance (`GET /api/tags`) as of this
-// dashboard build. The engine's autonomous loop always uses OLLAMA_MODEL from the
-// backend's .env regardless of this selector — this list only affects manual runs.
-const AVAILABLE_MODELS = ['qwen3.5:2b', 'qwen3:4b', 'llama3.2:3b', 'deepseek-r1:1.5b'];
-
+// Agent step ids as the operator reads them in the live transcript.
 const STAGE_LABELS: Record<string, string> = {
   analyst_team: 'Derivatives Analyst',
   debate_bull: 'Bull Researcher',
@@ -30,6 +19,51 @@ const STAGE_LABELS: Record<string, string> = {
   risk_team: 'Risk Committee',
   fund_manager: 'Fund Manager',
 };
+
+// Three tabs, down from six. Overview, Pipeline and Fleet each rendered the
+// same five idle stages or static prose, so they collapse into "Now" — which
+// carries live state — while Runs becomes "Decisions": what the agent chose,
+// and whether it reached the broker.
+const AGENT_TABS: Array<{
+  id: 'now' | 'decisions' | 'supertrend';
+  label: string;
+  badge: (blockers: number, decisions: number) => number | null;
+}> = [
+  { id: 'now', label: 'Now', badge: (blockers) => (blockers > 0 ? blockers : null) },
+  { id: 'decisions', label: 'Decisions', badge: (_b, decisions) => (decisions > 0 ? decisions : null) },
+  { id: 'supertrend', label: 'Supertrend', badge: () => null },
+];
+
+// The five pipeline stages, each mapped to the agent step ids that make it
+// active. This is the merge of the old Pipeline DAG (five nodes) and the Fleet
+// grid (eight cards): the fleet members ARE the pipeline stages, so drawing
+// them as two separate idle views told the operator nothing.
+const PIPELINE_STAGES: Array<{ name: string; role: string; stages: string[] }> = [
+  { name: 'Scan', role: 'Market coordinator', stages: [] },
+  { name: 'Analysts', role: 'Structure · flow', stages: ['analyst_team'] },
+  { name: 'Debate', role: 'Bull / bear · LLM', stages: ['debate_bull', 'debate_bear', 'debate_verdict'] },
+  { name: 'Risk gate', role: 'Deterministic', stages: ['risk_team', 'fund_manager'] },
+  { name: 'Broker', role: 'Execution', stages: [] },
+];
+
+function StageCell({ name, role, active, latency }: {
+  name: string;
+  role: string;
+  active: boolean;
+  latency: string;
+}) {
+  return (
+    <div className="flex-1 min-w-[168px] px-4 py-3.5 border-r border-[#1b2537]/60 last:border-r-0">
+      <div className={`h-[3px] rounded-sm mb-3 ${active ? 'bg-emerald-500' : 'bg-[#1b2537]'}`} />
+      <div className="text-[13px] font-semibold text-white">{name}</div>
+      <div className="text-[11px] text-gray-600 mt-0.5">{role}</div>
+      <div className="font-mono text-[11.5px] mt-2">
+        <span className={active ? 'text-emerald-400' : 'text-gray-600'}>{latency}</span>
+        <span className="text-gray-600"> {active ? 'running' : 'idle'}</span>
+      </div>
+    </div>
+  );
+}
 
 // The LLM debate output uses markdown syntax (###, **bold**, " * bullet ",
 // | pipe tables |) but often without real newlines between prose sections —
@@ -152,7 +186,6 @@ function asStep(e: LiveEventItem): AgentStepPayload | null {
   if (!p.cycleId || !p.symbol || !p.stage || !p.status) return null;
   return p as unknown as AgentStepPayload;
 }
-
 export function AgentControlCenterView() {
   const {
     cycles,
@@ -160,12 +193,28 @@ export function AgentControlCenterView() {
     setAgentTab,
     selectedSymbol,
     liveEvents,
+    account,
+    positions,
   } = useStore();
+  const { breaker, health, latestCycle } = useAutonomousStore();
+
+  // The loss-streak dampener is a standing multiplier, not an event, so it
+  // arrives on the agent snapshot rather than any WS broadcast.
+  const { data: agentSnapshot } = useQuery<{ lossStreakDampener?: number }>({
+    queryKey: ['autonomous-snapshot'],
+    queryFn: async () => {
+      const res = await fetch('/api/v1/autonomous/snapshot');
+      if (!res.ok) throw new Error(`snapshot failed: ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
 
   useCycles();
   const triggerCycle = useTriggerCycle();
+  const { data: modelsData } = useAgentModels();
 
-  const [triggerModel, setTriggerModel] = useState(AVAILABLE_MODELS[0]);
+  const [triggerModel, setTriggerModel] = useState<string>('');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const { data: detailData } = useCycleDetail(selectedRunId);
@@ -179,20 +228,7 @@ export function AgentControlCenterView() {
     [steps, selectedSymbol]
   );
 
-  // "Running" = the most recent step we've seen for that cycleId hasn't reached a
-  // terminal (completed/failed) status yet. liveEvents is newest-first already.
-  const activeRunCount = useMemo(() => {
-    const latestByCycle = new Map<string, AgentStepPayload>();
-    for (const s of steps) {
-      if (!latestByCycle.has(s.cycleId)) latestByCycle.set(s.cycleId, s);
-    }
-    return [...latestByCycle.values()].filter((s) => s.status === 'started').length;
-  }, [steps]);
 
-  const avgConfidencePct = useMemo(() => {
-    if (cycles.length === 0) return null;
-    return (cycles.reduce((sum, c) => sum + c.confidence, 0) / cycles.length) * 100;
-  }, [cycles]);
 
   const avgLlmLatencyMs = useMemo(() => {
     const startedAt = new Map<string, number>();
@@ -254,196 +290,140 @@ export function AgentControlCenterView() {
     };
   }, [steps]);
 
-  const executedCount = cycles.filter((c) => c.executed).length;
-  const noTradeCount = cycles.length - executedCount;
+  // What the "Now" badge counts: each independent thing refusing entries.
+  const blockerCount = (breaker.tripped ? 1 : 0) + ((health?.issues?.length ?? 0) > 0 ? 1 : 0);
+
 
   return (
-    <div className="space-y-5 font-mono text-xs select-none">
-      {/* Top Intelligence KPI Ribbon */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Active Runs</span>
-          <span className="text-base font-black text-white">
-            {activeRunCount} {activeRunCount > 0 ? 'Running' : 'Idle'}
-          </span>
-        </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Decisions Today</span>
-          <span className="text-base font-black text-white">{cycles.length}</span>
-        </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5" title="Fund Manager approval on debate outcome — not a real paper order. Only the autonomous loop (candle close + setup + risk gate) submits real trades.">
-          <span className="text-[10px] text-gray-500 uppercase block">Approved / Skipped</span>
-          <span className="text-base font-black text-emerald-400">
-            {executedCount} <span className="text-gray-500 font-normal">/ {noTradeCount}</span>
-          </span>
-        </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Avg Confidence</span>
-          <span className="text-base font-black text-blue-400">
-            {avgConfidencePct === null ? '—' : `${avgConfidencePct.toFixed(1)}%`}
-          </span>
-        </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Avg LLM Latency</span>
-          <span className="text-base font-black text-purple-400">
-            {avgLlmLatencyMs === null ? '—' : `${Math.round(avgLlmLatencyMs)} ms`}
-          </span>
-        </div>
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-3.5">
-          <span className="text-[10px] text-gray-500 uppercase block">Pipeline Mode</span>
-          <span className="text-base font-black text-amber-400">AUTONOMOUS</span>
-        </div>
-      </div>
+    <div className="space-y-5 text-xs select-none">
+      {/* The page's answer line: is the agent trading, and if not, why? Above
+          the tabs so it stays on screen whichever panel is open. */}
+      <AgentStateBar
+        breaker={breaker}
+        health={health}
+        cycle={latestCycle}
+        openPositions={positions.filter((p) => p.quantity !== 0).length}
+        lossStreakDampener={agentSnapshot?.lossStreakDampener ?? 1}
+      />
 
-      {/* Navigation Sub-Tabs & Manual Run Trigger */}
+      <AgentVitals
+        account={account}
+        cycle={latestCycle}
+        breaker={breaker}
+        health={health}
+        avgLlmLatencyMs={avgLlmLatencyMs}
+      />
+
+      {/* Navigation & manual run trigger */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-[#0f1623] border border-[#1b2537] p-4 rounded-xl">
         <div className="flex flex-wrap items-center gap-2">
-          {(['overview', 'pipeline', 'adaptive-supertrend', 'autonomous', 'runs', 'fleet'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => {
-                setAgentTab(tab);
-                setSelectedRunId(null);
-              }}
-              className={`px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer ${
-                agentTab === tab
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
-                  : 'bg-[#080c14] text-gray-400 hover:text-white border border-[#1b2537]'
-              }`}
-            >
-              {tab === 'adaptive-supertrend' ? '⚡ Adaptive Supertrend' : tab === 'autonomous' ? '🧠 Autonomous Agent' : tab}
-            </button>
-          ))}
+          {AGENT_TABS.map(({ id, label, badge }) => {
+            const count = badge(blockerCount, cycles.length);
+            return (
+              <button
+                key={id}
+                onClick={() => {
+                  setAgentTab(id);
+                  setSelectedRunId(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all cursor-pointer ${
+                  agentTab === id
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                    : 'bg-[#080c14] text-gray-400 hover:text-white border border-[#1b2537]'
+                }`}
+              >
+                {label}
+                {count !== null && (
+                  <span
+                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border ${
+                      id === 'now' && blockerCount > 0
+                        ? 'text-red-400 border-red-500/60 bg-red-500/10'
+                        : 'text-gray-400 border-[#1b2537] bg-[#080c14]'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Trigger Cycle Controls */}
         <div className="flex items-center gap-3">
           <select
-            value={triggerModel}
+            value={triggerModel || modelsData?.defaultModel || ''}
             onChange={(e) => setTriggerModel(e.target.value)}
             className="bg-[#080c14] border border-[#1b2537] rounded-lg px-3 py-2 text-white text-xs"
           >
-            {AVAILABLE_MODELS.map((m) => (
-              <option key={m} value={m}>{m} (Local)</option>
+            {(modelsData?.models ?? [{ name: modelsData?.defaultModel || 'qwen3.5:4b', isCloud: false }]).map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.name} {m.isCloud ? '(Cloud)' : '(Local)'}
+              </option>
             ))}
           </select>
 
           <button
-            onClick={() => triggerCycle.mutate({ symbol: selectedSymbol, model: triggerModel })}
+            onClick={() =>
+              triggerCycle.mutate({
+                symbol: selectedSymbol,
+                model: triggerModel || modelsData?.defaultModel,
+              })
+            }
             disabled={triggerCycle.isPending}
             title="Runs the debate for inspection only — never submits a real paper order, even if approved. Only the autonomous loop (candle close + setup + risk gate) trades."
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium transition-all cursor-pointer disabled:opacity-50"
           >
             <Play className="w-3.5 h-3.5" />
-            {triggerCycle.isPending ? 'Debating Pipeline...' : `Run Cycle (${selectedSymbol})`}
+            {triggerCycle.isPending ? 'Running…' : `Run cycle (${selectedSymbol})`}
           </button>
         </div>
       </div>
 
-      {/* Sub-View 1: Overview */}
-      {agentTab === 'overview' && (
+      {/* Now: live state. The stage rail carries each stage's own throughput,
+          so an idle stage shows where the funnel actually dies. */}
+      {agentTab === 'now' && (
         <div className="space-y-5">
-          <LiveTranscript symbol={selectedSymbol} steps={symbolSteps} />
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <div className="lg:col-span-2 space-y-4">
-            <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5">
-              <h3 className="font-bold text-white uppercase text-xs mb-3 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                Active Multi-Agent Reasoning Architecture
+          <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1b2537]/60">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 flex items-center gap-2">
+                <Layers className="w-3.5 h-3.5 text-blue-400" />
+                Decision pipeline
               </h3>
-              <p className="text-gray-300 leading-relaxed mb-4">
-                The trading engine uses a multi-agent debate architecture where specialized market analysts
-                (Structure, Momentum, Order Flow) generate structured signals, followed by a dialectical
-                Bull vs Bear debate before final synthesis by the Trade Judge and validation through the Risk Gate.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="bg-[#080c14] p-3 rounded-lg border border-[#1b2537]">
-                  <span className="text-[10px] text-gray-500 uppercase block">1. Extraction</span>
-                  <span className="text-white font-bold">Deterministic Tools</span>
-                  <p className="text-gray-400 text-[10px] mt-1">Market structure, orderbook depth &amp; funding rates</p>
-                </div>
-                <div className="bg-[#080c14] p-3 rounded-lg border border-[#1b2537]">
-                  <span className="text-[10px] text-gray-500 uppercase block">2. Dialectic</span>
-                  <span className="text-blue-400 font-bold">LLM Bull / Bear Debate</span>
-                  <p className="text-gray-400 text-[10px] mt-1">Multi-round thesis stress testing &amp; risk committee</p>
-                </div>
-                <div className="bg-[#080c14] p-3 rounded-lg border border-[#1b2537]">
-                  <span className="text-[10px] text-gray-500 uppercase block">3. Execution</span>
-                  <span className="text-emerald-400 font-bold">Deterministic Risk Gate</span>
-                  <p className="text-gray-400 text-[10px] mt-1">Position sizing, invalidation &amp; broker order routing</p>
-                </div>
-              </div>
+              <span className="font-mono text-[11px] text-gray-600">observed latency per stage</span>
             </div>
-          </div>
-
-          <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5">
-            <h3 className="font-bold text-white uppercase text-xs mb-3 flex items-center gap-2">
-              <Bot className="w-4 h-4 text-blue-400" />
-              Recent Agent Cycles
-            </h3>
-            <div className="space-y-2 max-h-72 overflow-y-auto">
-              {cycles.slice(0, 6).map((c) => (
-                <div
-                  key={c.cycleId}
-                  onClick={() => {
-                    setSelectedRunId(c.cycleId);
-                    setAgentTab('runs');
-                  }}
-                  className="p-3 bg-[#080c14] border border-[#1b2537] rounded-lg hover:border-blue-500/50 cursor-pointer transition"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-white">{c.symbol}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      c.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                    }`}>
-                      {c.action}
-                    </span>
-                  </div>
-                  <p className="text-gray-400 text-[10px] mt-1 line-clamp-1">{c.rationale}</p>
-                </div>
+            <div className="flex overflow-x-auto">
+              {PIPELINE_STAGES.map((stage) => (
+                <StageCell
+                  key={stage.name}
+                  name={stage.name}
+                  role={stage.role}
+                  active={stage.stages.some((id) => stageStats.isActive(id))}
+                  latency={stage.stages.length > 0 ? stageStats.avgLatencyLabel(stage.stages[0]!) : '—'}
+                />
               ))}
             </div>
           </div>
-          </div>
+
+          <LiveTranscript symbol={selectedSymbol} steps={symbolSteps} />
+
+          <AutonomousAgentPanel />
+
+          <details className="group">
+            <summary className="cursor-pointer list-none text-xs text-gray-500 hover:text-white px-4 py-2.5 border border-dashed border-[#1b2537] hover:border-blue-500/60 rounded-xl transition">
+              How the pipeline decides
+            </summary>
+            <div className="px-4 py-4 text-xs text-gray-400 leading-relaxed border border-t-0 border-[#1b2537] rounded-b-xl bg-[#0f1623] max-w-[78ch]">
+              Deterministic tools extract market structure, orderbook depth and funding rates. A bull
+              versus bear LLM debate stress-tests the thesis across rounds. A deterministic risk gate
+              then sizes the position, sets invalidation and routes the order — the model never
+              reaches the broker directly.
+            </div>
+          </details>
         </div>
       )}
 
-      {/* Sub-View 2: Pipeline DAG */}
-      {agentTab === 'pipeline' && (
-        <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-6 space-y-6">
-          <div className="flex items-center justify-between border-b border-[#1b2537] pb-3">
-            <h3 className="font-bold text-white uppercase text-xs flex items-center gap-2">
-              <Layers className="w-4 h-4 text-blue-400" />
-              Autonomous Decision Pipeline DAG
-            </h3>
-            <span className="text-emerald-400 font-bold text-[10px]">● ALL NODES OPERATIONAL</span>
-          </div>
-
-          <div className="flex flex-col md:flex-row items-center justify-between gap-3 overflow-x-auto py-4">
-            <DagNode title="Supervisor" subtitle="Market Coordinator" status={activeRunCount > 0 ? 'RUNNING' : 'IDLE'} />
-            <ArrowRight className="w-4 h-4 text-gray-600 shrink-0" />
-            <DagNode title="Analysts" subtitle="Structure / Flow" status={stageStats.isActive('analyst_team') ? 'ACTIVE' : 'IDLE'} />
-            <ArrowRight className="w-4 h-4 text-gray-600 shrink-0" />
-            <DagNode
-              title="Debate Engine"
-              subtitle="Bull vs Bear LLM"
-              status={
-                stageStats.isActive('debate_bull') || stageStats.isActive('debate_bear') || stageStats.isActive('debate_verdict')
-                  ? 'ACTIVE'
-                  : 'IDLE'
-              }
-            />
-            <ArrowRight className="w-4 h-4 text-gray-600 shrink-0" />
-            <DagNode title="Risk Gate" subtitle="Deterministic Check" status={stageStats.isActive('risk_team') ? 'ACTIVE' : 'IDLE'} />
-            <ArrowRight className="w-4 h-4 text-gray-600 shrink-0" />
-            <DagNode title="Paper Broker" subtitle="Execution Engine" status="STANDBY" />
-          </div>
-        </div>
-      )}
-
-      {/* Sub-View 3: Runs & Run Inspector */}
-      {agentTab === 'runs' && (
+      {/* Decisions: what the agent chose, and whether it reached the broker. */}
+      {agentTab === 'decisions' && (
         selectedRunId && detailData ? (
           <div className="space-y-5">
             <button
@@ -565,70 +545,7 @@ export function AgentControlCenterView() {
         )
       )}
 
-      {/* Sub-View 4: Fleet */}
-      {agentTab === 'fleet' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <FleetCard
-            name="Derivatives Analyst"
-            type="LLM (Ollama)"
-            status={stageStats.isActive('analyst_team') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('analyst_team')}
-          />
-          <FleetCard
-            name="Bull Researcher"
-            type="LLM (Ollama)"
-            status={stageStats.isActive('debate_bull') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('debate_bull')}
-          />
-          <FleetCard
-            name="Bear Researcher"
-            type="LLM (Ollama)"
-            status={stageStats.isActive('debate_bear') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('debate_bear')}
-          />
-          <FleetCard
-            name="Debate Judge"
-            type="LLM (Ollama)"
-            status={stageStats.isActive('debate_verdict') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('debate_verdict')}
-          />
-          <FleetCard
-            name="Trader"
-            type="LLM (Ollama)"
-            status={stageStats.isActive('trader_decision') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('trader_decision')}
-          />
-          <FleetCard
-            name="Risk Committee"
-            type="Deterministic"
-            status={stageStats.isActive('risk_team') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('risk_team')}
-          />
-          <FleetCard
-            name="Fund Manager"
-            type="Deterministic"
-            status={stageStats.isActive('fund_manager') ? 'ACTIVE' : 'IDLE'}
-            latency={stageStats.avgLatencyLabel('fund_manager')}
-          />
-          <FleetCard name="Execution Router" type="Deterministic" status="STANDBY" latency="—" />
-        </div>
-      )}
-
-      {/* Sub-View: Adaptive Supertrend Inspector */}
-      {agentTab === 'adaptive-supertrend' && <AdaptiveSupertrendInspector />}
-
-      {/* Sub-View: Autonomous Agent Panel (live brain activity) */}
-      {agentTab === 'autonomous' && <AutonomousAgentPanel />}
-    </div>
-  );
-}
-
-function DagNode({ title, subtitle, status }: { title: string; subtitle: string; status: string }) {
-  return (
-    <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-4 min-w-[150px] text-center space-y-1">
-      <span className="text-[10px] text-emerald-400 font-bold uppercase block">{status}</span>
-      <h4 className="font-bold text-white text-xs">{title}</h4>
-      <p className="text-[10px] text-gray-500">{subtitle}</p>
+      {agentTab === 'supertrend' && <AdaptiveSupertrendInspector />}
     </div>
   );
 }
@@ -649,8 +566,8 @@ function LiveTranscript({ symbol, steps }: { symbol: string; steps: AgentStepPay
       </div>
 
       {steps.length === 0 ? (
-        <div className="py-8 text-center text-gray-500 text-[11px] space-y-1">
-          <p>No live steps captured yet for {symbol} in this browser tab.</p>
+        <div className="py-4 text-gray-500 text-[11px] space-y-1">
+          <p>Nothing streaming. Steps appear here while a cycle runs.</p>
           <p className="text-gray-600">
             This feed only shows steps broadcast while this tab is open and connected — it
             does not replay history. Click &quot;Run Cycle ({symbol})&quot; above, or wait for
@@ -698,19 +615,6 @@ function LiveTranscript({ symbol, steps }: { symbol: string; steps: AgentStepPay
         ))}
       </div>
       )}
-    </div>
-  );
-}
-
-function FleetCard({ name, type, status, latency }: { name: string; type: string; status: string; latency: string }) {
-  return (
-    <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-4 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] text-gray-500 uppercase">{type}</span>
-        <span className="text-[10px] text-emerald-400 font-bold">● {status}</span>
-      </div>
-      <h4 className="font-bold text-white text-sm">{name}</h4>
-      <p className="text-[10px] text-gray-400">Latency: {latency}</p>
     </div>
   );
 }

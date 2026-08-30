@@ -73,6 +73,13 @@ export interface AccountInfo {
   unrealizedPnl: number;
   marginUsed?: number;
   freeMargin?: number;
+  /** Lifetime fees paid. Already on the wire from /api/v1/dashboard (the
+   * broker's full AccountState) — these were simply never declared here. */
+  totalFees?: number;
+  totalRealizedPnl?: number;
+  peakEquity?: number;
+  /** Fraction 0..1 below peak equity. */
+  drawdown?: number;
 }
 
 export interface PerformanceMetrics {
@@ -193,7 +200,7 @@ interface StoreState {
   selectedPosition: Position | null;
   cycles: AgentCycle[];
   selectedCycle: CycleDetail | null;
-  agentTab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend' | 'autonomous';
+  agentTab: 'now' | 'decisions' | 'supertrend';
   tradingTab: 'positions' | 'orders' | 'form' | 'fills' | 'journal';
   riskSummary: RiskSummary | null;
   performance: PerformanceMetrics | null;
@@ -216,7 +223,7 @@ interface StoreState {
   setSelectedPosition: (pos: Position | null) => void;
   setCycles: (cycles: AgentCycle[]) => void;
   setSelectedCycle: (cycle: CycleDetail | null) => void;
-  setAgentTab: (tab: 'overview' | 'pipeline' | 'runs' | 'fleet' | 'adaptive-supertrend' | 'autonomous') => void;
+  setAgentTab: (tab: 'now' | 'decisions' | 'supertrend') => void;
   setTradingTab: (tab: 'positions' | 'orders' | 'form' | 'fills' | 'journal') => void;
   setRiskSummary: (risk: RiskSummary) => void;
   setPerformance: (perf: PerformanceMetrics) => void;
@@ -341,7 +348,7 @@ export const useStore = create<StoreState>((set) => ({
   selectedPosition: null,
   cycles: [],
   selectedCycle: null,
-  agentTab: 'overview',
+  agentTab: 'now',
   tradingTab: 'positions',
   riskSummary: null,
   performance: null,

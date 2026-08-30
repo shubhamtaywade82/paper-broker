@@ -89,7 +89,7 @@ export class ModelManager {
     this.globalTimeoutMs = config.globalTimeoutMs ?? 90_000;
     this.visionEndpoints = config.visionEndpoints ?? [];
     this.timeSeriesEndpoints = config.timeSeriesEndpoints ?? [];
-    this.llmModel = config.defaultModel ?? 'qwen3.5:2b';
+    this.llmModel = config.defaultModel ?? 'qwen3.5:4b';
 
     // Build the SDK endpoint array from the priority-sorted llmEndpoints.
     const sorted = [...config.llmEndpoints].sort((a, b) => a.priority - b.priority);

@@ -10,6 +10,7 @@ import { createStrategyContext, type StrategyContext, type KlineStore } from './
 import type { Candle } from './indicators.js';
 import type { Signal, SignalInput } from './signal.js';
 import { parseSignalInput, toSignal, signalIsExpired, signalsEqual } from './signal.js';
+import { SignalLoopDetector } from './SignalLoopDetector.js';
 
 export interface Strategy {
   id: string;
@@ -415,6 +416,9 @@ export class StrategyEngine {
     return { ok: true };
   }
 
+  /** Suppresses a signal re-submitted and re-rejected identically every cycle. */
+  private readonly loopDetector = new SignalLoopDetector();
+
   /**
    * Public entry-point for external decision-makers (the Autonomous Trading
    * Agent) to submit a signal through the same cooldown / dedup / conflict /
@@ -430,6 +434,22 @@ export class StrategyEngine {
   async submitSignal(input: SignalInput): Promise<Signal | null> {
     if (!this.running) return null;
     if (input.action === 'HOLD') return null;
+
+    // A scale-in add and a fresh entry both submit OPEN_LONG for the same
+    // strategy:symbol. They must not share a loop key, or a looping add would
+    // suppress legitimate entries on that symbol. Scale-in carries its own
+    // dedupKey; entries fall back to the strategy/symbol/action triple.
+    const loopKey = String(
+      input.features['dedupKey'] ?? `${input.strategyId}:${input.symbol}:${input.action}`
+    );
+    const loopReason = this.loopDetector.reasonFor(loopKey);
+    if (loopReason) {
+      const signal = toSignal(input, Date.now());
+      signal.status = 'REJECTED';
+      signal.rejectReason = loopReason;
+      this.listeners.onSignalRejected?.(signal, loopReason);
+      return signal;
+    }
 
     // Fast-path symbol-lock check for external submitters (the autonomous
     // agent): a transient lock rejection returns a proper REJECTED signal
@@ -465,6 +485,10 @@ export class StrategyEngine {
     await this.processSignal(syntheticStrategy, input);
     const key = `${input.strategyId}:${input.symbol}:${input.action}`;
     const stored = this.lastSignalByKey.get(key) ?? null;
+    this.loopDetector.record(
+      loopKey,
+      stored?.status === 'REJECTED' ? stored.rejectReason ?? 'unknown' : null
+    );
     if (!stored) return null;
     if (stored.status === 'CREATED') {
       // processSignal leaves the stored signal CREATED when the executor

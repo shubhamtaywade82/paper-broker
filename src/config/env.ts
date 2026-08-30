@@ -45,15 +45,13 @@ const EnvSchema = z.object({
   TELEGRAM_MIN_LEVEL: z.enum(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']).default('INFO'),
 
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
-  OLLAMA_MODEL: z.string().default('qwen3.5:2b'),
+  OLLAMA_MODEL: z.string().default('qwen3.5:4b'),
   OLLAMA_API_KEY_1: z.string().optional(),
   OLLAMA_API_KEY_2: z.string().optional(),
   OLLAMA_API_KEY_3: z.string().optional(),
   OLLAMA_CLOUD_BASE_URL: z.string().url().default('https://ollama.com'),
-  // Default to gemma3:27b — the closest real public Ollama model to the user's
-  // requested "gemma4:31b" (no such model exists publicly). Override via env
-  // to point at any other Ollama Cloud-served open-weight model.
-  OLLAMA_CLOUD_MODEL: z.string().default('gemma3:27b'),
+  // Default to gemma4:cloud for Ollama Cloud endpoints when API keys are configured.
+  OLLAMA_CLOUD_MODEL: z.string().default('gemma4:cloud'),
 
   // ==========================================
   // AGENTIC LAYER — web search, tools, memory, reflection (feature/agentic-upgrade)

@@ -370,7 +370,7 @@ export function SystemSettingsView() {
                 <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Structured Extraction &amp; Fallback
               </span>
               <span className="font-bold text-white bg-[#141d2e] px-2 py-0.5 rounded text-[10px]">
-                {agentPool?.localModel || 'qwen3.5:2b'}
+                {agentPool?.localModel || 'qwen3.5:4b'}
               </span>
             </div>
             <p className="text-gray-500 text-[10px]">
@@ -427,7 +427,7 @@ export function SystemSettingsView() {
                 Host: <span className="text-gray-300">{agentPool?.localBaseUrl || 'http://localhost:11434'}</span>
               </div>
               <div className="text-[9px] text-gray-500">
-                Model: {agentPool?.localModel || 'qwen3.5:2b'} (Local)
+                Model: {agentPool?.localModel || 'qwen3.5:4b'} (Local)
               </div>
             </div>
           </div>

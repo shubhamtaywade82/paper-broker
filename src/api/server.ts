@@ -89,6 +89,44 @@ function safeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+export interface OllamaModelInfo {
+  name: string;
+  isCloud: boolean;
+  size?: number;
+}
+
+/** Queries the local Ollama daemon for available models, filtering out non-completion models. */
+async function fetchOllamaModels(baseUrl: string, defaultModel: string): Promise<OllamaModelInfo[]> {
+  try {
+    const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        models?: Array<{ name: string; size?: number; details?: { family?: string }; capabilities?: string[] }>;
+      };
+      const list: OllamaModelInfo[] = (data.models ?? [])
+        .filter((m) => !m.name.includes('embed') && m.details?.family !== 'bert' && m.details?.family !== 'nomic-bert')
+        .map((m) => ({
+          name: m.name,
+          isCloud: m.name.includes(':cloud') || m.name.endsWith(':cloud'),
+          size: m.size,
+        }));
+      if (list.length > 0) {
+        if (!list.some((m) => m.name === defaultModel)) {
+          list.unshift({ name: defaultModel, isCloud: defaultModel.includes(':cloud') });
+        }
+        return list;
+      }
+    }
+  } catch {
+    // Degrade gracefully to configured defaults when Ollama is unreachable
+  }
+  return [
+    { name: defaultModel, isCloud: defaultModel.includes(':cloud') },
+    { name: 'qwen3.5:4b', isCloud: false },
+    { name: 'gemma4:cloud', isCloud: true },
+  ];
+}
+
 export interface ApiServerOptions {
   broker: ExecutionBroker;
   engine: StrategyEngine;
@@ -848,12 +886,17 @@ export class ApiServer {
     });
 
     this.app.get('/api/v1/agents/config', async () => {
+      const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
+      const hasCloudKey = cloudKeys.length > 0;
+      const defaultModel = hasCloudKey ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL;
       return {
         localBaseUrl: env.OLLAMA_BASE_URL,
         localModel: env.OLLAMA_MODEL,
         cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,
         cloudModel: env.OLLAMA_CLOUD_MODEL,
-        configuredAccountsCount: [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean).length,
+        defaultModel,
+        hasCloudKey,
+        configuredAccountsCount: cloudKeys.length,
         accounts: [
           {
             id: 1,
@@ -884,6 +927,20 @@ export class ApiServer {
           priority: 10,
           status: 'ALWAYS_ACTIVE_FAILOVER',
         },
+      };
+    });
+
+    this.app.get('/api/v1/agents/models', async () => {
+      const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
+      const hasCloudKey = cloudKeys.length > 0;
+      const defaultModel = hasCloudKey ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL;
+      const models = await fetchOllamaModels(env.OLLAMA_BASE_URL, defaultModel);
+      return {
+        models,
+        defaultModel,
+        localModel: env.OLLAMA_MODEL,
+        cloudModel: env.OLLAMA_CLOUD_MODEL,
+        hasCloudKey,
       };
     });
 
@@ -1274,8 +1331,9 @@ export class ApiServer {
       const spread = state?.spread ?? Math.max(0.01, ask - bid);
 
       const cloudKeys = [env.OLLAMA_API_KEY_1, env.OLLAMA_API_KEY_2, env.OLLAMA_API_KEY_3].filter(Boolean) as string[];
+      const defaultModel = cloudKeys.length > 0 ? env.OLLAMA_CLOUD_MODEL : env.OLLAMA_MODEL;
       const pipeline = new TradingAgentsPipeline({
-        model: body.model || env.OLLAMA_MODEL,
+        model: body.model || defaultModel,
         baseUrl: env.OLLAMA_BASE_URL,
         apiKeys: cloudKeys,
         cloudBaseUrl: env.OLLAMA_CLOUD_BASE_URL,

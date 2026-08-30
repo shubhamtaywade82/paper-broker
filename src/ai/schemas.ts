@@ -57,41 +57,84 @@ export type AgentDecision = z.infer<typeof AgentDecisionSchema>;
  * ============================================================ */
 
 export const AnalystReportSchema = z.object({
-  agent: z.string(),
-  symbol: z.string(),
-  timestamp: z.number(),
-  summary: z.string(),
-  bullishSignals: z.array(z.string()),
-  bearishSignals: z.array(z.string()),
-  keyMetrics: z.record(z.string(), z.union([z.string(), z.number()])),
-  confidence: z.number().min(0).max(1),
+  agent: z.string().default('DerivativesAnalyst'),
+  symbol: z.string().default(''),
+  timestamp: z
+    .union([z.number(), z.string()])
+    .transform((v) => (typeof v === 'number' ? v : Date.now()))
+    .default(() => Date.now()),
+  summary: z.string().default(''),
+  bullishSignals: z.array(z.string()).default([]),
+  bearishSignals: z.array(z.string()).default([]),
+  keyMetrics: z.record(z.string(), z.unknown()).default({}),
+  confidence: z
+    .coerce
+    .number()
+    .transform((v) => (v > 1 ? Math.min(1, v / 100) : Math.max(0, v)))
+    .default(0.5),
 });
 export type AnalystReport = z.infer<typeof AnalystReportSchema>;
 
 export const DebateEntrySchema = z.object({
   role: z.enum(['BULL', 'BEAR']),
-  round: z.number(),
-  argument: z.string(),
+  round: z.coerce.number().default(1),
+  argument: z.string().default(''),
 });
 export type DebateEntry = z.infer<typeof DebateEntrySchema>;
 
 export const DebateVerdictSchema = z.object({
-  prevailingSide: z.enum(['BULL', 'BEAR', 'NEUTRAL']),
-  rationale: z.string(),
-  conviction: z.number().min(0).max(1),
+  prevailingSide: z
+    .preprocess((v) => {
+      if (typeof v === 'string') {
+        const upper = v.toUpperCase().trim();
+        if (upper.includes('BULL') || upper === 'LONG' || upper === 'BUY') return 'BULL';
+        if (upper.includes('BEAR') || upper === 'SHORT' || upper === 'SELL') return 'BEAR';
+        return 'NEUTRAL';
+      }
+      return v;
+    }, z.enum(['BULL', 'BEAR', 'NEUTRAL']))
+    .default('NEUTRAL'),
+  rationale: z.string().default('Debate evaluated'),
+  conviction: z
+    .coerce
+    .number()
+    .transform((v) => (v > 1 ? Math.min(1, v / 100) : Math.max(0, v)))
+    .default(0.5),
 });
 export type DebateVerdict = z.infer<typeof DebateVerdictSchema>;
 
 export const TraderDecisionSchema = z.object({
-  symbol: z.string(),
-  action: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
-  leverage: z.number().min(1).max(20),
-  sizePct: z.number().min(0).max(0.25),
-  entryPrice: z.number().optional(),
-  takeProfit: z.number().optional(),
-  stopLoss: z.number().optional(),
-  rationale: z.string(),
-  confidence: z.number().min(0).max(1),
+  symbol: z.string().default(''),
+  action: z
+    .preprocess((v) => {
+      if (typeof v === 'string') {
+        const upper = v.toUpperCase().trim();
+        if (upper === 'BUY' || upper.includes('LONG')) return 'LONG';
+        if (upper === 'SELL' || upper.includes('SHORT')) return 'SHORT';
+        return 'NEUTRAL';
+      }
+      return v;
+    }, z.enum(['LONG', 'SHORT', 'NEUTRAL']))
+    .default('NEUTRAL'),
+  leverage: z
+    .coerce
+    .number()
+    .transform((v) => Math.max(1, Math.min(20, Math.round(v))))
+    .default(1),
+  sizePct: z
+    .coerce
+    .number()
+    .transform((v) => (v > 1 ? Math.min(0.25, v / 100) : Math.max(0, Math.min(0.25, v))))
+    .default(0.05),
+  entryPrice: z.coerce.number().optional(),
+  takeProfit: z.coerce.number().optional(),
+  stopLoss: z.coerce.number().optional(),
+  rationale: z.string().default('Trader decision'),
+  confidence: z
+    .coerce
+    .number()
+    .transform((v) => (v > 1 ? Math.min(1, v / 100) : Math.max(0, v)))
+    .default(0.5),
 });
 export type TraderDecision = z.infer<typeof TraderDecisionSchema>;
 

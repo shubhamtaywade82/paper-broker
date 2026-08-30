@@ -1,4 +1,5 @@
 import { OllamaClient } from '@nemesis-oss/ollama-sdk';
+import type { z } from 'zod';
 import {
   AnalystReportSchema,
   DebateVerdictSchema,
@@ -185,7 +186,7 @@ export class TradingAgentsPipeline {
       debateRounds: config.debateRounds ?? 2,
       apiKeys: (config.apiKeys ?? []).filter(Boolean),
       cloudBaseUrl: config.cloudBaseUrl ?? 'https://ollama.com',
-      cloudModel: config.cloudModel ?? 'gemma3:27b',
+      cloudModel: config.cloudModel ?? 'gemma4:cloud',
       riskPolicy: config.riskPolicy ?? DEFAULT_AGENT_RISK_POLICY,
       toolRegistry: config.toolRegistry,
       toolsMaxIterations: config.toolsMaxIterations ?? 5,
@@ -424,15 +425,11 @@ export class TradingAgentsPipeline {
     ].filter(Boolean).join('\n');
 
     try {
-      const report = await this.client.generateWithSchema<AnalystReport>(
-        {
-          model: this.config.model,
-          prompt,
-          system: 'You are a crypto derivatives analyst. Identify funding crowding, liquidation magnets, and order flow balance. Output valid JSON.',
-          think: false,
-          options: { temperature: 0.2 },
-        },
-        AnalystReportSchema
+      const report = await this.generateSchemaWithFallback<AnalystReport>(
+        prompt,
+        'You are a crypto derivatives analyst. Identify funding crowding, liquidation magnets, and order flow balance. Output valid JSON.',
+        AnalystReportSchema,
+        0.2
       );
       this.emitStep(onStep, cycleId, ctx.symbol, 'analyst_team', 'completed', report.summary);
       return [report];
@@ -450,6 +447,42 @@ export class TradingAgentsPipeline {
         keyMetrics: { spread: ctx.spread, mark: ctx.mark },
         confidence: 0.5,
       }];
+    }
+  }
+
+  private async generateSchemaWithFallback<T>(
+    prompt: string,
+    system: string,
+    schema: z.ZodType<T, any, any>,
+    temperature = 0.2
+  ): Promise<T> {
+    try {
+      return await this.client.generateWithSchema<T>(
+        {
+          model: this.config.model,
+          prompt,
+          system,
+          think: false,
+          options: { temperature },
+        },
+        schema
+      );
+    } catch {
+      const chatRes = await this.client.chat({
+        model: this.config.model,
+        messages: [
+          { role: 'system', content: `${system}\nOutput a single valid JSON object only.` },
+          { role: 'user', content: prompt },
+        ],
+        think: false,
+        options: { temperature },
+      });
+      const raw = chatRes.message.content || (chatRes as unknown as { thinking?: string }).thinking || '';
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        return schema.parse(JSON.parse(match[0]));
+      }
+      throw new Error('No valid JSON object found in model output');
     }
   }
 
@@ -504,15 +537,11 @@ export class TradingAgentsPipeline {
     this.emitStep(onStep, cycleId, symbol, 'debate_verdict', 'started');
     const prompt = `Debate for ${symbol}:\n${JSON.stringify(debate)}\nJudge which side presented stronger evidence. Return valid JSON.`;
     try {
-      const verdict = await this.client.generateWithSchema<DebateVerdict>(
-        {
-          model: this.config.model,
-          prompt,
-          system: 'You are an impartial trading debate judge. Output valid JSON verdict.',
-          think: false,
-          options: { temperature: 0.1 },
-        },
-        DebateVerdictSchema
+      const verdict = await this.generateSchemaWithFallback<DebateVerdict>(
+        prompt,
+        'You are an impartial trading debate judge. Output valid JSON verdict.',
+        DebateVerdictSchema,
+        0.1
       );
       this.emitStep(onStep, cycleId, symbol, 'debate_verdict', 'completed', `${verdict.prevailingSide} (${verdict.conviction})`);
       return verdict;
@@ -548,15 +577,11 @@ export class TradingAgentsPipeline {
     ].filter(Boolean).join('\n');
 
     try {
-      const decision = await this.client.generateWithSchema<TraderDecision>(
-        {
-          model: this.config.model,
-          prompt,
-          system: 'You are an institutional crypto futures trader. Prioritize risk-defined entries. Output valid JSON.',
-          think: false,
-          options: { temperature: 0.2 },
-        },
-        TraderDecisionSchema
+      const decision = await this.generateSchemaWithFallback<TraderDecision>(
+        prompt,
+        'You are an institutional crypto futures trader. Prioritize risk-defined entries. Output valid JSON.',
+        TraderDecisionSchema,
+        0.2
       );
       this.emitStep(onStep, cycleId, ctx.symbol, 'trader_decision', 'completed', `${decision.action} conf=${decision.confidence}`);
       return decision;

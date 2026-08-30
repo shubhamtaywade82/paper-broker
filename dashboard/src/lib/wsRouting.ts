@@ -44,6 +44,17 @@ export function setupWsRouting(): () => void {
         });
         break;
 
+      // --- Debate pipeline ----------------------------------------------
+      // liveEvents is the generic feed behind the live transcript, the
+      // Decision Pipeline stage rail and ActivityView. Steps are stored under
+      // the underscore form because both consumers already match on it.
+      case 'agent.step':
+        useStore.getState().addLiveEvent({ type: 'agent_step', payload: m.payload });
+        break;
+      case 'agent.cycle':
+        useStore.getState().addLiveEvent({ type: 'agent.cycle', payload: m.payload });
+        break;
+
       // --- Autonomous agent (8 event types) ------------------------------
       case 'agent.autonomous.cycle':
         useAutonomousStore.getState().pushCycle(m.payload);

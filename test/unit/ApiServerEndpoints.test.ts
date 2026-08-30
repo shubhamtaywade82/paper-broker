@@ -278,6 +278,59 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     await server.stop();
   });
 
+  it('GET /api/v1/agents/config returns model defaults and account status', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/agents/config',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(data.localModel).toBe('qwen3.5:4b');
+    expect(data.cloudModel).toBe('gemma4:cloud');
+    expect(data.defaultModel).toBeDefined();
+    expect(typeof data.hasCloudKey).toBe('boolean');
+    await server.stop();
+  });
+
+  it('GET /api/v1/agents/models returns available models and active default', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/agents/models',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(Array.isArray(data.models)).toBe(true);
+    expect(data.models.length).toBeGreaterThan(0);
+    expect(data.defaultModel).toBeDefined();
+    expect(data.localModel).toBe('qwen3.5:4b');
+    expect(data.cloudModel).toBe('gemma4:cloud');
+    await server.stop();
+  });
+
   it('POST /api/v1/agents/cycle and GET /api/v1/agents/cycles work end-to-end', async () => {
     vi.spyOn(TradingAgentsPipeline.prototype, 'runCycle').mockResolvedValueOnce({
       cycleId: 'cycle-123',

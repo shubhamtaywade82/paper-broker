@@ -671,9 +671,17 @@ export class ExitManager {
       metrics.inc(
         accepted ? 'autonomous_scale_ins_submitted_total' : 'autonomous_scale_ins_rejected_total'
       );
-      if (accepted) {
-        this.scaleInTracker.set(posKey, { adds: addNumber, lastAt: now });
-      }
+      // Record the attempt time on BOTH paths. Only advancing `adds` on
+      // acceptance is correct (a rejected add didn't consume pyramid budget),
+      // but only setting `lastAt` on acceptance left the cooldown at gate 7
+      // permanently disarmed (`tracker.lastAt > 0` never became true), so a
+      // rejected add was retried every single cycle with an identical
+      // dedupKey — observed live as 1478 consecutive
+      // "duplicate: long position already open" rejections on one position.
+      this.scaleInTracker.set(posKey, {
+        adds: accepted ? addNumber : tracker.adds,
+        lastAt: now,
+      });
       this.deps.eventLog.appendSystemEvent({
         eventType: 'AUTONOMOUS_SCALE_IN',
         payload: {

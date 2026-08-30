@@ -642,6 +642,8 @@ export interface AgentPoolConfig {
   localModel: string;
   cloudBaseUrl: string;
   cloudModel: string;
+  defaultModel?: string;
+  hasCloudKey?: boolean;
   configuredAccountsCount: number;
   accounts: Array<{
     id: number;
@@ -659,10 +661,33 @@ export interface AgentPoolConfig {
   };
 }
 
+export interface AgentModelItem {
+  name: string;
+  isCloud: boolean;
+  size?: number;
+}
+
+export interface AgentModelsResponse {
+  models: AgentModelItem[];
+  defaultModel: string;
+  localModel: string;
+  cloudModel: string;
+  hasCloudKey: boolean;
+}
+
 export function useAgentPoolConfig() {
   return useQuery({
     queryKey: ['agentPoolConfig'],
     queryFn: () => fetchJson<AgentPoolConfig>('/api/v1/agents/config'),
     refetchInterval: 10000,
+  });
+}
+
+export function useAgentModels() {
+  return useQuery({
+    queryKey: ['agentModels'],
+    queryFn: () => fetchJson<AgentModelsResponse>('/api/v1/agents/models'),
+    staleTime: 30000,
+    refetchInterval: 60000,
   });
 }

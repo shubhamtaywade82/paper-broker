@@ -125,6 +125,49 @@ describe('wsRouting — autonomous event dispatch', () => {
     expect(useTradingStore.getState().positions['pos-1']).toBeDefined();
   });
 
+  // Regression: agent.step was broadcast by the backend (engine.ts onCycleStep,
+  // server.ts trigger route) but was absent from WsMessageSchema, so
+  // wsConnection's `WsMessageSchema.parse()` threw and the bare `catch {}`
+  // dropped every frame at the socket boundary. addLiveEvent had zero callers
+  // and liveEvents was permanently empty, which made the live transcript read
+  // "0 Steps" forever, pinned all five Decision Pipeline stages to "idle", and
+  // made the LLM-latency vital read "Never run" regardless of what the model
+  // actually did.
+  it('WS-ROUTE-07: agent.step lands in liveEvents as agent_step', () => {
+    const before = useStore.getState().liveEvents.length;
+    dispatch({
+      type: 'agent.step',
+      payload: {
+        cycleId: 'cyc-9',
+        symbol: 'SOLUSDT',
+        stage: 'debate_bull',
+        status: 'started',
+        timestamp: 1700000000000,
+      },
+      timestampUtc: new Date().toISOString(),
+    });
+
+    const events = useStore.getState().liveEvents;
+    expect(events.length).toBe(before + 1);
+    // Both consumers (AgentControlCenterView.asStep and ActivityView) match on
+    // the underscore form, so the router must normalise to it.
+    expect(events[0]?.type).toBe('agent_step');
+    expect(events[0]?.payload.stage).toBe('debate_bull');
+    expect(events[0]?.payload.cycleId).toBe('cyc-9');
+  });
+
+  it('WS-ROUTE-08: agent.cycle lands in liveEvents', () => {
+    dispatch({
+      type: 'agent.cycle',
+      payload: { cycleId: 'cyc-9', symbol: 'SOLUSDT', action: 'OPEN_LONG', confidence: 0.7 },
+      timestampUtc: new Date().toISOString(),
+    });
+
+    const events = useStore.getState().liveEvents;
+    // ActivityView already has a `case 'agent.cycle'` waiting for this.
+    expect(events[0]?.type).toBe('agent.cycle');
+  });
+
   it('WS-ROUTE-06: market.tick routes to useStore setLivePrice', () => {
     const tick = {
       symbol: 'SOLUSDT',
