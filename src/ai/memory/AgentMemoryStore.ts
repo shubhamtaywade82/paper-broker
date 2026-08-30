@@ -246,6 +246,12 @@ export class AgentMemoryStore {
       });
     }
 
+    // Lazily prune old reflections on every record. Best-effort — keeps the
+    // table bounded without a separate scheduler job. (CONTRACTS.md §4
+    // preservation: this only affects agent_reflections, which is mutable
+    // state, not the immutable events table.)
+    this.pruneOlderThan(input.ts);
+
     return id;
   }
 
@@ -262,34 +268,44 @@ export class AgentMemoryStore {
       // Fallback: return the top-K by decay_score.
       const rows = this.db
         .prepare(`SELECT * FROM agent_lessons WHERE decay_score >= ? ORDER BY decay_score DESC LIMIT ?`)
-        .all(this.config.decayFloor, limit) as Array<Omit<LessonRecord, 'tags'> & { tags: string }>;
-      return rows.map((r) => ({ ...r, tags: safeParseTags(r.tags) }));
+        .all(this.config.decayFloor, limit) as Array<Record<string, unknown>>;
+      const lessons = rows.map(rowToLesson);
+      return lessons;
     }
 
     try {
       const rows = this.db
         .prepare(`
-          SELECT l.*, bm5(agent_lessons_fts) AS rank
+          SELECT l.id AS id, l.lesson_text AS lessonText, l.tags AS tags,
+                 l.source_reflection_id AS sourceReflectionId, l.created_at AS createdAt,
+                 l.last_used_at AS lastUsedAt, l.hit_count AS hitCount,
+                 l.decay_score AS decayScore, l.regime AS regime, l.strategy_id AS strategyId
           FROM agent_lessons_fts fts
           JOIN agent_lessons l ON l.rowid = fts.rowid
           WHERE agent_lessons_fts MATCH ?
             AND l.decay_score >= ?
-          ORDER BY rank ASC, l.decay_score DESC
+          ORDER BY fts.rank ASC, l.decay_score DESC
           LIMIT ?
         `)
-        .all(ftsQuery, this.config.decayFloor, limit) as Array<
-          Omit<LessonRecord, 'tags'> & { tags: string; rank: number }
-        >;
+        .all(ftsQuery, this.config.decayFloor, limit) as Array<Record<string, unknown>>;
 
-      const lessons = rows.map((r) => ({ ...r, tags: safeParseTags(r.tags) }));
+      const lessons = rows.map(rowToLesson);
       this.markLessonsUsed(lessons.map((l) => l.id));
+      // Reflect the increment in the returned objects so callers don't see a
+      // stale hitCount (markLessonsUsed updates the DB row, but the lessons
+      // array above was built before the UPDATE was applied).
+      const now = Date.now();
+      for (const l of lessons) {
+        l.hitCount += 1;
+        l.lastUsedAt = now;
+      }
       return lessons;
     } catch (err) {
       logger.warn({ err, ftsQuery }, '[AgentMemoryStore] FTS query failed, returning top-decay fallback');
-      const fallback = this.db
+      const rows = this.db
         .prepare(`SELECT * FROM agent_lessons WHERE decay_score >= ? ORDER BY decay_score DESC LIMIT ?`)
-        .all(this.config.decayFloor, limit) as Array<Omit<LessonRecord, 'tags'> & { tags: string }>;
-      return fallback.map((r) => ({ ...r, tags: safeParseTags(r.tags) }));
+        .all(this.config.decayFloor, limit) as Array<Record<string, unknown>>;
+      return rows.map(rowToLesson);
     }
   }
 
@@ -348,24 +364,31 @@ export class AgentMemoryStore {
    */
   recentReflections(limit = 50): ReflectionRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM agent_reflections ORDER BY ts DESC LIMIT ?`)
-      .all(limit) as Array<
-        Omit<ReflectionRecord, 'lessonTags'> & { lesson_tags: string }
-      >;
-    return rows.map((r) => {
-      const { lesson_tags, ...rest } = r;
-      return { ...rest, lessonTags: safeParseTags(lesson_tags) };
-    });
+      .prepare(`
+        SELECT id AS id, ts AS ts, symbol AS symbol, regime AS regime,
+               strategy_id AS strategyId, action AS action,
+               outcome_pnl_usdt AS outcomePnlUsdt, outcome_label AS outcomeLabel,
+               setup_archetype AS setupArchetype, reflection_text AS reflectionText,
+               lesson_tags AS lessonTags, model_used AS modelUsed,
+               cycle_id AS cycleId, raw_payload AS rawPayload
+        FROM agent_reflections ORDER BY ts DESC LIMIT ?
+      `)
+      .all(limit) as Array<Record<string, unknown>>;
+    return rows.map(rowToReflection);
   }
 
   /** List all lessons above the decay floor — for /api/v1/agent/memory. */
   listLessons(limit = 200): LessonRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM agent_lessons WHERE decay_score >= ? ORDER BY decay_score DESC LIMIT ?`)
-      .all(this.config.decayFloor, limit) as Array<
-        Omit<LessonRecord, 'tags'> & { tags: string }
-      >;
-    return rows.map((r) => ({ ...r, tags: safeParseTags(r.tags) }));
+      .prepare(`
+        SELECT id AS id, lesson_text AS lessonText, tags AS tags,
+               source_reflection_id AS sourceReflectionId, created_at AS createdAt,
+               last_used_at AS lastUsedAt, hit_count AS hitCount,
+               decay_score AS decayScore, regime AS regime, strategy_id AS strategyId
+        FROM agent_lessons WHERE decay_score >= ? ORDER BY decay_score DESC LIMIT ?
+      `)
+      .all(this.config.decayFloor, limit) as Array<Record<string, unknown>>;
+    return rows.map(rowToLesson);
   }
 
   close(): void {
@@ -409,7 +432,8 @@ function escapeFts(s: string): string {
   return s.replace(/["*]/g, '');
 }
 
-function safeParseTags(raw: string): string[] {
+function safeParseTags(raw: unknown): string[] {
+  if (typeof raw !== 'string') return [];
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed.filter((x) => typeof x === 'string');
@@ -417,4 +441,52 @@ function safeParseTags(raw: string): string[] {
     // fall through
   }
   return [];
+}
+
+/**
+ * Convert a raw snake_case SQLite row into a typed LessonRecord. Reads both
+ * the AS-aliased camelCase fields and the raw snake_case ones (so the helper
+ * works whether the SELECT used aliases or `*`).
+ */
+function rowToLesson(row: Record<string, unknown>): LessonRecord {
+  return {
+    id: String(row['id'] ?? ''),
+    lessonText: String(row['lessonText'] ?? row['lesson_text'] ?? ''),
+    tags: safeParseTags(row['tags']),
+    sourceReflectionId: String(row['sourceReflectionId'] ?? row['source_reflection_id'] ?? ''),
+    createdAt: Number(row['createdAt'] ?? row['created_at'] ?? 0),
+    lastUsedAt: row['lastUsedAt'] !== undefined
+      ? Number(row['lastUsedAt'])
+      : row['last_used_at'] !== undefined
+        ? Number(row['last_used_at'])
+        : null,
+    hitCount: Number(row['hitCount'] ?? row['hit_count'] ?? 0),
+    decayScore: Number(row['decayScore'] ?? row['decay_score'] ?? 1.0),
+    regime: (row['regime'] as string | null) ?? null,
+    strategyId: (row['strategyId'] ?? row['strategy_id'] ?? null) as string | null,
+  };
+}
+
+/**
+ * Convert a raw snake_case SQLite row into a typed ReflectionRecord. Same
+ * pattern as {@link rowToLesson} — reads both camelCase aliases and raw
+ * snake_case column names.
+ */
+function rowToReflection(row: Record<string, unknown>): ReflectionRecord {
+  return {
+    id: String(row['id'] ?? ''),
+    ts: Number(row['ts'] ?? 0),
+    symbol: String(row['symbol'] ?? ''),
+    regime: (row['regime'] as string | null) ?? null,
+    strategyId: String(row['strategyId'] ?? row['strategy_id'] ?? ''),
+    action: String(row['action'] ?? ''),
+    outcomePnlUsdt: Number(row['outcomePnlUsdt'] ?? row['outcome_pnl_usdt'] ?? 0),
+    outcomeLabel: (row['outcomeLabel'] ?? row['outcome_label'] ?? 'BREAKEVEN') as 'WIN' | 'LOSS' | 'BREAKEVEN',
+    setupArchetype: (row['setupArchetype'] ?? row['setup_archetype'] ?? null) as string | null,
+    reflectionText: String(row['reflectionText'] ?? row['reflection_text'] ?? ''),
+    lessonTags: safeParseTags(row['lessonTags'] ?? row['lesson_tags']),
+    modelUsed: String(row['modelUsed'] ?? row['model_used'] ?? ''),
+    cycleId: (row['cycleId'] ?? row['cycle_id'] ?? null) as string | null,
+    rawPayload: String(row['rawPayload'] ?? row['raw_payload'] ?? ''),
+  };
 }
