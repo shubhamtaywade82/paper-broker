@@ -15,6 +15,8 @@ import {
   useFills,
   useJournal,
   useCreateOrder,
+  usePnlSummary,
+  useTransactionHistory,
 } from '../../hooks/useApi';
 import { OrderModal } from '../common/OrderModal';
 import { ConfirmationModal } from '../common/ConfirmationModal';
@@ -25,6 +27,7 @@ import {
   Trash2,
   AlertOctagon,
   Bot,
+  Sparkles,
 } from 'lucide-react';
 
 export function TradingView() {
@@ -44,10 +47,14 @@ export function TradingView() {
   const [filterBySymbol, setFilterBySymbol] = useState(false);
   const activeSymbolFilter = filterBySymbol ? selectedSymbol : undefined;
 
+  const [historyPeriod, setHistoryPeriod] = useState<'7D' | '30D' | 'FY27' | 'ALL'>('7D');
+
   useDashboard();
   useOpenOrders();
   const { data: fills = [] } = useFills(activeSymbolFilter);
   const { data: journal = [] } = useJournal(activeSymbolFilter);
+  const { data: pnlSummary } = usePnlSummary(historyPeriod);
+  const { data: txData } = useTransactionHistory({ period: historyPeriod === 'ALL' ? undefined : historyPeriod });
 
   const cancelOrder = useCancelOrder();
   const cancelAllOrders = useCancelAllOrders();
@@ -64,7 +71,7 @@ export function TradingView() {
       {/* Trading Header & Sub-tab navigation */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-[#0f1623] border border-[#1b2537] p-4 rounded-xl">
         <div className="flex items-center gap-2">
-          {(['positions', 'orders', 'fills', 'journal'] as const).map((tab) => (
+          {(['positions', 'orders', 'fills', 'journal', 'history'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setTradingTab(tab)}
@@ -419,6 +426,178 @@ export function TradingView() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Tab 5: History & PnL Analytics (CoinDCX Style) */}
+      {tradingTab === 'history' && (
+        <div className="space-y-4">
+          {/* Aggregated PnL Banner & Period Selector */}
+          <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1b2537] pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+                    Performance Summary
+                  </h3>
+                  <p className="text-[10px] text-gray-400">Historical realized PnL, fees, and trade analytics</p>
+                </div>
+              </div>
+
+              {/* Period Filter Pills (7D | 30D | FY27 | ALL) */}
+              <div className="flex items-center gap-1 bg-[#080c14] border border-[#1b2537] p-1 rounded-xl">
+                {(['7D', '30D', 'FY27', 'ALL'] as const).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setHistoryPeriod(period)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      historyPeriod === period
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                        : 'text-gray-400 hover:text-white hover:bg-[#141d2e]'
+                    }`}
+                  >
+                    {period}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Aggregated Stats Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase">Net Realized PnL</span>
+                <div
+                  className={`text-lg font-black font-mono flex items-center gap-1 ${
+                    (pnlSummary?.netPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
+                  }`}
+                >
+                  {(pnlSummary?.netPnl ?? 0) >= 0 ? '+' : ''}
+                  {formatCurrency(pnlSummary?.netPnl ?? 0)}
+                  {(pnlSummary?.netPnl ?? 0) > 0 && <span>✨</span>}
+                </div>
+              </div>
+
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase">Gross PnL</span>
+                <div
+                  className={`text-lg font-black font-mono ${
+                    (pnlSummary?.grossPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
+                  }`}
+                >
+                  {(pnlSummary?.grossPnl ?? 0) >= 0 ? '+' : ''}
+                  {formatCurrency(pnlSummary?.grossPnl ?? 0)}
+                </div>
+              </div>
+
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase">Total Fees Paid</span>
+                <div className="text-lg font-black font-mono text-gray-300">
+                  {formatCurrency(pnlSummary?.totalFees ?? 0)}
+                </div>
+              </div>
+
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase">Win Rate / Trades</span>
+                <div className="text-lg font-black text-white font-mono">
+                  {pnlSummary?.winRate ? `${(pnlSummary.winRate * 100).toFixed(0)}%` : '0%'}{' '}
+                  <span className="text-[11px] text-gray-400 font-normal">
+                    ({pnlSummary?.winningTrades ?? 0}W / {pnlSummary?.losingTrades ?? 0}L)
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Transactions List */}
+          <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-[#1b2537] flex items-center justify-between">
+              <h4 className="font-bold text-white uppercase text-xs">
+                Transaction History ({txData?.transactions?.length ?? 0})
+              </h4>
+              <span className="text-[10px] text-gray-400">Period: {historyPeriod}</span>
+            </div>
+
+            {(!txData?.transactions || txData.transactions.length === 0) ? (
+              <div className="p-8 text-center text-gray-400">
+                <p>No transactions recorded for period {historyPeriod}.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-[#080c14] text-gray-400 uppercase text-[10px] border-b border-[#1b2537]">
+                    <tr>
+                      <th className="px-4 py-2.5">Time</th>
+                      <th className="px-4 py-2.5">Type</th>
+                      <th className="px-4 py-2.5">Symbol / Details</th>
+                      <th className="px-4 py-2.5 text-right">Amount</th>
+                      <th className="px-4 py-2.5 text-right">Fee</th>
+                      <th className="px-4 py-2.5 text-right">Net PnL</th>
+                      <th className="px-4 py-2.5 text-right">Balance After</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1b2537]">
+                    {txData.transactions.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-[#141d2e] transition">
+                        <td className="px-4 py-3 text-gray-500 font-mono">
+                          {new Date(tx.createdAtUtc).toLocaleString([], {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              tx.transactionType === 'OPEN_POSITION'
+                                ? 'bg-blue-500/20 text-blue-400'
+                                : tx.transactionType === 'CLOSE_POSITION'
+                                ? tx.netPnl >= 0
+                                  ? 'bg-emerald-500/20 text-emerald-400'
+                                  : 'bg-red-500/20 text-red-400'
+                                : tx.transactionType === 'FUNDING_FEE'
+                                ? 'bg-amber-500/20 text-amber-400'
+                                : 'bg-purple-500/20 text-purple-400'
+                            }`}
+                          >
+                            {tx.transactionType}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-bold text-white">
+                          {tx.positionId || (tx.metadata?.symbol as string) || tx.productType}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-300 font-mono">
+                          {formatCurrency(tx.amount)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-500 font-mono">
+                          {tx.fee ? formatCurrency(tx.fee) : '—'}
+                        </td>
+                        <td
+                          className={`px-4 py-3 text-right font-bold font-mono ${
+                            tx.netPnl > 0
+                              ? 'text-emerald-400'
+                              : tx.netPnl < 0
+                              ? 'text-red-400'
+                              : 'text-gray-400'
+                          }`}
+                        >
+                          {tx.netPnl !== 0
+                            ? `${tx.netPnl > 0 ? '+' : ''}${formatCurrency(tx.netPnl)}`
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-300 font-mono">
+                          {formatCurrency(tx.balanceAfter)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

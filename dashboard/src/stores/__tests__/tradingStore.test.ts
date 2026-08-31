@@ -167,6 +167,9 @@ describe('Store isolation & TradingStore (God-store regression)', () => {
     // DOGEUSDT: 5 decimals, trailing zeros preserved
     expect(formatPrice(0.23, 'DOGEUSDT')).toBe('0.23000');
     expect(formatCurrency(0.23, 'DOGEUSDT')).toBe('$0.23000');
+
+    // INR support (e.g. 100 USDT at 89.5 INR/USDT -> ₹8,950.00)
+    expect(formatCurrency(100, undefined, 'INR')).toBe('₹8,950.00');
   });
 
   it('PREC-02: formatQty preserves fixed quantity precision per symbol', async () => {

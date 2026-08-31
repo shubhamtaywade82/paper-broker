@@ -6,6 +6,7 @@ import {
   useSetAggressiveMode,
   useTriggerEvaluation,
   useResetAccount,
+  usePortfolioValuation,
 } from '../hooks/useApi';
 import { ConfirmationModal } from './common/ConfirmationModal';
 import { OrderModal } from './common/OrderModal';
@@ -19,8 +20,9 @@ import {
   PowerOff,
   Zap,
   RotateCcw,
+  Coins,
 } from 'lucide-react';
-import { calculateTotalUnrealizedPnl } from '../store/useStore.js';
+import { calculateTotalUnrealizedPnl, formatCurrency } from '../store/useStore.js';
 
 export function Header() {
   const {
@@ -34,7 +36,11 @@ export function Header() {
     aggressiveMode,
     selectedSymbol,
     setSelectedSymbol,
+    displayCurrency,
+    setDisplayCurrency,
   } = useStore();
+
+  usePortfolioValuation();
 
   const [isKillSwitchOpen, setIsKillSwitchOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -187,24 +193,36 @@ export function Header() {
         </div>
 
         {/* Quick Actions & Account Metrics */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* Currency Toggle */}
+          <button
+            onClick={() => setDisplayCurrency(displayCurrency === 'USDT' ? 'INR' : 'USDT')}
+            title={`Toggle currency: Currently ${displayCurrency}. Click to switch to ${displayCurrency === 'USDT' ? 'INR (₹)' : 'USDT ($)'}`}
+            className="flex items-center gap-1.5 bg-[#080c14] hover:bg-[#141d2e] border border-[#1b2537] px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
+          >
+            <Coins className="w-3.5 h-3.5 text-amber-400" />
+            <span className={displayCurrency === 'USDT' ? 'text-blue-400 font-bold' : 'text-gray-500'}>USDT</span>
+            <span className="text-gray-600">/</span>
+            <span className={displayCurrency === 'INR' ? 'text-amber-400 font-bold' : 'text-gray-500'}>INR</span>
+          </button>
+
           {/* Account Metrics */}
           <div className="hidden md:flex items-center gap-4 bg-[#080c14] px-3.5 py-1.5 rounded-xl border border-[#1b2537]">
             <div>
               <span className="text-gray-500 text-[10px] uppercase block">Equity</span>
-              <span className="text-white font-bold">
-                ${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-white font-bold font-mono">
+                {formatCurrency(liveEquity)}
               </span>
             </div>
             <div className="border-l border-[#1b2537] pl-3">
               <span className="text-gray-500 text-[10px] uppercase block">PnL</span>
               <span
-                className={`font-bold ${
+                className={`font-bold font-mono ${
                   totalUnrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                 }`}
               >
-                {totalUnrealizedPnl >= 0 ? '+' : ''}$
-                {totalUnrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {totalUnrealizedPnl >= 0 ? '+' : ''}
+                {formatCurrency(totalUnrealizedPnl)}
               </span>
             </div>
           </div>

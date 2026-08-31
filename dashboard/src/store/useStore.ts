@@ -73,6 +73,8 @@ export interface AccountInfo {
   unrealizedPnl: number;
   marginUsed?: number;
   freeMargin?: number;
+  availableBalance?: number;
+  initialMargin?: number;
   /** Lifetime fees paid. Already on the wire from /api/v1/dashboard (the
    * broker's full AccountState) — these were simply never declared here. */
   totalFees?: number;
@@ -201,7 +203,9 @@ interface StoreState {
   cycles: AgentCycle[];
   selectedCycle: CycleDetail | null;
   agentTab: 'now' | 'decisions' | 'supertrend';
-  tradingTab: 'positions' | 'orders' | 'form' | 'fills' | 'journal';
+  tradingTab: 'positions' | 'orders' | 'form' | 'fills' | 'journal' | 'history';
+  displayCurrency: 'USDT' | 'INR';
+  inrRate: number;
   riskSummary: RiskSummary | null;
   performance: PerformanceMetrics | null;
   wsConnected: boolean;
@@ -217,6 +221,8 @@ interface StoreState {
   setActiveTab: (tab: WorkspaceTab) => void;
   setSelectedSymbol: (symbol: string) => void;
   setTimeframe: (tf: string) => void;
+  setDisplayCurrency: (currency: 'USDT' | 'INR') => void;
+  setInrRate: (rate: number) => void;
   setAccount: (account: AccountInfo) => void;
   setPositions: (positions: Position[]) => void;
   setOpenOrders: (orders: Order[]) => void;
@@ -224,7 +230,7 @@ interface StoreState {
   setCycles: (cycles: AgentCycle[]) => void;
   setSelectedCycle: (cycle: CycleDetail | null) => void;
   setAgentTab: (tab: 'now' | 'decisions' | 'supertrend') => void;
-  setTradingTab: (tab: 'positions' | 'orders' | 'form' | 'fills' | 'journal') => void;
+  setTradingTab: (tab: 'positions' | 'orders' | 'form' | 'fills' | 'journal' | 'history') => void;
   setRiskSummary: (risk: RiskSummary) => void;
   setPerformance: (perf: PerformanceMetrics) => void;
   setWsConnected: (connected: boolean) => void;
@@ -340,8 +346,26 @@ export function formatPrice(price?: number | null, symbol?: string): string {
   });
 }
 
-export function formatCurrency(price?: number | null, symbol?: string): string {
+function getInitialDisplayCurrency(): 'USDT' | 'INR' {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('nemesis_display_currency');
+    if (saved === 'INR' || saved === 'USDT') return saved;
+  }
+  return 'USDT';
+}
+
+export function formatCurrency(price?: number | null, symbol?: string, forceCurrency?: 'USDT' | 'INR'): string {
   if (price === undefined || price === null || isNaN(price)) return '—';
+  const currency = forceCurrency ?? (useStore.getState ? useStore.getState().displayCurrency : 'USDT');
+  if (currency === 'INR') {
+    const rate = useStore.getState ? (useStore.getState().inrRate || 89.5) : 89.5;
+    const inrVal = price * rate;
+    const precision = getPricePrecision(price, symbol);
+    return `₹${inrVal.toLocaleString('en-IN', {
+      minimumFractionDigits: precision <= 2 ? 2 : precision,
+      maximumFractionDigits: precision <= 2 ? 2 : precision,
+    })}`;
+  }
   return `$${formatPrice(price, symbol)}`;
 }
 
@@ -373,6 +397,8 @@ export const useStore = create<StoreState>((set) => ({
   activeTab: getInitialTab(),
   selectedSymbol: getInitialSymbol(),
   timeframe: '15m',
+  displayCurrency: getInitialDisplayCurrency(),
+  inrRate: 89.5,
   account: null,
   positions: [],
   openOrders: [],
@@ -407,6 +433,13 @@ export const useStore = create<StoreState>((set) => ({
     set({ selectedSymbol });
   },
   setTimeframe: (timeframe) => set({ timeframe }),
+  setDisplayCurrency: (displayCurrency) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nemesis_display_currency', displayCurrency);
+    }
+    set({ displayCurrency });
+  },
+  setInrRate: (inrRate) => set({ inrRate }),
   setAccount: (account) => set({ account }),
   setPositions: (positions) => set({ positions }),
   setOpenOrders: (openOrders) => set({ openOrders }),

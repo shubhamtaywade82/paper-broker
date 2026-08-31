@@ -716,6 +716,130 @@ export function useResetAccount() {
       queryClient.invalidateQueries({ queryKey: ['riskSummary'] });
       queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
       queryClient.invalidateQueries({ queryKey: ['autonomousSnapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['wallets'] });
+      queryClient.invalidateQueries({ queryKey: ['portfolioValuation'] });
     },
+  });
+}
+
+export interface WalletItem {
+  accountId: string;
+  productType: 'FUTURES' | 'SPOT' | 'OPTIONS' | 'EARN';
+  currency: string;
+  free: number;
+  locked: number;
+  totalFees: number;
+  totalFunding: number;
+  totalRealizedPnl: number;
+  updatedAtUtc: string;
+}
+
+export function useWallets(accountId = 'paper-main') {
+  return useQuery({
+    queryKey: ['wallets', accountId],
+    queryFn: () => fetchJson<{ wallets: WalletItem[] }>(`/api/v1/wallets?accountId=${accountId}`),
+    refetchInterval: 5000,
+  });
+}
+
+export interface PortfolioValuation {
+  baseCurrency: string;
+  displayCurrency: string;
+  exchangeRate: number;
+  totalEquityUsdt: number;
+  totalEquityInr: number;
+  wallets: Record<string, number>;
+}
+
+export function usePortfolioValuation(accountId = 'paper-main') {
+  const setInrRate = useStore((s) => s.setInrRate);
+  return useQuery({
+    queryKey: ['portfolioValuation', accountId],
+    queryFn: async () => {
+      const data = await fetchJson<PortfolioValuation>(`/api/v1/portfolio/valuation?accountId=${accountId}`);
+      if (data.exchangeRate) {
+        setInrRate(data.exchangeRate);
+      }
+      return data;
+    },
+    refetchInterval: 10000,
+  });
+}
+
+export function useTransferFunds() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { fromProduct: string; toProduct: string; currency?: string; amount: number; accountId?: string }) =>
+      fetchJson<{ success: boolean; transferId: string; fromProduct: string; toProduct: string; currency: string; amount: number; timestamp: string }>(
+        '/api/v1/wallets/transfer',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallets'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['portfolioValuation'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['pnlSummary'] });
+    },
+  });
+}
+
+export interface PnlSummaryData {
+  period: string;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  grossPnl: number;
+  totalFees: number;
+  netPnl: number;
+}
+
+export function usePnlSummary(period = '7D', accountId = 'paper-main') {
+  return useQuery({
+    queryKey: ['pnlSummary', period, accountId],
+    queryFn: () => fetchJson<PnlSummaryData>(`/api/v1/history/pnl-summary?period=${period}&accountId=${accountId}`),
+    refetchInterval: 10000,
+  });
+}
+
+export interface TransactionItem {
+  id: string;
+  accountId: string;
+  positionId?: string;
+  orderId?: string;
+  fillId?: string;
+  productType: string;
+  transactionType: string;
+  currency: string;
+  amount: number;
+  fee: number;
+  grossPnl: number;
+  netPnl: number;
+  balanceAfter: number;
+  metadata?: Record<string, unknown>;
+  createdAtUtc: string;
+}
+
+export function useTransactionHistory(options: { period?: string; type?: string; accountId?: string; limit?: number } = {}) {
+  const { period = '7D', type, accountId = 'paper-main', limit = 50 } = options;
+  return useQuery({
+    queryKey: ['transactions', period, type, accountId, limit],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        period,
+        accountId,
+        limit: String(limit),
+      });
+      if (type) params.set('type', type);
+      return fetchJson<{ period: string; totalPnl: number; count: number; transactions: TransactionItem[] }>(
+        `/api/v1/history/transactions?${params.toString()}`
+      );
+    },
+    refetchInterval: 10000,
   });
 }

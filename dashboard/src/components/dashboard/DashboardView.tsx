@@ -15,8 +15,11 @@ import {
   usePerformance,
   useTriggerCycle,
   useOpenOrders,
+  useWallets,
+  usePortfolioValuation,
 } from '../../hooks/useApi';
 import { TradingChart, type ChartMarker } from '../charts/TradingChart';
+import { TransferModal } from '../common/TransferModal';
 import {
   DollarSign,
   TrendingUp,
@@ -26,6 +29,8 @@ import {
   ArrowDownRight,
   Zap,
   Play,
+  ArrowRightLeft,
+  Wallet,
 } from 'lucide-react';
 
 export function DashboardView() {
@@ -41,6 +46,7 @@ export function DashboardView() {
     livePrice,
     tickers,
     openOrders,
+    displayCurrency,
   } = useStore();
 
   useDashboard();
@@ -48,6 +54,10 @@ export function DashboardView() {
   useRiskSummary();
   usePerformance('30d');
   useOpenOrders();
+  const { data: walletsData } = useWallets();
+  usePortfolioValuation();
+
+  const [isTransferModalOpen, setIsTransferModalOpen] = React.useState(false);
 
   const totalUnrealizedPnl = calculateTotalUnrealizedPnl(
     positions,
@@ -112,13 +122,13 @@ export function DashboardView() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard
           label="Account Equity"
-          value={`$${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          value={formatCurrency(liveEquity)}
           change={totalUnrealizedPnl}
           icon={<DollarSign className="w-4 h-4 text-blue-400" />}
         />
         <MetricCard
           label="Unrealized PnL"
-          value={`${totalUnrealizedPnl >= 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(2)}`}
+          value={`${totalUnrealizedPnl >= 0 ? '+' : ''}${formatCurrency(totalUnrealizedPnl)}`}
           icon={<TrendingUp className="w-4 h-4 text-emerald-400" />}
         />
         <MetricCard
@@ -145,6 +155,121 @@ export function DashboardView() {
           subtitle={latestCycle?.action || 'No cycles yet'}
           icon={<Zap className="w-4 h-4 text-blue-400" />}
         />
+      </div>
+
+      {/* Segregated Product Wallets (CoinDCX multi-wallet model) */}
+      <div className="bg-[#0f1623] border border-[#1b2537] rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1b2537] pb-2.5">
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-blue-400" />
+            <h3 className="font-bold text-white uppercase text-xs">
+              Multi-Product Segregated Wallets
+            </h3>
+            <span className="text-[10px] text-gray-500">
+              (Settlement: USDT / Display: {displayCurrency})
+            </span>
+          </div>
+
+          <button
+            onClick={() => setIsTransferModalOpen(true)}
+            className="flex items-center gap-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            <span>Transfer Funds</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Futures */}
+          <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-gray-400">
+              <span className="font-bold text-white flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                Futures Wallet
+              </span>
+              <span className="text-[10px] font-bold text-blue-400">ACTIVE</span>
+            </div>
+            <div className="text-lg font-black text-white font-mono">
+              {formatCurrency(liveEquity)}
+            </div>
+            <div className="flex justify-between text-[10px] text-gray-400 pt-1 border-t border-[#1b2537]">
+              <span>Free: {formatCurrency(account?.freeMargin ?? account?.availableBalance ?? rawBalance)}</span>
+              <span>Margin: {formatCurrency(account?.marginUsed ?? account?.initialMargin ?? 0)}</span>
+            </div>
+          </div>
+
+          {/* Spot */}
+          {(() => {
+            const spotWallet = walletsData?.wallets?.find((w) => w.productType === 'SPOT');
+            const spotVal = (spotWallet?.free ?? 0) + (spotWallet?.locked ?? 0);
+            return (
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-gray-400">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    Spot Wallet
+                  </span>
+                  <span className="text-[10px] text-gray-500">SPOT</span>
+                </div>
+                <div className="text-lg font-black text-white font-mono">
+                  {formatCurrency(spotVal)}
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-400 pt-1 border-t border-[#1b2537]">
+                  <span>Free: {formatCurrency(spotWallet?.free ?? 0)}</span>
+                  <span>Locked: {formatCurrency(spotWallet?.locked ?? 0)}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Options */}
+          {(() => {
+            const optWallet = walletsData?.wallets?.find((w) => w.productType === 'OPTIONS');
+            const optVal = (optWallet?.free ?? 0) + (optWallet?.locked ?? 0);
+            return (
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-gray-400">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-400" />
+                    Options Wallet
+                  </span>
+                  <span className="text-[10px] text-gray-500">DERIVATIVES</span>
+                </div>
+                <div className="text-lg font-black text-white font-mono">
+                  {formatCurrency(optVal)}
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-400 pt-1 border-t border-[#1b2537]">
+                  <span>Free: {formatCurrency(optWallet?.free ?? 0)}</span>
+                  <span>Locked: {formatCurrency(optWallet?.locked ?? 0)}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Earn */}
+          {(() => {
+            const earnWallet = walletsData?.wallets?.find((w) => w.productType === 'EARN');
+            const earnVal = (earnWallet?.free ?? 0) + (earnWallet?.locked ?? 0);
+            return (
+              <div className="bg-[#080c14] border border-[#1b2537] rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-gray-400">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    Earn Wallet
+                  </span>
+                  <span className="text-[10px] text-gray-500">YIELD</span>
+                </div>
+                <div className="text-lg font-black text-white font-mono">
+                  {formatCurrency(earnVal)}
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-400 pt-1 border-t border-[#1b2537]">
+                  <span>Free: {formatCurrency(earnWallet?.free ?? 0)}</span>
+                  <span>Yield: {formatCurrency(earnWallet?.locked ?? 0)}</span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Main Row: Market Context Chart & AI Brain Decision Matrix */}
@@ -472,6 +597,11 @@ export function DashboardView() {
           })()}
         </div>
       </div>
+
+      <TransferModal
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+      />
     </div>
   );
 }
