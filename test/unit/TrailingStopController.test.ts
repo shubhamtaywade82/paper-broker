@@ -51,9 +51,36 @@ function makeStopOrder(overrides: Partial<Order> = {}): Order {
   };
 }
 
+function makeTpOrder(overrides: Partial<Order> = {}): Order {
+  return {
+    id: 'tp-1',
+    clientOrderId: 'c-tp-1',
+    accountId: 'paper-main',
+    symbol: 'SOLUSDT',
+    side: 'SELL',
+    type: 'TAKE_PROFIT_MARKET',
+    timeInForce: 'GTC',
+    status: 'NEW',
+    positionSide: 'BOTH',
+    quantity: 10,
+    filledQty: 0,
+    avgFillPrice: 0,
+    leverage: 5,
+    reduceOnly: true,
+    postOnly: false,
+    closePosition: false,
+    stopPrice: 120,
+    submittedAtUtc: new Date(T0).toISOString(),
+    updatedAtUtc: new Date(T0).toISOString(),
+    ...overrides,
+  };
+}
+
 function makeBroker(overrides: Partial<ExecutionBroker> = {}) {
-  const submitOrder = vi.fn(async (cmd: { stopPrice?: number }) =>
-    makeStopOrder({ id: 'stop-2', stopPrice: cmd.stopPrice, status: 'NEW' })
+  const submitOrder = vi.fn(async (cmd: { type?: string; stopPrice?: number }) =>
+    cmd.type === 'TAKE_PROFIT_MARKET'
+      ? makeTpOrder({ id: 'tp-2', stopPrice: cmd.stopPrice, status: 'NEW' })
+      : makeStopOrder({ id: 'stop-2', stopPrice: cmd.stopPrice, status: 'NEW' })
   );
   const cancelOrder = vi.fn(async () => undefined);
   const broker = {
@@ -72,7 +99,11 @@ function makeBroker(overrides: Partial<ExecutionBroker> = {}) {
   return broker;
 }
 
-function makeController(broker: ExecutionBroker, minUpdateIntervalMs = 0) {
+function makeController(
+  broker: ExecutionBroker,
+  minUpdateIntervalMs = 0,
+  onTpMoved?: (update: { symbol: string; previousTp: number; newTp: number }) => void
+) {
   return new TrailingStopController({
     broker,
     manager: new TrailingStopManager({
@@ -81,8 +112,11 @@ function makeController(broker: ExecutionBroker, minUpdateIntervalMs = 0) {
       breakevenTriggerPct: 0.01,
       enableBreakeven: false,
       enableTrailing: true,
+      tpExtensionPct: 0.03,
+      enableTpExtension: true,
     }),
     minUpdateIntervalMs,
+    onTpMoved,
   });
 }
 
@@ -184,5 +218,76 @@ describe('TrailingStopController', () => {
     const controller = makeController(broker);
 
     await expect(controller.onPrice('SOLUSDT', 110, T0)).resolves.toBeNull();
+  });
+
+  it('extends the resting take-profit when the extension rule fires', async () => {
+    const onTpMoved = vi.fn();
+    const broker = makeBroker({
+      getOpenOrders: vi.fn(async () => [makeTpOrder({ stopPrice: 105 })]),
+    } as Partial<ExecutionBroker>);
+    const controller = makeController(broker, 0, onTpMoved);
+
+    await controller.onPrice('SOLUSDT', 110, T0);
+
+    expect(onTpMoved).toHaveBeenCalledTimes(1);
+    const moved = onTpMoved.mock.calls[0][0];
+    expect(moved.previousTp).toBe(105);
+    expect(moved.newTp).toBeCloseTo(113.3, 6);
+    expect(broker.cancelOrder).toHaveBeenCalledWith('tp-1', 'TRAILING_TP_REPLACED');
+  });
+
+  it('does not touch the take-profit before the extension threshold is reached', async () => {
+    const onTpMoved = vi.fn();
+    const broker = makeBroker({
+      getOpenOrders: vi.fn(async () => [makeTpOrder({ stopPrice: 105 })]),
+    } as Partial<ExecutionBroker>);
+    const controller = makeController(broker, 0, onTpMoved);
+
+    await controller.onPrice('SOLUSDT', 100.5, T0);
+
+    expect(onTpMoved).not.toHaveBeenCalled();
+    expect(broker.submitOrder).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for take-profit when there is no resting TP order', async () => {
+    const onTpMoved = vi.fn();
+    const broker = makeBroker(); // default: only a STOP_MARKET order resting
+    const controller = makeController(broker, 0, onTpMoved);
+
+    await controller.onPrice('SOLUSDT', 110, T0);
+
+    expect(onTpMoved).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original take-profit when the replacement is rejected', async () => {
+    const onTpMoved = vi.fn();
+    const broker = makeBroker({
+      getOpenOrders: vi.fn(async () => [makeTpOrder({ stopPrice: 105 })]),
+      submitOrder: vi.fn(async () =>
+        makeTpOrder({ id: 'tp-2', status: 'REJECTED', rejectReason: 'INSUFFICIENT_MARGIN' })
+      ),
+    } as Partial<ExecutionBroker>);
+    const controller = makeController(broker, 0, onTpMoved);
+
+    await controller.onPrice('SOLUSDT', 110, T0);
+
+    expect(onTpMoved).not.toHaveBeenCalled();
+    expect(broker.cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it('moves both the stop and the take-profit in the same tick when both rules fire', async () => {
+    const onTpMoved = vi.fn();
+    const broker = makeBroker({
+      getOpenOrders: vi.fn(async () => [makeStopOrder(), makeTpOrder({ stopPrice: 105 })]),
+    } as Partial<ExecutionBroker>);
+    const controller = makeController(broker, 0, onTpMoved);
+
+    const slMoved = await controller.onPrice('SOLUSDT', 110, T0);
+
+    expect(slMoved?.reason).toBe('TRAILING');
+    expect(onTpMoved).toHaveBeenCalledTimes(1);
+    expect(broker.submitOrder).toHaveBeenCalledTimes(2);
+    expect(broker.cancelOrder).toHaveBeenCalledWith('stop-1', 'TRAILING_STOP_REPLACED');
+    expect(broker.cancelOrder).toHaveBeenCalledWith('tp-1', 'TRAILING_TP_REPLACED');
   });
 });

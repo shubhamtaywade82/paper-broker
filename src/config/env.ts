@@ -227,6 +227,7 @@ const EnvSchema = z.object({
   TRAILING_ACTIVATION_PCT: z.coerce.number().min(0).max(1).default(0.02),
   TRAILING_DISTANCE_PCT: z.coerce.number().min(0).max(1).default(0.015),
   TRAILING_BREAKEVEN_PCT: z.coerce.number().min(0).max(1).default(0.01),
+  TRAILING_TP_EXTENSION_PCT: z.coerce.number().min(0).max(1).default(0.03),
 
   // Per-strategy performance feedback (src/strategy/StrategyPerformanceTracker).
   STRATEGY_FEEDBACK_ENABLED: z

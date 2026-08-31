@@ -32,6 +32,35 @@ export interface TrailingStopConfig {
   
   /** Enable/disable trailing feature */
   enableTrailing: boolean;
+
+  /** Extend the take-profit target past this fraction beyond the highest favorable price (e.g., 0.03 = 3%) */
+  tpExtensionPct: number;
+
+  /** Enable/disable take-profit extension */
+  enableTpExtension: boolean;
+}
+
+export interface TrailingTakeProfitResult {
+  /** Whether the take-profit target was updated */
+  tpUpdated: boolean;
+
+  /** Previous take-profit price */
+  previousTp: number;
+
+  /** New take-profit price */
+  newTp: number;
+
+  /** Reason for update */
+  reason: 'EXTENDED' | 'NO_CHANGE';
+
+  /** Current unrealized PnL percentage */
+  currentUnrealizedPnlPct: number;
+
+  /**
+   * Most favorable market price seen while the position was open:
+   * the highest price for a LONG, the lowest price for a SHORT.
+   */
+  highestFavorablePrice: number;
 }
 
 export interface TrailingStopResult {
@@ -63,6 +92,8 @@ export const DEFAULT_TRAILING_STOP_CONFIG: TrailingStopConfig = {
   breakevenTriggerPct: 0.01,       // BE at 1% profit
   enableBreakeven: true,
   enableTrailing: true,
+  tpExtensionPct: 0.03,            // Extend TP 3% past each new favorable extreme
+  enableTpExtension: true,
 };
 
 interface PositionTracker {
@@ -86,25 +117,9 @@ export class TrailingStopManager {
    * Call this on every price tick for open positions
    */
   updateStopLoss(position: PortfolioPosition, currentPrice: number, timestamp?: number): TrailingStopResult {
-    const positionKey = `${position.symbol}_${position.side}`;
     const ts = timestamp ?? Date.now();
-    
-    // Get or create tracker for this position
-    let tracker = this.positionTrackers.get(positionKey);
-    if (!tracker) {
-      tracker = {
-        highestFavorablePrice: position.entryPrice,
-        breakevenApplied: false,
-        lastUpdateTimestamp: ts,
-      };
-      this.positionTrackers.set(positionKey, tracker);
-    }
-
-    // Track the most favorable price reached: the high for a LONG, the low for a SHORT.
     const isLong = position.side === 'LONG';
-    tracker.highestFavorablePrice = isLong
-      ? Math.max(tracker.highestFavorablePrice, currentPrice)
-      : Math.min(tracker.highestFavorablePrice, currentPrice);
+    const tracker = this.trackFavorablePrice(position, currentPrice, isLong, ts);
 
     // Calculate current unrealized PnL percentage
     const unrealizedPnlPct = isLong
@@ -129,6 +144,40 @@ export class TrailingStopManager {
       stopUpdated: false,
       previousStop: position.stopLossPrice,
       newStop: position.stopLossPrice,
+      reason: 'NO_CHANGE',
+      currentUnrealizedPnlPct: unrealizedPnlPct,
+      highestFavorablePrice: tracker.highestFavorablePrice,
+    };
+  }
+
+  /**
+   * Extend a take-profit target past the highest favorable price once the
+   * position is profitable enough to trail. Only ever moves the target
+   * farther from entry — never retracts it toward the current price.
+   * Call this on every price tick for open positions.
+   */
+  updateTakeProfit(
+    position: PortfolioPosition,
+    currentTpPrice: number,
+    currentPrice: number,
+    timestamp?: number
+  ): TrailingTakeProfitResult {
+    const ts = timestamp ?? Date.now();
+    const isLong = position.side === 'LONG';
+    const tracker = this.trackFavorablePrice(position, currentPrice, isLong, ts);
+
+    const unrealizedPnlPct = isLong
+      ? (currentPrice - position.entryPrice) / position.entryPrice
+      : (position.entryPrice - currentPrice) / position.entryPrice;
+
+    if (this.config.enableTpExtension && unrealizedPnlPct >= this.config.activationThresholdPct) {
+      return this.applyTpExtension(position, tracker, currentTpPrice, isLong, unrealizedPnlPct);
+    }
+
+    return {
+      tpUpdated: false,
+      previousTp: currentTpPrice,
+      newTp: currentTpPrice,
       reason: 'NO_CHANGE',
       currentUnrealizedPnlPct: unrealizedPnlPct,
       highestFavorablePrice: tracker.highestFavorablePrice,
@@ -274,6 +323,83 @@ export class TrailingStopManager {
       currentUnrealizedPnlPct: isLong
         ? (currentPrice - position.entryPrice) / position.entryPrice
         : (position.entryPrice - currentPrice) / position.entryPrice,
+      highestFavorablePrice: tracker.highestFavorablePrice,
+    };
+  }
+
+  /**
+   * Get or create a position's tracker and update its most favorable price
+   * seen: the high for a LONG, the low for a SHORT.
+   */
+  private trackFavorablePrice(
+    position: PortfolioPosition,
+    currentPrice: number,
+    isLong: boolean,
+    timestamp: number
+  ): PositionTracker {
+    const positionKey = `${position.symbol}_${position.side}`;
+    let tracker = this.positionTrackers.get(positionKey);
+    if (!tracker) {
+      tracker = {
+        highestFavorablePrice: position.entryPrice,
+        breakevenApplied: false,
+        lastUpdateTimestamp: timestamp,
+      };
+      this.positionTrackers.set(positionKey, tracker);
+    }
+
+    tracker.highestFavorablePrice = isLong
+      ? Math.max(tracker.highestFavorablePrice, currentPrice)
+      : Math.min(tracker.highestFavorablePrice, currentPrice);
+
+    return tracker;
+  }
+
+  /**
+   * Private: Extend the take-profit target past the highest favorable price
+   */
+  private applyTpExtension(
+    position: PortfolioPosition,
+    tracker: PositionTracker,
+    currentTpPrice: number,
+    isLong: boolean,
+    unrealizedPnlPct: number
+  ): TrailingTakeProfitResult {
+    const extendedTp = isLong
+      ? tracker.highestFavorablePrice * (1 + this.config.tpExtensionPct)
+      : tracker.highestFavorablePrice * (1 - this.config.tpExtensionPct);
+
+    // Only move the target if it captures more of the move — never retract it.
+    const shouldUpdate = isLong ? extendedTp > currentTpPrice : extendedTp < currentTpPrice;
+
+    if (!shouldUpdate) {
+      return {
+        tpUpdated: false,
+        previousTp: currentTpPrice,
+        newTp: currentTpPrice,
+        reason: 'NO_CHANGE',
+        currentUnrealizedPnlPct: unrealizedPnlPct,
+        highestFavorablePrice: tracker.highestFavorablePrice,
+      };
+    }
+
+    logger.info(
+      {
+        symbol: position.symbol,
+        side: position.side,
+        oldTp: currentTpPrice,
+        newTp: Number(extendedTp.toFixed(2)),
+        highestFavorablePrice: Number(tracker.highestFavorablePrice.toFixed(2)),
+      },
+      '[TrailingStopManager] Take-profit extended'
+    );
+
+    return {
+      tpUpdated: true,
+      previousTp: currentTpPrice,
+      newTp: extendedTp,
+      reason: 'EXTENDED',
+      currentUnrealizedPnlPct: unrealizedPnlPct,
       highestFavorablePrice: tracker.highestFavorablePrice,
     };
   }

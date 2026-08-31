@@ -393,6 +393,8 @@ export async function startEngine(): Promise<EngineHandle> {
           breakevenTriggerPct: env.TRAILING_BREAKEVEN_PCT,
           enableBreakeven: true,
           enableTrailing: true,
+          tpExtensionPct: env.TRAILING_TP_EXTENSION_PCT,
+          enableTpExtension: true,
         }),
         onStopMoved: (moved) => {
           wsGateway.broadcast('trailing.stop', moved);

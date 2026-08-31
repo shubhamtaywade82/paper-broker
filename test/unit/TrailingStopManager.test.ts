@@ -170,4 +170,63 @@ describe('TrailingStopManager', () => {
     mgr.onPositionClosed('SOLUSDT', 'LONG');
     expect(mgr.getTrackerInfo('SOLUSDT', 'LONG')).toBeUndefined();
   });
+
+  describe('updateTakeProfit', () => {
+    it('does not extend take profit before the activation threshold is reached', () => {
+      const mgr = new TrailingStopManager(makeConfig());
+
+      const res = mgr.updateTakeProfit(longPosition(), 120, 101, T0);
+
+      expect(res.tpUpdated).toBe(false);
+      expect(res.reason).toBe('NO_CHANGE');
+      expect(res.newTp).toBe(120);
+    });
+
+    it('extends a LONG take profit past the highest price seen once activation threshold is reached', () => {
+      const mgr = new TrailingStopManager(makeConfig());
+
+      const res = mgr.updateTakeProfit(longPosition(), 105, 110, T0);
+
+      expect(res.tpUpdated).toBe(true);
+      expect(res.reason).toBe('EXTENDED');
+      expect(res.highestFavorablePrice).toBe(110);
+      // 110 * (1 + 0.03)
+      expect(res.newTp).toBeCloseTo(113.3, 6);
+    });
+
+    it('extends a SHORT take profit past the lowest price seen once activation threshold is reached', () => {
+      const mgr = new TrailingStopManager(makeConfig());
+
+      const res = mgr.updateTakeProfit(shortPosition(), 95, 90, T0);
+
+      expect(res.tpUpdated).toBe(true);
+      expect(res.reason).toBe('EXTENDED');
+      expect(res.highestFavorablePrice).toBe(90);
+      // 90 * (1 - 0.03)
+      expect(res.newTp).toBeCloseTo(87.3, 6);
+    });
+
+    it('never retracts an extended take profit on a pullback', () => {
+      const mgr = new TrailingStopManager(makeConfig());
+      const position = longPosition();
+
+      const extended = mgr.updateTakeProfit(position, 105, 110, T0);
+      expect(extended.newTp).toBeCloseTo(113.3, 6);
+
+      const pullback = mgr.updateTakeProfit(position, extended.newTp, 108, T0 + 1000);
+      expect(pullback.tpUpdated).toBe(false);
+      expect(pullback.reason).toBe('NO_CHANGE');
+      expect(pullback.newTp).toBeCloseTo(113.3, 6);
+    });
+
+    it('leaves take profit alone when extension is disabled', () => {
+      const mgr = new TrailingStopManager(makeConfig({ enableTpExtension: false }));
+
+      const res = mgr.updateTakeProfit(longPosition(), 105, 110, T0);
+
+      expect(res.tpUpdated).toBe(false);
+      expect(res.reason).toBe('NO_CHANGE');
+      expect(res.newTp).toBe(105);
+    });
+  });
 });
