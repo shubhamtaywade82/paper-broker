@@ -42,10 +42,13 @@ export function TradingView() {
     tickers,
   } = useStore();
 
+  const [filterBySymbol, setFilterBySymbol] = useState(false);
+  const activeSymbolFilter = filterBySymbol ? selectedSymbol : undefined;
+
   useDashboard();
   useOpenOrders();
-  const { data: fills = [] } = useFills();
-  const { data: journal = [] } = useJournal();
+  const { data: fills = [] } = useFills(activeSymbolFilter);
+  const { data: journal = [] } = useJournal(activeSymbolFilter);
 
   const cancelOrder = useCancelOrder();
   const cancelAllOrders = useCancelAllOrders();
@@ -75,6 +78,18 @@ export function TradingView() {
               {tab} {tab === 'positions' && `(${positions.length})`} {tab === 'orders' && `(${openOrders.length})`} {tab === 'fills' && `(${fills.length})`} {tab === 'journal' && `(${journal.length})`}
             </button>
           ))}
+
+          <button
+            onClick={() => setFilterBySymbol((prev) => !prev)}
+            className={`px-3 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer border ${
+              filterBySymbol
+                ? 'bg-blue-600/20 text-blue-400 border-blue-500/40'
+                : 'bg-[#080c14] text-gray-400 hover:text-white border-[#1b2537]'
+            }`}
+            title="Toggle between filtering by selected symbol or showing all account symbols"
+          >
+            {filterBySymbol ? `Filtered: ${selectedSymbol}` : 'All Symbols'}
+          </button>
         </div>
 
         {/* Action Controls */}
