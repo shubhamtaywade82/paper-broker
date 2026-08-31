@@ -654,6 +654,12 @@ export class ApiServer {
         };
       }
       const snap = agent.getSnapshot();
+      const exitEvents = this.events?.getEvents({ type: 'AUTONOMOUS_EXIT_SIGNAL', limit: 20 }) ?? [];
+      const learningEvents = this.events?.getEvents({ type: 'AUTONOMOUS_LEARNING_PARAMETER_ADJUSTED', limit: 20 }) ?? [];
+      const regimeEvents = this.events?.getEvents({ type: 'AUTONOMOUS_REGIME_CHANGE', limit: 20 }) ?? [];
+      const signalEvents = this.events?.getEvents({ type: 'AUTONOMOUS_AGENT_SIGNAL', limit: 20 }) ?? [];
+      const rejectedEvents = this.events?.getEvents({ type: 'AUTONOMOUS_AGENT_REJECTED', limit: 20 }) ?? [];
+
       return {
         enabled: true,
         running: snap.running,
@@ -664,6 +670,12 @@ export class ApiServer {
         breaker: snap.breaker,
         health: snap.health,
         perSymbol: snap.perSymbol,
+        forming: snap.formingSetups,
+        exits: exitEvents.map((e) => e.payload),
+        learning: learningEvents.map((e) => e.payload),
+        regimes: regimeEvents.map((e) => e.payload),
+        signals: signalEvents.map((e) => e.payload),
+        rejections: rejectedEvents.map((e) => e.payload),
       };
     });
 

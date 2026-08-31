@@ -914,8 +914,29 @@ export class AutonomousTradingAgent {
     health: ReturnType<HealthMonitor['getState']>;
     running: boolean;
     perSymbol: Array<PerSymbolState>;
+    formingSetups: Array<{
+      cycleId: string;
+      symbol: string;
+      setupId?: string;
+      setupType: string;
+      state: string;
+      direction?: string;
+      confluenceScore?: number;
+    }>;
   } {
     const rolling = this.deps.performanceTracker.getRollingStats();
+    const formingSetups = Array.from(this.perSymbol.values())
+      .filter((s) => s.trackingSetup != null)
+      .map((s) => ({
+        cycleId: this.lastCycleSummary?.cycleId ?? 'snapshot',
+        symbol: s.symbol,
+        setupId: s.trackingSetup!.id,
+        setupType: s.trackingSetup!.setupType,
+        state: s.trackingSetup!.state,
+        direction: s.trackingSetup!.direction,
+        confluenceScore: s.trackingSetup!.confluence.totalScore,
+      }));
+
     return {
       latestCycle: this.lastCycleSummary,
       runtimeRiskMultiplier: this.runtimeRiskMultiplier,
@@ -926,6 +947,7 @@ export class AutonomousTradingAgent {
       health: this.deps.healthMonitor.getState(),
       running: this.running,
       perSymbol: Array.from(this.perSymbol.values()),
+      formingSetups,
     };
   }
 

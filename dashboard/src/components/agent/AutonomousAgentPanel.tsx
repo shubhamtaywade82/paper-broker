@@ -51,6 +51,12 @@ interface SnapshotResponse {
     setupType?: string | null;
     confluenceScore?: number | null;
   }>;
+  forming?: import('../../lib/wsContracts.js').AutonomousForming[];
+  exits?: import('../../lib/wsContracts.js').AutonomousExit[];
+  learning?: import('../../lib/wsContracts.js').AutonomousLearning[];
+  regimes?: import('../../lib/wsContracts.js').AutonomousRegime[];
+  signals?: import('../../lib/wsContracts.js').AutonomousSignal[];
+  rejections?: import('../../lib/wsContracts.js').AutonomousRejected[];
   reason?: string;
 }
 
@@ -256,16 +262,12 @@ export function AutonomousAgentPanel() {
         latestCycle: snap.latestCycle ?? null,
         breaker: snap.breaker ?? null,
         health: snap.health ?? null,
-        // REST snapshot doesn't include forming/signals/etc. history —
-        // those only arrive via WS. We intentionally leave the existing
-        // store arrays untouched so we don't wipe recent activity if the
-        // snapshot is re-fetched.
-        forming: [],
-        signals: [],
-        rejections: [],
-        exits: [],
-        learning: [],
-        regimes: [],
+        forming: snap.forming,
+        signals: snap.signals,
+        rejections: snap.rejections,
+        exits: snap.exits,
+        learning: snap.learning,
+        regimes: snap.regimes,
       });
     }
   }, [snap, hydrateFromSnapshot]);
@@ -521,7 +523,7 @@ export function AutonomousAgentPanel() {
                   <span className="text-zinc-500">{r.from}</span>
                   <span className="text-zinc-600">→</span>
                   <RegimeBadge regime={r.to} />
-                  <span className="text-zinc-600 ml-auto">{Math.round(r.confidence * 100)}%</span>
+                  <span className="text-zinc-600 ml-auto">{Math.round(r.confidence > 1 ? r.confidence : r.confidence * 100)}%</span>
                 </li>
               ))}
             </ul>

@@ -940,14 +940,20 @@ export async function startEngine(): Promise<EngineHandle> {
         logger.info({ sym, action: signal.action, conf: signal.confidence }, 'Adaptive Supertrend signal generated');
         const now = Date.now();
         const cycleId = `ast_${sym}_${now}`;
-        wsGateway.broadcast('agent.step', {
+        const stepPayload = {
           cycleId,
           symbol: sym,
           stage: 'trader_decision',
           status: 'completed',
           detail: signal.reasoning,
           timestamp: now,
+        };
+        events.appendSystemEvent({
+          eventType: 'AGENT_STEP',
+          payload: stepPayload,
+          createdAtUtc: new Date(now).toISOString(),
         });
+        wsGateway.broadcast('agent.step', stepPayload);
         wsGateway.broadcast('agent.cycle', {
           id: cycleId,
           symbol: sym,
