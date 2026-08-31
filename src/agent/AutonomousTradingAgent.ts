@@ -185,6 +185,11 @@ export interface AutonomousTradingAgentDeps {
 export class AutonomousTradingAgent {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  /** Guard against overlapping runCycle() executions when a cycle takes
+   * longer than the configured interval. Without this, setInterval fires
+   * a new tick while the previous cycle is still awaiting LLM calls,
+   * potentially causing duplicate signals or inconsistent state reads. */
+  private cycleInProgress = false;
   private perSymbol = new Map<string, PerSymbolState>();
   private readonly config: AutonomousTradingAgentConfig;
   private readonly deps: AutonomousTradingAgentDeps;
@@ -250,14 +255,29 @@ export class AutonomousTradingAgent {
     );
     // Run one cycle immediately so the dashboard doesn't wait 30s for first
     // output; subsequent cycles run on the timer.
-    void this.runCycle().catch((err) => {
-      logger.error({ err }, 'Autonomous agent initial cycle failed');
-    });
+    void this.guardedCycle();
     this.timer = setInterval(() => {
-      void this.runCycle().catch((err) => {
-        logger.error({ err }, 'Autonomous agent cycle failed');
-      });
+      void this.guardedCycle();
     }, this.config.cycleMs);
+  }
+
+  /** Wrap runCycle with an overlap guard. If a previous cycle is still
+   * running (e.g. awaiting a slow LLM call), the new tick is skipped
+   * rather than running concurrently. */
+  private async guardedCycle(): Promise<void> {
+    if (this.cycleInProgress) {
+      logger.warn('Autonomous agent cycle skipped — previous cycle still in progress');
+      metrics.inc('autonomous_cycle_skipped_overlap_total');
+      return;
+    }
+    this.cycleInProgress = true;
+    try {
+      await this.runCycle();
+    } catch (err) {
+      logger.error({ err }, 'Autonomous agent cycle failed');
+    } finally {
+      this.cycleInProgress = false;
+    }
   }
 
   /** Stop the polling loop. Idempotent. */

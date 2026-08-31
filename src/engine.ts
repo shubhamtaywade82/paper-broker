@@ -50,7 +50,6 @@ import {
   createOnChainWhaleTool,
   createDocsLookupTool,
 } from './ai/tools/index.js';
-import type { ToolContext } from './ai/tools/types.js';
 import { AgentMemoryStore } from './ai/memory/AgentMemoryStore.js';
 import { SelfImprovementLoop } from './ai/SelfImprovementLoop.js';
 import { StrategyParamLearner } from './strategy/learning/StrategyParamLearner.js';
@@ -72,6 +71,13 @@ import { Scheduler } from './scheduler/jobs.js';
 import { TelegramNotifier } from './notifications/TelegramNotifier.js';
 import { logger } from './telemetry/logger.js';
 import { metrics } from './telemetry/metrics.js';
+import {
+  createMarketStateGetter,
+  createCandleGetter,
+  createAccountStateGetter,
+  createPositionsGetter,
+  buildToolContext,
+} from './engine/ToolContextFactory.js';
 
 export interface EngineHandle {
   stop(): Promise<void>;
@@ -491,65 +497,15 @@ export async function startEngine(): Promise<EngineHandle> {
   // below). When OFF, the existing pipeline behaviour is unchanged.
   if (env.AGENT_TOOLS_ENABLED) {
     toolRegistry = new ToolRegistry();
-    toolRegistry.register(
-      createMarketDataTool({
-        get: (sym) => {
-          const s = marketState.getState(sym);
-          if (!s) return undefined;
-          return {
-            symbol: s.symbol,
-            bid: s.bid ?? 0,
-            ask: s.ask ?? 0,
-            last: s.last ?? 0,
-            mark: s.mark ?? 0,
-            spread: s.spread ?? 0,
-            fundingRate: s.fundingRate,
-            openInterest: s.openInterest,
-            ts: new Date(s.localTsUtc).getTime(),
-            stale: s.spread === undefined,
-          };
-        },
-        candles: (sym, tf, count) =>
-          klines.getCandles(sym, tf as KlineInterval, count).map((c) => ({
-            openTime: c.openTime,
-            closeTime: c.closeTime ?? c.openTime,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
-            isClosed: c.isClosed ?? false,
-          })),
-      })
-    );
-    toolRegistry.register(
-      createPositionInfoTool({
-        getAccount: () => {
-          const a = broker.getAccount();
-          return {
-            equity: a.equity,
-            walletBalance: a.walletBalance,
-            availableBalance: a.availableBalance,
-            totalUnrealizedPnl: a.unrealizedPnl,
-            totalRealizedPnl: a.totalRealizedPnl,
-            totalFees: a.totalFees,
-            totalFunding: a.totalFunding,
-            liquidations: a.liquidations,
-          };
-        },
-        getPositions: () =>
-          broker.getPositions().map((p) => ({
-            symbol: p.symbol,
-            side: p.positionSide === 'LONG' ? 'LONG' : p.positionSide === 'SHORT' ? 'SHORT' : 'FLAT',
-            quantity: p.qty,
-            entryPrice: p.entryPrice,
-            unrealizedPnl: p.unrealizedPnl,
-            realizedPnl: p.realizedPnl,
-            leverage: p.leverage,
-            openedAt: p.openedAtUtc ? new Date(p.openedAtUtc).getTime() : 0,
-          })),
-      })
-    );
+    // Shared projection helpers (extracted to src/engine/ToolContextFactory
+    // to eliminate duplication with the buildToolContext callback below).
+    const getMarketState = createMarketStateGetter(marketState);
+    const getCandles = createCandleGetter(klines);
+    const getAccountState = createAccountStateGetter(broker);
+    const getPositions = createPositionsGetter(broker);
+
+    toolRegistry.register(createMarketDataTool({ get: getMarketState, candles: getCandles }));
+    toolRegistry.register(createPositionInfoTool({ getAccount: getAccountState, getPositions }));
     toolRegistry.register(
       createWebSearchTool({
         provider: env.AGENT_WEB_SEARCH_PROVIDER,
@@ -644,71 +600,8 @@ export async function startEngine(): Promise<EngineHandle> {
     toolsMaxIterations: env.AGENT_TOOLS_MAX_ITERATIONS,
     toolsTimeoutMs: env.AGENT_TOOLS_TIMEOUT_MS,
     buildToolContext: toolRegistry
-      ? (symbol, cycleId, deadlineMs): ToolContext => ({
-          symbol,
-          cycleId,
-          deadlineMs,
-          marketState: {
-            get: (sym) => {
-              const s = marketState.getState(sym);
-              if (!s) return undefined;
-              return {
-                symbol: s.symbol,
-                bid: s.bid ?? 0,
-                ask: s.ask ?? 0,
-                last: s.last ?? 0,
-                mark: s.mark ?? 0,
-                spread: s.spread ?? 0,
-                fundingRate: s.fundingRate,
-                openInterest: s.openInterest,
-                ts: new Date(s.localTsUtc).getTime(),
-                stale: s.spread === undefined,
-              };
-            },
-            candles: (sym, tf, count) =>
-              klines.getCandles(sym, tf as KlineInterval, count).map((c) => ({
-                openTime: c.openTime,
-                closeTime: c.closeTime ?? c.openTime,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: c.volume,
-                isClosed: c.isClosed ?? false,
-              })),
-          },
-          accountState: {
-            get: () => {
-              const a = broker.getAccount();
-              return {
-                equity: a.equity,
-                walletBalance: a.walletBalance,
-                availableBalance: a.availableBalance,
-                totalUnrealizedPnl: a.unrealizedPnl,
-                totalRealizedPnl: a.totalRealizedPnl,
-                totalFees: a.totalFees,
-                totalFunding: a.totalFunding,
-                liquidations: a.liquidations,
-              };
-            },
-            positions: () =>
-              broker.getPositions().map((p) => ({
-                symbol: p.symbol,
-                side: p.positionSide === 'LONG' ? 'LONG' : p.positionSide === 'SHORT' ? 'SHORT' : 'FLAT',
-                quantity: p.qty,
-                entryPrice: p.entryPrice,
-                unrealizedPnl: p.unrealizedPnl,
-                realizedPnl: p.realizedPnl,
-                leverage: p.leverage,
-                openedAt: p.openedAtUtc ? new Date(p.openedAtUtc).getTime() : 0,
-              })),
-          },
-          logger: {
-            info: (msg, meta) => logger.info(meta ?? {}, `[tool] ${msg}`),
-            warn: (msg, meta) => logger.warn(meta ?? {}, `[tool] ${msg}`),
-            error: (msg, meta) => logger.error(meta ?? {}, `[tool] ${msg}`),
-          },
-        })
+      ? (symbol, cycleId, deadlineMs) =>
+          buildToolContext({ marketState, klines, broker }, symbol, cycleId, deadlineMs)
       : undefined,
   });
 

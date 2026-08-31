@@ -9,6 +9,8 @@ import { SetupStateMachine } from '../../src/market/setup/SetupStateMachine.js';
 import { ConfluenceScorer } from '../../src/market/setup/ConfluenceScorer.js';
 import type { Instrument } from '../../src/broker/types.js';
 import type { Candle } from '../../src/strategy/indicators.js';
+import type { StructureEvent } from '../../src/market/structure/types.js';
+import type { LiquiditySweep } from '../../src/market/smc/types.js';
 
 function makeMockInstrument(symbol = 'SOLUSDT'): Instrument {
   return {
@@ -227,6 +229,75 @@ describe('Phase 5 — SMC Confluence + Setup State Machine', () => {
 
       const setups = setupEngine.getSetupsAsOf('SOLUSDT', t0 + 3 * step);
       expect(Array.isArray(setups)).toBe(true);
+    });
+  });
+
+  describe('4. BOS vs CHoCH Confluence Differentiation', () => {
+    const baseCandidate = {
+      direction: 'LONG' as const,
+      timeframes: { regime4h: 'BULLISH' as const, bias1h: 'BULLISH' as const, structure15m: 'BULLISH' as const, trigger5m: 'BULLISH' as const },
+      sweepEvidence: {
+        id: 'sw1', symbol: 'SOLUSDT', timeframe: '15m', liquidityId: 'l1',
+        liquidityType: 'SSL', liquidityPrice: 90, sweepExtreme: 89,
+        sweepCandleTime: 1000, confirmationTime: 1100,
+        sourceCandleTimes: [1000], sourceSwingIds: ['s1'],
+      } satisfies LiquiditySweep,
+      retestEvidence: { retestCandleTime: 1200, retestPrice: 92 },
+      triggerEvidence: { triggerCandleTime: 1300, triggerType: '5M_CONFIRMATION' },
+    };
+
+    it('CHoCH structure evidence gets full structure weight (20)', () => {
+      const score = ConfluenceScorer.evaluateConfluence({
+        ...baseCandidate,
+        structureEvidence: {
+          id: 'evt-choch', symbol: 'SOLUSDT', timeframe: '15m',
+          scope: 'EXTERNAL', eventType: 'CHOCH_BULLISH',
+          price: 95, pivotTime: 1000, confirmationTime: 1100, sourceCandleTime: 1050,
+        } satisfies StructureEvent,
+      }, undefined, true);
+
+      // CHoCH should get full 20pts for structure
+      expect(score.structureScore).toBe(20);
+      expect(score.notes.some((n) => n.includes('CHoCH'))).toBe(true);
+    });
+
+    it('BOS structure evidence gets reduced weight (15 = 75% of 20)', () => {
+      const score = ConfluenceScorer.evaluateConfluence({
+        ...baseCandidate,
+        structureEvidence: {
+          id: 'evt-bos', symbol: 'SOLUSDT', timeframe: '15m',
+          scope: 'EXTERNAL', eventType: 'BOS_BULLISH',
+          price: 95, pivotTime: 1000, confirmationTime: 1100, sourceCandleTime: 1050,
+        } satisfies StructureEvent,
+      }, undefined, true);
+
+      // BOS should get 75% of structure weight = 15
+      expect(score.structureScore).toBe(15);
+      expect(score.notes.some((n) => n.includes('BOS'))).toBe(true);
+    });
+
+    it('total score is lower for BOS than CHoCH (all else equal)', () => {
+      const chochScore = ConfluenceScorer.evaluateConfluence({
+        ...baseCandidate,
+        structureEvidence: {
+          id: 'evt-choch', symbol: 'SOLUSDT', timeframe: '15m',
+          scope: 'EXTERNAL', eventType: 'CHOCH_BULLISH',
+          price: 95, pivotTime: 1000, confirmationTime: 1100, sourceCandleTime: 1050,
+        } satisfies StructureEvent,
+      }, undefined, true);
+
+      const bosScore = ConfluenceScorer.evaluateConfluence({
+        ...baseCandidate,
+        structureEvidence: {
+          id: 'evt-bos', symbol: 'SOLUSDT', timeframe: '15m',
+          scope: 'EXTERNAL', eventType: 'BOS_BULLISH',
+          price: 95, pivotTime: 1000, confirmationTime: 1100, sourceCandleTime: 1050,
+        } satisfies StructureEvent,
+      }, undefined, true);
+
+      expect(chochScore.totalScore).toBeGreaterThan(bosScore.totalScore);
+      // Difference should be exactly 5 (20 - 15)
+      expect(chochScore.totalScore - bosScore.totalScore).toBe(5);
     });
   });
 });

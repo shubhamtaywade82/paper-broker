@@ -69,7 +69,24 @@ export class ConfluenceScorer {
     if (!tf || !dir) return 0;
     const isBull = dir === 'LONG';
     const target = isBull ? 'BULLISH' : 'BEARISH';
+
+    // CHoCH (reversal) gets full structure weight — it signals a trend change.
+    // BOS (continuation) gets reduced weight — it's confirmation of existing
+    // trend direction, which carries less informational value.
+    const isChoch = cand.structureEvidence?.eventType?.includes('CHOCH');
+    const isBos = cand.structureEvidence?.eventType?.includes('BOS');
+
     if (tf.structure15m === target || cand.structureEvidence) {
+      if (isChoch) {
+        notes.push(`15m CHoCH structure reversal (+${weight})`);
+        return weight;
+      } else if (isBos) {
+        // BOS continuation: 75% of full structure weight — still
+        // meaningful but less informative than a trend-change CHoCH.
+        const pts = Math.round(weight * 0.75);
+        notes.push(`15m BOS continuation (+${pts})`);
+        return pts;
+      }
       notes.push(`15m structure confirmation (+${weight})`);
       return weight;
     }
