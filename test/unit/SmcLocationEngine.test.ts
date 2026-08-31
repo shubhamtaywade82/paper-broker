@@ -146,7 +146,7 @@ describe('Phase 4 — Deterministic SMC Location Engine', () => {
       const candles = [
         makeCandle(t0, 100, 101, 97, 98), // Origin candle
         makeCandle(t0 + step, 98, 107, 98, 106), // Displacement break
-        makeCandle(t0 + 2 * step, 106, 108, 100, 104), // Retest into origin zone (97..101) -> MITIGATED
+        makeCandle(t0 + 2 * step, 106, 108, 98, 104), // Retest into origin zone (97..101), low=98 <= midpoint=99 -> MITIGATED
       ];
 
       const events: StructureEvent[] = [

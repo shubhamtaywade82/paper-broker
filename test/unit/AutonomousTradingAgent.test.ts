@@ -1202,4 +1202,64 @@ describe('AutonomousTradingAgent (with brain modules wired)', () => {
     setupsSpy.mockRestore();
     completeSpy.mockRestore();
   });
+
+  it('guardedCycle skips when a previous cycle is still running', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-overlap-'));
+    const dbPath = path.join(tmpDir, 'test.sqlite3');
+    const eventLog = new EventLog(path.join(tmpDir, 'events.jsonl'), Database(dbPath));
+
+    let resolveFirstCycle: () => void;
+    const firstCyclePromise = new Promise<void>((r) => { resolveFirstCycle = r; });
+
+    const agent = new AutonomousTradingAgent(
+      { symbols: ['SOLUSDT'], cycleMs: 30_000 },
+      {
+        setupEngine: {
+          getSetupsAsOf: () => [],
+          getActiveSetups: () => [],
+          getReadySetups: () => [],
+        },
+        mtfEngine: { computeState: () => ({ isFullySynchronized: true, timeframes: {} }) },
+        regimeDetector: { detect: () => ({ regime: 'TRENDING_STRONG', confidence: 0.8, features: {} }) },
+        riskManager: { computeTradePlan: () => null },
+        modelManager: {
+          probeConfidence: () => Promise.resolve({ confidence: 0.9, model: 'test' }),
+          consultVeto: () => Promise.resolve({ veto: false, rationale: '' }),
+          isAvailable: () => true,
+        },
+        strategyEngine: { submitSignal: async () => ({}) } as any,
+        eventLog,
+        wsGateway: { broadcast: () => {} } as any,
+        performanceTracker: { refresh: () => {}, suggestRiskMultiplier: () => 1.0, getRollingStats: () => ({ winRate: 0.5, trades: 10 }) } as any,
+        circuitBreaker: { check: () => ({ tripped: false, reason: undefined, dampener: 1.0 }) } as any,
+        exitManager: { evaluateExits: async () => ({ exits: [] }) } as any,
+        healthMonitor: { check: async () => { await firstCyclePromise; return { isHealthy: true, issues: [] }; }, getState: () => ({ status: 'healthy', issues: [] }) } as any,
+      }
+    );
+
+    // Access the private guardedCycle via casting
+    const guarded = (agent as any).guardedCycle.bind(agent);
+
+    // Fire first cycle (will hang at performanceTracker.refresh)
+    const p1 = guarded();
+    // Give it a microtask tick to start
+    await new Promise((r) => setTimeout(r, 0));
+    expect((agent as any).cycleInProgress).toBe(true);
+
+    // Second call should skip (return immediately without awaiting runCycle)
+    const p2 = guarded();
+    // p2 should resolve quickly because it hits the overlap guard
+    await p2;
+
+    // First cycle is STILL running (we haven't resolved the promise)
+    expect((agent as any).cycleInProgress).toBe(true);
+
+    // Release the first cycle
+    resolveFirstCycle!();
+    await p1;
+    expect((agent as any).cycleInProgress).toBe(false);
+
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

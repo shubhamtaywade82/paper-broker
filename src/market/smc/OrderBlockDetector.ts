@@ -106,6 +106,14 @@ export class OrderBlockDetector {
       let mitigatedAt: number | undefined;
       let invalidatedAt: number | undefined;
 
+      // Mitigation requires price to enter the zone — for a bullish OB,
+      // price must reach the midpoint (or deeper) rather than merely
+      // touching the upper edge. Touching only the top is noise; true
+      // mitigation means the zone was tested with intent.
+      const mitigationLevel = ob.type === 'BULLISH'
+        ? ob.lowerPrice + (ob.upperPrice - ob.lowerPrice) * 0.5
+        : ob.upperPrice - (ob.upperPrice - ob.lowerPrice) * 0.5;
+
       for (const c of candles) {
         if (c.openTime < ob.confirmedAt) continue;
 
@@ -114,7 +122,7 @@ export class OrderBlockDetector {
             status = 'INVALIDATED';
             invalidatedAt = c.closeTime ?? c.openTime;
             break;
-          } else if (c.low <= ob.upperPrice && status === 'ACTIVE') {
+          } else if (c.low <= mitigationLevel && status === 'ACTIVE') {
             status = 'MITIGATED';
             mitigatedAt = c.closeTime ?? c.openTime;
           }
@@ -123,7 +131,7 @@ export class OrderBlockDetector {
             status = 'INVALIDATED';
             invalidatedAt = c.closeTime ?? c.openTime;
             break;
-          } else if (c.high >= ob.lowerPrice && status === 'ACTIVE') {
+          } else if (c.high >= mitigationLevel && status === 'ACTIVE') {
             status = 'MITIGATED';
             mitigatedAt = c.closeTime ?? c.openTime;
           }
