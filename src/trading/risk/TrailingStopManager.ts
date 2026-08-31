@@ -182,6 +182,11 @@ export class TrailingStopManager {
       : breakevenPrice < position.stopLossPrice;
 
     if (!shouldUpdate) {
+      // Stop is already at or past breakeven (e.g. a tracker rebuilt after
+      // restart against a resting order that had already trailed past it).
+      // Latch anyway or this branch re-enters every tick and the trailing
+      // branch below stays unreachable for the life of the position.
+      tracker.breakevenApplied = true;
       return {
         stopUpdated: false,
         previousStop: position.stopLossPrice,

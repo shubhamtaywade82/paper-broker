@@ -145,6 +145,22 @@ describe('TrailingStopManager', () => {
     expect(bounce.highestFavorablePrice).toBe(90);
   });
 
+  it('reaches trailing on the next tick when the resting stop is already past breakeven', () => {
+    // Simulates a tracker rebuilt after restart against a broker stop that
+    // had already trailed above the freshly-computed breakeven price.
+    const mgr = new TrailingStopManager();
+    const position = longPosition({ stopLossPrice: 100.5 });
+
+    const first = mgr.updateStopLoss(position, 110, T0);
+    expect(first.stopUpdated).toBe(false);
+    expect(first.reason).toBe('NO_CHANGE');
+
+    const second = mgr.updateStopLoss(position, 110, T0 + 1000);
+    expect(second.stopUpdated).toBe(true);
+    expect(second.reason).toBe('TRAILING');
+    expect(second.newStop).toBeCloseTo(108.35, 6);
+  });
+
   it('drops the tracker once the position is closed', () => {
     const mgr = new TrailingStopManager(makeConfig({ enableBreakeven: false }));
 
