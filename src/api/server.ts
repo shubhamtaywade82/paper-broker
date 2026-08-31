@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { z } from 'zod';
+import { ulid } from 'ulid';
 import type { AccountState, ExecutionBroker } from '../broker/types.js';
 import type { StrategyEngine } from '../strategy/StrategyEngine.js';
 import type { SignalRepository } from '../persistence/repositories/SignalRepository.js';
@@ -810,6 +811,327 @@ export class ApiServer {
           winRate: 0,
         };
       }
+    });
+
+    this.app.get('/api/v1/history/transactions', async (request) => {
+      const query = request.query as {
+        period?: string;
+        type?: string;
+        limit?: string;
+        offset?: string;
+        accountId?: string;
+      };
+      const limit = parseLimit(query.limit, 50);
+      const offset = query.offset ? Math.max(0, parseInt(query.offset, 10) || 0) : 0;
+      const accountId = query.accountId || 'paper-main';
+
+      let sql = 'SELECT * FROM transactions WHERE account_id = ?';
+      const params: (string | number)[] = [accountId];
+
+      if (query.type) {
+        sql += ' AND transaction_type = ?';
+        params.push(query.type);
+      }
+
+      if (query.period) {
+        const now = Date.now();
+        let startTime = 0;
+        if (query.period === '7D') {
+          startTime = now - 7 * 24 * 60 * 60 * 1000;
+        } else if (query.period === '30D') {
+          startTime = now - 30 * 24 * 60 * 60 * 1000;
+        } else if (query.period === 'FY27') {
+          startTime = new Date('2026-04-01T00:00:00.000Z').getTime();
+        }
+        if (startTime > 0) {
+          sql += ' AND created_at_utc >= ?';
+          params.push(new Date(startTime).toISOString());
+        }
+      }
+
+      sql += ' ORDER BY created_at_utc DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      const rows = this.events.raw.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+      return {
+        transactions: rows.map((r) => ({
+          ...r,
+          amount: parseFloat(String(r['amount'] || '0')),
+          fee: parseFloat(String(r['fee'] || '0')),
+          grossPnl: r['gross_pnl'] !== null ? parseFloat(String(r['gross_pnl'])) : null,
+          netPnl: r['net_pnl'] !== null ? parseFloat(String(r['net_pnl'])) : null,
+          balanceAfter: parseFloat(String(r['balance_after'] || '0')),
+          metadata: r['metadata'] ? JSON.parse(String(r['metadata'])) : null,
+        })),
+      };
+    });
+
+    this.app.get('/api/v1/history/pnl-summary', async (request) => {
+      const query = request.query as { accountId?: string };
+      const accountId = query.accountId || 'paper-main';
+
+      const computeForPeriod = (period: string, startTimeIso?: string) => {
+        let sql = `
+          SELECT 
+            COUNT(*) as total_transactions,
+            COALESCE(SUM(CAST(fee AS REAL)), 0) as total_fees,
+            COALESCE(SUM(CAST(gross_pnl AS REAL)), 0) as total_gross_pnl,
+            COALESCE(SUM(CAST(net_pnl AS REAL)), 0) as total_net_pnl
+          FROM transactions
+          WHERE account_id = ? AND transaction_type = 'CLOSE_POSITION'
+        `;
+        const params: (string | number)[] = [accountId];
+        if (startTimeIso) {
+          sql += ' AND created_at_utc >= ?';
+          params.push(startTimeIso);
+        }
+        const row = this.events.raw.prepare(sql).get(...params) as {
+          total_transactions: number;
+          total_fees: number;
+          total_gross_pnl: number;
+          total_net_pnl: number;
+        };
+        return {
+          period,
+          totalClosedTrades: Number(row.total_transactions || 0),
+          totalFees: Number(row.total_fees || 0),
+          grossPnl: Number(row.total_gross_pnl || 0),
+          netPnl: Number(row.total_net_pnl || 0),
+        };
+      };
+
+      const now = Date.now();
+      return {
+        '7D': computeForPeriod('7D', new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString()),
+        '30D': computeForPeriod('30D', new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString()),
+        FY27: computeForPeriod('FY27', '2026-04-01T00:00:00.000Z'),
+        ALL: computeForPeriod('ALL'),
+      };
+    });
+
+    this.app.get('/api/v1/ledger', async (request) => {
+      const query = request.query as { accountId?: string; limit?: string };
+      const limit = parseLimit(query.limit, 100);
+      const accountId = query.accountId || 'paper-main';
+      const rows = this.events.raw
+        .prepare('SELECT * FROM ledger_entries WHERE account_id = ? ORDER BY created_at_utc DESC LIMIT ?')
+        .all(accountId, limit) as Array<Record<string, unknown>>;
+      return {
+        entries: rows.map((r) => ({
+          ...r,
+          amount: parseFloat(String(r['amount'] || '0')),
+          balanceAfter: r['balance_after'] !== null ? parseFloat(String(r['balance_after'])) : null,
+        })),
+      };
+    });
+
+    this.app.get('/api/v1/wallets', async (request) => {
+      const query = request.query as { accountId?: string };
+      const accountId = query.accountId || 'paper-main';
+      const account = await this.broker.getAccount();
+
+      // Ensure standard product wallets exist
+      const products = ['FUTURES', 'SPOT', 'OPTIONS', 'EARN'] as const;
+      const getWalletStmt = this.events.raw.prepare(
+        'SELECT * FROM wallets WHERE account_id = ? AND product_type = ? AND currency = ?'
+      );
+      const upsertWalletStmt = this.events.raw.prepare(`
+        INSERT INTO wallets (account_id, product_type, currency, free, locked, updated_at_utc)
+        VALUES (@accountId, @productType, @currency, @free, @locked, @updatedAtUtc)
+        ON CONFLICT(account_id, product_type, currency) DO UPDATE SET
+          free = excluded.free,
+          locked = excluded.locked,
+          updated_at_utc = excluded.updated_at_utc
+      `);
+
+      for (const prod of products) {
+        const existing = getWalletStmt.get(accountId, prod, 'USDT');
+        if (!existing) {
+          upsertWalletStmt.run({
+            accountId,
+            productType: prod,
+            currency: 'USDT',
+            free: prod === 'FUTURES' ? String(account.availableBalance) : '0',
+            locked: prod === 'FUTURES' ? String(account.initialMargin) : '0',
+            updatedAtUtc: new Date().toISOString(),
+          });
+        } else if (prod === 'FUTURES') {
+          upsertWalletStmt.run({
+            accountId,
+            productType: prod,
+            currency: 'USDT',
+            free: String(account.availableBalance),
+            locked: String(account.initialMargin),
+            updatedAtUtc: new Date().toISOString(),
+          });
+        }
+      }
+
+      const rows = this.events.raw
+        .prepare('SELECT * FROM wallets WHERE account_id = ? ORDER BY product_type')
+        .all(accountId) as Array<Record<string, unknown>>;
+
+      return {
+        wallets: rows.map((r) => ({
+          accountId: r['account_id'],
+          productType: r['product_type'],
+          currency: r['currency'],
+          free: parseFloat(String(r['free'] || '0')),
+          locked: parseFloat(String(r['locked'] || '0')),
+          totalFees: parseFloat(String(r['total_fees'] || '0')),
+          totalFunding: parseFloat(String(r['total_funding'] || '0')),
+          totalRealizedPnl: parseFloat(String(r['total_realized_pnl'] || '0')),
+          updatedAtUtc: r['updated_at_utc'],
+        })),
+      };
+    });
+
+    this.app.post('/api/v1/wallets/transfer', async (request, reply) => {
+      const body = request.body as {
+        fromProduct?: string;
+        toProduct?: string;
+        currency?: string;
+        amount?: number;
+        accountId?: string;
+      };
+
+      const fromProduct = (body.fromProduct || '').toUpperCase();
+      const toProduct = (body.toProduct || '').toUpperCase();
+      const currency = (body.currency || 'USDT').toUpperCase();
+      const amount = Number(body.amount);
+      const accountId = body.accountId || 'paper-main';
+
+      const validProducts = new Set(['SPOT', 'FUTURES', 'OPTIONS', 'EARN']);
+      if (!validProducts.has(fromProduct) || !validProducts.has(toProduct) || fromProduct === toProduct) {
+        return reply.code(400).send({ error: 'INVALID_TRANSFER_PRODUCTS' });
+      }
+      if (!amount || amount <= 0 || Number.isNaN(amount)) {
+        return reply.code(400).send({ error: 'INVALID_TRANSFER_AMOUNT' });
+      }
+
+      // Check balance
+      let fromFree = 0;
+      if (fromProduct === 'FUTURES') {
+        const account = await this.broker.getAccount();
+        fromFree = account.availableBalance;
+      } else {
+        const row = this.events.raw
+          .prepare('SELECT free FROM wallets WHERE account_id = ? AND product_type = ? AND currency = ?')
+          .get(accountId, fromProduct, currency) as { free: string } | undefined;
+        fromFree = row ? parseFloat(row.free || '0') : 0;
+      }
+
+      if (fromFree < amount) {
+        return reply.code(400).send({
+          error: 'INSUFFICIENT_FUNDS',
+          message: `Available free balance in ${fromProduct} is ${fromFree} ${currency}, required ${amount}`,
+        });
+      }
+
+      // Execute transfer in SQLite and adjust broker balance if futures
+      const nowIso = new Date().toISOString();
+      const txId = ulid();
+
+      if (fromProduct === 'FUTURES') {
+        this.broker.adjustWalletBalance?.(-amount);
+      } else {
+        this.events.raw.prepare(`
+          UPDATE wallets SET free = CAST((CAST(free AS REAL) - ?) AS TEXT), updated_at_utc = ?
+          WHERE account_id = ? AND product_type = ? AND currency = ?
+        `).run(amount, nowIso, accountId, fromProduct, currency);
+      }
+
+      if (toProduct === 'FUTURES') {
+        this.broker.adjustWalletBalance?.(amount);
+      } else {
+        this.events.raw.prepare(`
+          INSERT INTO wallets (account_id, product_type, currency, free, locked, updated_at_utc)
+          VALUES (?, ?, ?, CAST(? AS TEXT), '0', ?)
+          ON CONFLICT(account_id, product_type, currency) DO UPDATE SET
+            free = CAST((CAST(free AS REAL) + excluded.free) AS TEXT),
+            updated_at_utc = excluded.updated_at_utc
+        `).run(accountId, toProduct, currency, amount, nowIso);
+      }
+
+      // Log transaction
+      const accountAfter = await this.broker.getAccount();
+      this.events.raw.prepare(`
+        INSERT INTO transactions (
+          id, account_id, product_type, transaction_type, currency,
+          amount, fee, balance_after, metadata, created_at_utc
+        ) VALUES (?, ?, ?, 'INTERNAL_TRANSFER', ?, ?, '0', ?, ?, ?)
+      `).run(
+        txId,
+        accountId,
+        fromProduct,
+        currency,
+        String(amount),
+        String(accountAfter.walletBalance),
+        JSON.stringify({ fromProduct, toProduct, currency, amount }),
+        nowIso
+      );
+
+      return {
+        success: true,
+        transferId: txId,
+        fromProduct,
+        toProduct,
+        currency,
+        amount,
+        timestamp: nowIso,
+      };
+    });
+
+    this.app.get('/api/v1/portfolio/valuation', async (request) => {
+      const query = request.query as { accountId?: string };
+      const accountId = query.accountId || 'paper-main';
+      const account = await this.broker.getAccount();
+
+      const inrRate = parseFloat(process.env['USDT_INR_RATE'] || '89.50');
+
+      const rows = this.events.raw
+        .prepare('SELECT product_type, free, locked FROM wallets WHERE account_id = ?')
+        .all(accountId) as Array<{ product_type: string; free: string; locked: string }>;
+
+      const walletBalances: Record<string, number> = {
+        FUTURES: account.equity,
+        SPOT: 0,
+        OPTIONS: 0,
+        EARN: 0,
+      };
+
+      for (const row of rows) {
+        if (row.product_type !== 'FUTURES') {
+          const total = parseFloat(row.free || '0') + parseFloat(row.locked || '0');
+          walletBalances[row.product_type] = total;
+        }
+      }
+
+      const totalEquityUsdt = Object.values(walletBalances).reduce((sum, val) => sum + val, 0);
+
+      const futuresVal = walletBalances['FUTURES'] ?? 0;
+      const spotVal = walletBalances['SPOT'] ?? 0;
+      const optionsVal = walletBalances['OPTIONS'] ?? 0;
+      const earnVal = walletBalances['EARN'] ?? 0;
+
+      return {
+        baseCurrency: 'USDT',
+        displayCurrency: 'INR',
+        exchangeRate: inrRate,
+        totalEquityUsdt,
+        totalEquityInr: totalEquityUsdt * inrRate,
+        totalBalanceUsdt: account.walletBalance,
+        totalBalanceInr: account.walletBalance * inrRate,
+        unrealizedPnlUsdt: account.unrealizedPnl,
+        unrealizedPnlInr: account.unrealizedPnl * inrRate,
+        products: {
+          futures: { usdt: futuresVal, inr: futuresVal * inrRate },
+          spot: { usdt: spotVal, inr: spotVal * inrRate },
+          options: { usdt: optionsVal, inr: optionsVal * inrRate },
+          earn: { usdt: earnVal, inr: earnVal * inrRate },
+        },
+        updatedAtUtc: new Date().toISOString(),
+      };
     });
 
     this.app.get('/api/v1/orderbook', async (request, reply) => {

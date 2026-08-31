@@ -952,4 +952,97 @@ describe('PaperBroker reset survives a process restart', () => {
     expect(acc.totalRealizedPnl).toBe(0);
     expect(acc.totalFees).toBe(0);
   });
+
+  it('restores cumulative funding payments and preserves exact wallet balance across restarts', () => {
+    const persister = openPersister();
+
+    // Session 1: open long position and simulate an 8-hour funding tick
+    const broker1 = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+      persister,
+    });
+    // Entry at $100
+    broker1.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    broker1.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+    const fee = 100 * 0.0004; // 0.04
+
+    // Apply funding tick: mark = 100, fundingRate = 0.01 (1%) -> payment = 1 * 100 * 0.01 = 1.00
+    broker1.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, fundingRate: 0.01, localTsUtc: Date.now(), stale: false });
+    broker1.applyFunding();
+
+    const acc1 = broker1.getAccount();
+    expect(acc1.totalFunding).toBe(1.0);
+    expect(acc1.totalFees).toBe(fee);
+    // walletBalance = 10000 - fee - funding = 10000 - 0.04 - 1.00 = 9998.96
+    expect(acc1.walletBalance).toBe(9998.96);
+
+    // Session 2: simulate restart
+    const broker2 = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+      persister,
+    });
+
+    const acc2 = broker2.getAccount();
+    expect(acc2.totalFunding).toBe(1.0);
+    expect(acc2.totalFees).toBe(fee);
+    expect(acc2.walletBalance).toBe(9998.96);
+
+    const pos = broker2.getPosition('BTCUSDT');
+    expect(pos).toBeDefined();
+    expect(pos?.totalFunding).toBe(1.0);
+  });
+
+  it('records double-entry ledger entries and transactions on order fills and funding', () => {
+    const persister = openPersister();
+
+    const broker = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      takerFeeRate: 0.0004,
+      marketSlippageBps: 0,
+      persister,
+    });
+
+    broker.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100, last: 100, mark: 100, localTsUtc: Date.now(), stale: false });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 1, leverage: 5 });
+
+    // Verify open position transaction and fee ledger entry
+    const txs1 = persister.loadTransactions('paper-main');
+    expect(txs1.length).toBe(1);
+    expect(txs1[0].transactionType).toBe('OPEN_POSITION');
+    expect(txs1[0].fee).toBe(0.04);
+
+    const ledger1 = persister.loadLedgerEntries('paper-main');
+    expect(ledger1.length).toBe(1);
+    expect(ledger1[0].eventType).toBe('FEE');
+    expect(ledger1[0].accountCode).toBe('EXPENSE:TRADING:FEES');
+
+    // Close position at $110 (+$10 profit)
+    broker.onMarket({ symbol: 'BTCUSDT', bid: 110, ask: 110, last: 110, mark: 110, localTsUtc: Date.now(), stale: false });
+    broker.submitOrder({ symbol: 'BTCUSDT', side: 'SELL', type: 'MARKET', quantity: 1, reduceOnly: true, leverage: 5 });
+
+    const txs2 = persister.loadTransactions('paper-main');
+    expect(txs2.length).toBe(2);
+    expect(txs2[0].transactionType).toBe('CLOSE_POSITION');
+    expect(txs2[0].grossPnl).toBe(10);
+    expect(txs2[0].netPnl).toBeCloseTo(10 - 110 * 0.0004, 4);
+
+    const ledger2 = persister.loadLedgerEntries('paper-main');
+    const pnlEntry = ledger2.find((e) => e.eventType === 'REALIZED_PNL');
+    expect(pnlEntry).toBeDefined();
+    expect(pnlEntry?.accountCode).toBe('REVENUE:TRADING:REALIZED_PNL');
+    expect(pnlEntry?.amount).toBe(10);
+  });
 });

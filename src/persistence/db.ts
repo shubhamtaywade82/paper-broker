@@ -56,14 +56,15 @@ export class DatabaseManager {
 
       CREATE TABLE IF NOT EXISTS wallets (
         account_id TEXT NOT NULL,
-        currency TEXT NOT NULL,
-        starting_balance TEXT NOT NULL,
-        current_balance TEXT NOT NULL,
+        product_type TEXT NOT NULL DEFAULT 'FUTURES',
+        currency TEXT NOT NULL DEFAULT 'USDT',
+        free TEXT NOT NULL DEFAULT '0',
+        locked TEXT NOT NULL DEFAULT '0',
         total_fees TEXT NOT NULL DEFAULT '0',
         total_funding TEXT NOT NULL DEFAULT '0',
         total_realized_pnl TEXT NOT NULL DEFAULT '0',
         updated_at_utc TEXT NOT NULL,
-        PRIMARY KEY (account_id, currency)
+        PRIMARY KEY (account_id, product_type, currency)
       );
 
       CREATE TABLE IF NOT EXISTS ledger_entries (
@@ -177,6 +178,27 @@ export class DatabaseManager {
         created_at_utc TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        position_id TEXT,
+        order_id TEXT,
+        fill_id TEXT,
+        product_type TEXT NOT NULL DEFAULT 'FUTURES',
+        transaction_type TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USDT',
+        amount TEXT NOT NULL,
+        fee TEXT NOT NULL DEFAULT '0',
+        gross_pnl TEXT,
+        net_pnl TEXT,
+        balance_after TEXT NOT NULL,
+        metadata TEXT,
+        created_at_utc TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_transactions_account_time ON transactions(account_id, created_at_utc);
+      CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(transaction_type);
+
       CREATE TABLE IF NOT EXISTS risk_events (
         id TEXT PRIMARY KEY,
         ts_utc TEXT NOT NULL,
@@ -270,6 +292,23 @@ export class DatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
     `);
+
+    // Ensure wallets table has product_type, free, locked columns if created previously
+    try {
+      const tableInfo = this.db.pragma('table_info(wallets)') as Array<{ name: string }>;
+      const columnNames = new Set(tableInfo.map((c) => c.name));
+      if (!columnNames.has('product_type')) {
+        this.db.exec(`ALTER TABLE wallets ADD COLUMN product_type TEXT NOT NULL DEFAULT 'FUTURES'`);
+      }
+      if (!columnNames.has('free')) {
+        this.db.exec(`ALTER TABLE wallets ADD COLUMN free TEXT NOT NULL DEFAULT '0'`);
+      }
+      if (!columnNames.has('locked')) {
+        this.db.exec(`ALTER TABLE wallets ADD COLUMN locked TEXT NOT NULL DEFAULT '0'`);
+      }
+    } catch {
+      // Best effort schema migration
+    }
   }
 
   get raw(): Database.Database {

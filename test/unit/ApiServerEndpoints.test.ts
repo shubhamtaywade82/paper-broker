@@ -1,10 +1,15 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { ApiServer } from '../../src/api/server.js';
 import { resolveRuntimeProfile } from '../../src/config/modes/resolver.js';
 import type { ExecutionBroker, Order } from '../../src/broker/types.js';
 import type { StrategyEngine } from '../../src/strategy/StrategyEngine.js';
 import type { SignalRepository } from '../../src/persistence/repositories/SignalRepository.js';
-import type { EventLog } from '../../src/persistence/EventLog.js';
+import { EventLog } from '../../src/persistence/EventLog.js';
+import { DatabaseManager } from '../../src/persistence/db.js';
+import { PaperBroker } from '../../src/broker/PaperBroker.js';
 import { MarketDataSupervisor } from '../../src/market/supervisor/MarketDataSupervisor.js';
 import { ErrorNormalizer } from '../../src/notifications/error-pipeline/ErrorNormalizer.js';
 import { TradingAgentsPipeline } from '../../src/ai/tradingAgents.js';
@@ -67,6 +72,18 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
       verdict: { rationale: 'Bullish consensus', conviction: 0.8 },
       risk_opinions: [],
     }),
+    raw: {
+      prepare: vi.fn().mockReturnValue({
+        all: vi.fn().mockReturnValue([]),
+        get: vi.fn().mockReturnValue({
+          total_transactions: 0,
+          total_fees: 0,
+          total_gross_pnl: 0,
+          total_net_pnl: 0,
+        }),
+        run: vi.fn().mockReturnValue({ changes: 1 }),
+      }),
+    },
   } as unknown as EventLog;
 
   it('GET /api/v1/dashboard returns consolidated system state', async () => {
@@ -433,5 +450,143 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     expect(mockReset).toHaveBeenCalledWith(15000);
 
     await server.stop();
+  });
+
+  it('GET /api/v1/history/transactions, /pnl-summary, and /ledger return structured history', async () => {
+    const server = new ApiServer({
+      broker: mockBroker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    const txRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/history/transactions',
+    });
+    expect(txRes.statusCode).toBe(200);
+    const txData = JSON.parse(txRes.body);
+    expect(Array.isArray(txData.transactions)).toBe(true);
+
+    const pnlRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/history/pnl-summary',
+    });
+    expect(pnlRes.statusCode).toBe(200);
+    const pnlData = JSON.parse(pnlRes.body);
+    expect(pnlData['7D']).toBeDefined();
+    expect(pnlData['ALL']).toBeDefined();
+
+    const ledgerRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/ledger',
+    });
+    expect(ledgerRes.statusCode).toBe(200);
+    const ledgerData = JSON.parse(ledgerRes.body);
+    expect(Array.isArray(ledgerData.entries)).toBe(true);
+
+    const walletsRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/wallets',
+    });
+    expect(walletsRes.statusCode).toBe(200);
+    const walletsData = JSON.parse(walletsRes.body);
+    expect(Array.isArray(walletsData.wallets)).toBe(true);
+
+    const valuationRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/portfolio/valuation',
+    });
+    expect(valuationRes.statusCode).toBe(200);
+    const valuationData = JSON.parse(valuationRes.body);
+    expect(valuationData.baseCurrency).toBe('USDT');
+    expect(valuationData.displayCurrency).toBe('INR');
+    expect(valuationData.products.futures).toBeDefined();
+
+    await server.stop();
+  });
+
+  it('POST /api/v1/wallets/transfer moves funds between product wallets', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'paper-broker-wallet-test-'));
+    const db = new DatabaseManager(dataDir);
+    const events = new EventLog(path.join(dataDir, 'events.jsonl'), db.raw);
+
+    const broker = new PaperBroker({
+      dataDir,
+      accountId: 'paper-main',
+      startingUsdt: 10000,
+      instruments: [],
+    });
+
+    const server = new ApiServer({
+      broker,
+      engine: mockEngine,
+      signals: mockSignals,
+      events,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    // Transfer 2000 USDT from Futures to Spot
+    const transferRes1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/wallets/transfer',
+      payload: {
+        fromProduct: 'FUTURES',
+        toProduct: 'SPOT',
+        currency: 'USDT',
+        amount: 2000,
+      },
+    });
+    expect(transferRes1.statusCode).toBe(200);
+    const transferData1 = JSON.parse(transferRes1.body);
+    expect(transferData1.success).toBe(true);
+
+    // Futures balance should now be 8000
+    const account = broker.getAccount();
+    expect(account.walletBalance).toBe(8000);
+
+    // Check wallets listing
+    const walletsRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/wallets',
+    });
+    const walletsData = JSON.parse(walletsRes.body);
+    const spotWallet = walletsData.wallets.find((w: { productType: string }) => w.productType === 'SPOT');
+    expect(spotWallet.free).toBe(2000);
+
+    // Transfer 500 USDT from Spot to Options
+    const transferRes2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/wallets/transfer',
+      payload: {
+        fromProduct: 'SPOT',
+        toProduct: 'OPTIONS',
+        currency: 'USDT',
+        amount: 500,
+      },
+    });
+    expect(transferRes2.statusCode).toBe(200);
+
+    // Valuation should account for all wallets
+    const valRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/portfolio/valuation',
+    });
+    const valData = JSON.parse(valRes.body);
+    expect(valData.totalEquityUsdt).toBe(10000); // 8000 futures + 1500 spot + 500 options = 10000
+    expect(valData.products.futures.usdt).toBe(8000);
+    expect(valData.products.spot.usdt).toBe(1500);
+    expect(valData.products.options.usdt).toBe(500);
+
+    await server.stop();
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
 });

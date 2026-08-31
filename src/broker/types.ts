@@ -260,9 +260,12 @@ export interface AccountState {
 
 export interface Wallet {
   accountId: string;
+  productType?: 'SPOT' | 'FUTURES' | 'OPTIONS' | 'EARN';
   currency: string;
-  startingBalance: number;
-  currentBalance: number;
+  free?: number;
+  locked?: number;
+  startingBalance?: number;
+  currentBalance?: number;
   totalFees: number;
   totalFunding: number;
   totalRealizedPnl: number;
@@ -300,6 +303,32 @@ export interface FundingPayment {
   createdAtUtc: string;
 }
 
+export interface TransactionRecord {
+  id: string;
+  accountId: string;
+  positionId?: string;
+  orderId?: string;
+  fillId?: string;
+  productType: 'SPOT' | 'FUTURES' | 'OPTIONS' | 'EARN';
+  transactionType:
+    | 'DEPOSIT'
+    | 'WITHDRAWAL'
+    | 'INTERNAL_TRANSFER'
+    | 'OPEN_POSITION'
+    | 'CLOSE_POSITION'
+    | 'FUNDING_FEE'
+    | 'COMMISSION'
+    | 'LIQUIDATION';
+  currency: string;
+  amount: number;
+  fee: number;
+  grossPnl?: number;
+  netPnl?: number;
+  balanceAfter: number;
+  metadata?: Record<string, unknown>;
+  createdAtUtc: string;
+}
+
 export interface RiskLimits {
   maxLeverage: number;
   maxOrderNotional: number;
@@ -327,9 +356,15 @@ export interface BrokerPersister {
   saveOrder(order: Order): void;
   saveFill(fill: Fill): void;
   savePosition(position: Position): void;
+  saveFundingPayment?(payment: FundingPayment): void;
+  saveLedgerEntry?(entry: LedgerEntry): void;
+  saveTransaction?(tx: TransactionRecord): void;
   loadOpenPositions?(accountId?: string): Position[];
   loadOpenOrders?(accountId?: string): Order[];
   loadFills?(accountId?: string): Fill[];
+  loadFundingPayments?(accountId?: string): FundingPayment[];
+  loadLedgerEntries?(accountId?: string, limit?: number): LedgerEntry[];
+  loadTransactions?(accountId?: string, options?: { period?: string; type?: string; limit?: number; offset?: number }): TransactionRecord[];
   resetAccountData?(accountId?: string): void;
 }
 
@@ -434,6 +469,7 @@ export interface ExecutionBroker {
   getPosition(symbol: string): Promise<Position | undefined> | Position | undefined;
   getAccount(): Promise<AccountState> | AccountState;
   resetAccount?(startingUsdt?: number): Promise<AccountState> | AccountState;
+  adjustWalletBalance?(delta: number): Promise<number> | number;
 }
 
 export type MarketDataProviderType = 'BINANCE' | 'COINDCX';

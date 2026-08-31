@@ -130,25 +130,36 @@ export class PaperBroker implements ExecutionBroker {
       }
     }
 
-    // Load and replay fills to reconstruct wallet balance, fees, realized PnL
+    // Load and replay fills and funding payments to reconstruct wallet balance, fees, realized PnL, funding
     if (this.persister?.loadFills) {
       const persistedFills = this.persister.loadFills(config.accountId);
       let realizedPnlSum = 0;
       let feesSum = 0;
-      const fundingSum = 0;
       for (const fill of persistedFills) {
         this.fills.push(fill);
-        realizedPnlSum += fill.realizedPnl;
-        feesSum += fill.fee;
-        // funding is not stored in fills, would need separate tracking
+        realizedPnlSum = D(realizedPnlSum).add(fill.realizedPnl).toNumber();
+        feesSum = D(feesSum).add(fill.fee).toNumber();
       }
       this.totalRealizedPnl = realizedPnlSum;
       this.totalFees = feesSum;
-      this.totalFunding = fundingSum;
-      // realizedPnlSum is negative for losses, positive for gains
-      // walletBalance = startingBalance + realizedPnl - fees - funding
-      this.walletBalance = config.startingUsdt + realizedPnlSum - feesSum - fundingSum;
     }
+
+    let fundingSum = 0;
+    if (this.persister?.loadFundingPayments) {
+      const persistedFunding = this.persister.loadFundingPayments(config.accountId);
+      for (const payment of persistedFunding) {
+        fundingSum = D(fundingSum).add(payment.payment).toNumber();
+      }
+    }
+    this.totalFunding = fundingSum;
+
+    // realizedPnl is negative for losses, positive for gains
+    // walletBalance = startingBalance + realizedPnl - fees - funding
+    this.walletBalance = D(config.startingUsdt)
+      .add(this.totalRealizedPnl)
+      .sub(this.totalFees)
+      .sub(this.totalFunding)
+      .toNumber();
 
     this.account = this.calculateAccountState();
   }
@@ -378,6 +389,47 @@ export class PaperBroker implements ExecutionBroker {
         createdAtUtc: new Date().toISOString(),
       };
       this.eventLog?.appendFundingPayment(fundingPayment);
+      this.persister?.saveFundingPayment?.(fundingPayment);
+      this.persister?.savePosition(position);
+
+      if (payment !== 0) {
+        this.persister?.saveLedgerEntry?.({
+          id: ulid(),
+          accountId: position.accountId,
+          eventId: fundingPayment.id,
+          eventType: 'FUNDING',
+          currency: 'USDT',
+          accountCode: payment > 0 ? 'EXPENSE:TRADING:FUNDING' : 'REVENUE:TRADING:FUNDING',
+          direction: payment > 0 ? 'DEBIT' : 'CREDIT',
+          amount: Math.abs(payment),
+          balanceAfter: this.walletBalance,
+          relatedPositionSymbol: position.symbol,
+          description: `Funding payment on ${position.symbol}`,
+          createdAtUtc: new Date().toISOString(),
+        });
+
+        this.persister?.saveTransaction?.({
+          id: ulid(),
+          accountId: position.accountId,
+          positionId: position.symbol,
+          productType: 'FUTURES',
+          transactionType: 'FUNDING_FEE',
+          currency: 'USDT',
+          amount: payment,
+          fee: 0,
+          grossPnl: 0,
+          netPnl: -payment,
+          balanceAfter: this.walletBalance,
+          metadata: {
+            symbol: position.symbol,
+            markPrice: market.mark,
+            fundingRate: market.fundingRate,
+            qty: position.qty,
+          },
+          createdAtUtc: new Date().toISOString(),
+        });
+      }
+
       this.emitPositionEvent('FUNDING', position, position.qty, position.qty, market.mark);
     }
 
@@ -390,6 +442,12 @@ export class PaperBroker implements ExecutionBroker {
 
   getAccount(): AccountState {
     return this.account;
+  }
+
+  adjustWalletBalance(delta: number): number {
+    this.walletBalance = D(this.walletBalance).add(delta).toNumber();
+    this.recalculateAccount();
+    return this.walletBalance;
   }
 
   getPositions(): Position[] {
@@ -575,6 +633,73 @@ export class PaperBroker implements ExecutionBroker {
     this.fills.push(fill);
     this.eventLog?.appendFill(fill);
     this.persister?.saveFill(fill);
+
+    // Double-entry ledger postings
+    if (fee > 0) {
+      this.persister?.saveLedgerEntry?.({
+        id: ulid(),
+        accountId: order.accountId,
+        eventId: fill.id,
+        eventType: 'FEE',
+        currency: 'USDT',
+        accountCode: 'EXPENSE:TRADING:FEES',
+        direction: 'DEBIT',
+        amount: fee,
+        balanceAfter: this.walletBalance,
+        relatedOrderId: order.id,
+        relatedFillId: fill.id,
+        relatedPositionSymbol: order.symbol,
+        description: `Trading fee for order ${order.id}`,
+        createdAtUtc: nowIso,
+      });
+    }
+
+    if (realizedPnl !== 0) {
+      this.persister?.saveLedgerEntry?.({
+        id: ulid(),
+        accountId: order.accountId,
+        eventId: fill.id,
+        eventType: 'REALIZED_PNL',
+        currency: 'USDT',
+        accountCode: realizedPnl > 0 ? 'REVENUE:TRADING:REALIZED_PNL' : 'EXPENSE:TRADING:REALIZED_LOSS',
+        direction: realizedPnl > 0 ? 'CREDIT' : 'DEBIT',
+        amount: Math.abs(realizedPnl),
+        balanceAfter: this.walletBalance,
+        relatedOrderId: order.id,
+        relatedFillId: fill.id,
+        relatedPositionSymbol: order.symbol,
+        description: `Realized PnL on fill ${fill.id}`,
+        createdAtUtc: nowIso,
+      });
+    }
+
+    // UI Transactions record
+    const isClosing = realizedPnl !== 0 || order.reduceOnly || order.closePosition;
+    this.persister?.saveTransaction?.({
+      id: ulid(),
+      accountId: order.accountId,
+      positionId: positionAfter?.symbol,
+      orderId: order.id,
+      fillId: fill.id,
+      productType: 'FUTURES',
+      transactionType: isClosing ? 'CLOSE_POSITION' : 'OPEN_POSITION',
+      currency: 'USDT',
+      amount: notional.toNumber(),
+      fee,
+      grossPnl: realizedPnl,
+      netPnl: D(realizedPnl).sub(fee).toNumber(),
+      balanceAfter: this.walletBalance,
+      metadata: {
+        symbol: order.symbol,
+        side: order.side,
+        quantity,
+        price,
+        leverage: order.leverage,
+        liquidity,
+      },
+      createdAtUtc: nowIso,
+    });
+
     this.recalculateAccount();
 
     // Observers (profit goals, per-strategy performance) must never be able to
