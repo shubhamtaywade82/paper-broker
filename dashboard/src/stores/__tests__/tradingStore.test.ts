@@ -148,4 +148,40 @@ describe('Store isolation & TradingStore (God-store regression)', () => {
     const total = calculateTotalUnrealizedPnl(positions, livePrices);
     expect(total).toBe(2_000);
   });
+
+  it('PREC-01: formatPrice and formatCurrency preserve fixed trailing zeros per symbol', async () => {
+    const { formatPrice, formatCurrency } = await import('../../store/useStore.js');
+
+    // BTCUSDT: 2 decimals, trailing zero preserved
+    expect(formatPrice(78587.7, 'BTCUSDT')).toBe('78,587.70');
+    expect(formatCurrency(78587.7, 'BTCUSDT')).toBe('$78,587.70');
+
+    // SOLUSDT: 2 decimals, trailing zero preserved (e.g. 103.8 -> 103.80)
+    expect(formatPrice(103.8, 'SOLUSDT')).toBe('103.80');
+    expect(formatCurrency(103.8, 'SOLUSDT')).toBe('$103.80');
+
+    // XRPUSDT: 4 decimals, trailing zeros preserved (e.g. 1.38 -> 1.3800)
+    expect(formatPrice(1.38, 'XRPUSDT')).toBe('1.3800');
+    expect(formatCurrency(1.38, 'XRPUSDT')).toBe('$1.3800');
+
+    // DOGEUSDT: 5 decimals, trailing zeros preserved
+    expect(formatPrice(0.23, 'DOGEUSDT')).toBe('0.23000');
+    expect(formatCurrency(0.23, 'DOGEUSDT')).toBe('$0.23000');
+  });
+
+  it('PREC-02: formatQty preserves fixed quantity precision per symbol', async () => {
+    const { formatQty } = await import('../../store/useStore.js');
+
+    // BTC: 3 decimals (e.g. 0.04 -> 0.040)
+    expect(formatQty(0.04, 'BTCUSDT')).toBe('0.040');
+
+    // SOL: 2 decimals (e.g. 33.7 -> 33.70)
+    expect(formatQty(33.7, 'SOLUSDT')).toBe('33.70');
+
+    // XRP: 1 decimal (e.g. 2534 -> 2,534.0)
+    expect(formatQty(2534, 'XRPUSDT')).toBe('2,534.0');
+
+    // DOGE: 0 decimals
+    expect(formatQty(100, 'DOGEUSDT')).toBe('100');
+  });
 });

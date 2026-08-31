@@ -345,6 +345,30 @@ export function formatCurrency(price?: number | null, symbol?: string): string {
   return `$${formatPrice(price, symbol)}`;
 }
 
+export function getQtyPrecision(qty?: number | null, symbol?: string): number {
+  if (symbol) {
+    const sym = symbol.toUpperCase();
+    if (sym.startsWith('BTC') || sym.startsWith('ETH')) return 3;
+    if (sym.startsWith('SOL') || sym.startsWith('BNB')) return 2;
+    if (sym.startsWith('XRP') || sym.startsWith('ADA')) return 1;
+    if (sym.startsWith('DOGE') || sym.includes('PEPE') || sym.includes('SHIB')) return 0;
+  }
+  if (qty === undefined || qty === null || isNaN(qty) || qty === 0) return 2;
+  const abs = Math.abs(qty);
+  if (abs >= 100) return 1;
+  if (abs >= 10) return 2;
+  return 3;
+}
+
+export function formatQty(qty?: number | null, symbol?: string): string {
+  if (qty === undefined || qty === null || isNaN(qty)) return '—';
+  const precision = getQtyPrecision(qty, symbol);
+  return qty.toLocaleString('en-US', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  });
+}
+
 export const useStore = create<StoreState>((set) => ({
   activeTab: getInitialTab(),
   selectedSymbol: getInitialSymbol(),

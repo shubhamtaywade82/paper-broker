@@ -2,6 +2,7 @@ import React from 'react';
 import {
   useStore,
   formatCurrency,
+  formatQty,
   calculatePositionPnl,
   calculateTotalUnrealizedPnl,
 } from '../../store/useStore';
@@ -295,17 +296,17 @@ export function DashboardView() {
                             {side} {lev}x
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right text-gray-300">{qty}</td>
-                        <td className="px-4 py-3 text-right text-gray-400">{formatCurrency(entry, pos.symbol)}</td>
-                        <td className="px-4 py-3 text-right text-white font-semibold">{formatCurrency(mark, pos.symbol)}</td>
-                        <td className="px-4 py-3 text-right text-red-400">
+                        <td className="px-4 py-3 text-right text-gray-300 font-mono">{formatQty(qty, pos.symbol)}</td>
+                        <td className="px-4 py-3 text-right text-gray-400 font-mono">{formatCurrency(entry, pos.symbol)}</td>
+                        <td className="px-4 py-3 text-right text-white font-semibold font-mono">{formatCurrency(mark, pos.symbol)}</td>
+                        <td className="px-4 py-3 text-right text-red-400 font-mono">
                           {slOrder?.stopPrice ? formatCurrency(slOrder.stopPrice, pos.symbol) : '—'}
                         </td>
-                        <td className="px-4 py-3 text-right text-emerald-400">
+                        <td className="px-4 py-3 text-right text-emerald-400 font-mono">
                           {tpOrder?.stopPrice ? formatCurrency(tpOrder.stopPrice, pos.symbol) : '—'}
                         </td>
                         <td
-                          className={`px-4 py-3 text-right font-bold ${
+                          className={`px-4 py-3 text-right font-bold font-mono ${
                             pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                           }`}
                         >

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   useStore,
   formatCurrency,
+  formatQty,
   type Order,
   calculatePositionPnl,
 } from '../../store/useStore';
@@ -23,8 +24,6 @@ import {
   Plus,
   Trash2,
   AlertOctagon,
-  Shield,
-  X,
   Bot,
 } from 'lucide-react';
 
@@ -186,20 +185,20 @@ export function TradingView() {
 
                         return (
                           <>
-                            <td className="px-5 py-4 text-right text-gray-300">{qty}</td>
-                            <td className="px-5 py-4 text-right text-gray-400">{formatCurrency(entry, pos.symbol)}</td>
-                            <td className="px-5 py-4 text-right text-white font-semibold">{formatCurrency(mark, pos.symbol)}</td>
-                            <td className="px-5 py-4 text-right text-amber-400">
+                            <td className="px-5 py-4 text-right text-gray-300 font-mono">{formatQty(qty, pos.symbol)}</td>
+                            <td className="px-5 py-4 text-right text-gray-400 font-mono">{formatCurrency(entry, pos.symbol)}</td>
+                            <td className="px-5 py-4 text-right text-white font-semibold font-mono">{formatCurrency(mark, pos.symbol)}</td>
+                            <td className="px-5 py-4 text-right text-amber-400 font-mono">
                               {pos.liquidationPrice ? formatCurrency(pos.liquidationPrice, pos.symbol) : '—'}
                             </td>
-                            <td className="px-5 py-4 text-right text-red-400">
+                            <td className="px-5 py-4 text-right text-red-400 font-mono">
                               {slOrder?.stopPrice ? formatCurrency(slOrder.stopPrice, pos.symbol) : '—'}
                             </td>
-                            <td className="px-5 py-4 text-right text-emerald-400">
+                            <td className="px-5 py-4 text-right text-emerald-400 font-mono">
                               {tpOrder?.stopPrice ? formatCurrency(tpOrder.stopPrice, pos.symbol) : '—'}
                             </td>
                             <td
-                              className={`px-5 py-4 text-right font-bold ${
+                              className={`px-5 py-4 text-right font-bold font-mono ${
                                 pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                               }`}
                             >
@@ -280,10 +279,10 @@ export function TradingView() {
                         </span>
                       </td>
                       <td className="px-5 py-3.5 text-gray-300">{ord.type}</td>
-                      <td className="px-5 py-3.5 text-right text-white">
-                        {ord.price ? `$${ord.price.toFixed(2)}` : 'MARKET'}
+                      <td className="px-5 py-3.5 text-right text-white font-mono">
+                        {ord.price ? formatCurrency(ord.price, ord.symbol) : 'MARKET'}
                       </td>
-                      <td className="px-5 py-3.5 text-right text-gray-300">{ord.quantity}</td>
+                      <td className="px-5 py-3.5 text-right text-gray-300 font-mono">{formatQty(ord.quantity, ord.symbol)}</td>
                       <td className="px-5 py-3.5">
                         <span className="px-2 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400 font-bold">
                           {ord.status}
@@ -330,7 +329,7 @@ export function TradingView() {
                 <tbody className="divide-y divide-[#1b2537]">
                   {fills.map((f) => (
                     <tr key={f.id} className="hover:bg-[#141d2e] transition">
-                      <td className="px-4 py-3 text-gray-500">
+                      <td className="px-4 py-3 text-gray-500 font-mono">
                         {new Date(f.fillTsUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td className="px-4 py-3 font-bold text-white">{f.symbol}</td>
@@ -341,10 +340,10 @@ export function TradingView() {
                           {f.side}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-gray-300">{f.quantity}</td>
-                      <td className="px-4 py-3 text-right text-gray-400">${f.price.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-gray-500">${f.fee.toFixed(4)}</td>
-                      <td className={`px-4 py-3 text-right font-bold ${
+                      <td className="px-4 py-3 text-right text-gray-300 font-mono">{formatQty(f.quantity, f.symbol)}</td>
+                      <td className="px-4 py-3 text-right text-gray-400 font-mono">{formatCurrency(f.price, f.symbol)}</td>
+                      <td className="px-4 py-3 text-right text-gray-500 font-mono">${f.fee.toFixed(4)}</td>
+                      <td className={`px-4 py-3 text-right font-bold font-mono ${
                         f.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                       }`}>
                         {f.realizedPnl !== 0 ? `${f.realizedPnl >= 0 ? '+' : ''}$${f.realizedPnl.toFixed(2)}` : '—'}
@@ -389,7 +388,7 @@ export function TradingView() {
                 <tbody className="divide-y divide-[#1b2537]">
                   {journal.map((j) => (
                     <tr key={j.id} className="hover:bg-[#141d2e] transition">
-                      <td className="px-4 py-3 text-gray-500">
+                      <td className="px-4 py-3 text-gray-500 font-mono">
                         {new Date(j.fillTsUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td className="px-4 py-3 font-bold text-white">{j.symbol}</td>
@@ -400,16 +399,16 @@ export function TradingView() {
                           {j.side}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-gray-300">{j.quantity}</td>
-                      <td className="px-4 py-3 text-right text-gray-400">${j.entryPrice.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-white">${j.exitPrice.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-amber-400">
-                        {j.stopPrice !== null ? `$${j.stopPrice.toFixed(2)}` : '—'}
+                      <td className="px-4 py-3 text-right text-gray-300 font-mono">{formatQty(j.quantity, j.symbol)}</td>
+                      <td className="px-4 py-3 text-right text-gray-400 font-mono">{formatCurrency(j.entryPrice, j.symbol)}</td>
+                      <td className="px-4 py-3 text-right text-white font-mono">{formatCurrency(j.exitPrice, j.symbol)}</td>
+                      <td className="px-4 py-3 text-right text-amber-400 font-mono">
+                        {j.stopPrice !== null ? formatCurrency(j.stopPrice, j.symbol) : '—'}
                       </td>
-                      <td className={`px-4 py-3 text-right font-bold ${j.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      <td className={`px-4 py-3 text-right font-bold font-mono ${j.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {j.realizedPnl >= 0 ? '+' : ''}${j.realizedPnl.toFixed(2)}
                       </td>
-                      <td className={`px-4 py-3 text-right font-bold ${
+                      <td className={`px-4 py-3 text-right font-bold font-mono ${
                         j.rMultiple === null ? 'text-gray-600' : j.rMultiple >= 0 ? 'text-emerald-400' : 'text-red-400'
                       }`}>
                         {j.rMultiple !== null ? `${j.rMultiple >= 0 ? '+' : ''}${j.rMultiple}R` : '—'}
@@ -423,22 +422,19 @@ export function TradingView() {
         </div>
       )}
 
-      {/* Position Detail Drawer */}
+      {/* Position Detail Modal */}
       {selectedPosition && (
-        <div className="fixed inset-y-0 right-0 w-96 bg-[#0f1623] border-l border-[#1b2537] shadow-2xl z-50 p-6 flex flex-col justify-between overflow-y-auto">
-          <div className="space-y-5">
-            <div className="flex items-center justify-between border-b border-[#1b2537] pb-3">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-blue-400" />
-                <h3 className="font-bold text-white uppercase text-sm">
-                  {selectedPosition.symbol} Position Detail
-                </h3>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#0f1623] border border-[#1b2537] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl p-6 space-y-6">
+            <div className="flex items-center justify-between border-b border-[#1b2537] pb-4">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                Position Details: {selectedPosition.symbol}
+              </h3>
               <button
                 onClick={() => setSelectedPosition(null)}
-                className="text-gray-400 hover:text-white cursor-pointer"
+                className="text-gray-400 hover:text-white p-1 rounded-lg bg-[#080c14] border border-[#1b2537] cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                ✕
               </button>
             </div>
 
@@ -451,11 +447,11 @@ export function TradingView() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Size</span>
-                <span className="font-bold text-white">{selectedPosition.quantity ?? 0}</span>
+                <span className="font-bold text-white font-mono">{formatQty(selectedPosition.quantity, selectedPosition.symbol)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Entry Price</span>
-                <span className="font-bold text-white">{formatCurrency(selectedPosition.entryPrice, selectedPosition.symbol)}</span>
+                <span className="font-bold text-white font-mono">{formatCurrency(selectedPosition.entryPrice, selectedPosition.symbol)}</span>
               </div>
               {(() => {
                 const entry = selectedPosition.entryPrice ?? 0;
@@ -468,12 +464,12 @@ export function TradingView() {
                   <>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Mark Price</span>
-                      <span className="font-bold text-white">{formatCurrency(mark, selectedPosition.symbol)}</span>
+                      <span className="font-bold text-white font-mono">{formatCurrency(mark, selectedPosition.symbol)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Unrealized PnL</span>
                       <span
-                        className={`font-bold ${
+                        className={`font-bold font-mono ${
                           pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                         }`}
                       >

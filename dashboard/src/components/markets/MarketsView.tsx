@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStore, SUPPORTED_SYMBOLS, formatPrice, formatCurrency } from '../../store/useStore';
+import { useStore, SUPPORTED_SYMBOLS, formatPrice, formatCurrency, formatQty } from '../../store/useStore';
 import {
   useTickers,
   useOrderbook,
@@ -272,7 +272,7 @@ export function MarketsView() {
                   <span className={t.isBuyerMaker ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
                     ${formatPrice(t.price, selectedSymbol)}
                   </span>
-                  <span>{t.qty.toFixed(2)}</span>
+                  <span className="font-mono">{formatQty(t.qty, selectedSymbol)}</span>
                   <span className="text-gray-500">
                     {new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                   </span>
