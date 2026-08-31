@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyWebsocket from '@fastify/websocket';
 import { z } from 'zod';
 import { ulid } from 'ulid';
-import type { AccountState, ExecutionBroker } from '../broker/types.js';
+import type { AccountState, ExecutionBroker, Fill } from '../broker/types.js';
 import type { StrategyEngine } from '../strategy/StrategyEngine.js';
 import type { SignalRepository } from '../persistence/repositories/SignalRepository.js';
 import type { EventLog } from '../persistence/EventLog.js';
@@ -725,6 +725,10 @@ export class ApiServer {
     this.app.get('/api/v1/fills', async (request) => {
       const query = request.query as { symbol?: string; limit?: string };
       const limit = parseLimit(query.limit, 100);
+      if (this.broker && 'getFills' in this.broker && typeof this.broker.getFills === 'function') {
+        const fills = await this.broker.getFills(query.symbol);
+        return [...fills].reverse().slice(0, limit);
+      }
       const events = this.events.getEvents({ type: 'FILL_CREATED', limit });
       return events
         .map((e) => e.payload as Record<string, unknown>)
@@ -743,33 +747,41 @@ export class ApiServer {
         .all() as Array<{ signal_id: string; stop_price: string }>;
       const stopPriceBySignal = new Map(stopOrders.map((o) => [o.signal_id, Number(o.stop_price)]));
 
-      const closingFills = this.events
-        .getEvents({ type: 'FILL_CREATED', limit: 1000 })
-        .map((e) => e.payload as Record<string, unknown>)
-        .filter((f) => Number(f['realizedPnl'] ?? 0) !== 0)
-        .filter((f) => !query.symbol || f['symbol'] === query.symbol);
+      let allFills: Fill[] = [];
+      if (this.broker && 'getFills' in this.broker && typeof this.broker.getFills === 'function') {
+        allFills = await this.broker.getFills(query.symbol);
+      } else {
+        allFills = this.events
+          .getEvents({ type: 'FILL_CREATED', limit: 1000 })
+          .map((e) => e.payload as Fill);
+      }
+
+      const closingFills = [...allFills]
+        .reverse()
+        .filter((f) => Number(f.realizedPnl ?? 0) !== 0)
+        .filter((f) => !query.symbol || f.symbol === query.symbol);
 
       const entries = closingFills.map((f) => {
-        const signalId = f['signalId'] as string | undefined;
+        const signalId = f.signalId;
         const stopPrice = signalId ? stopPriceBySignal.get(signalId) : undefined;
-        const entryPrice = Number(f['positionEntryBefore'] ?? 0);
-        const exitPrice = Number(f['price'] ?? 0);
-        const quantity = Number(f['quantity'] ?? 0);
-        const realizedPnl = Number(f['realizedPnl'] ?? 0);
+        const entryPrice = Number(f.positionEntryBefore ?? 0);
+        const exitPrice = Number(f.price ?? 0);
+        const quantity = Number(f.quantity ?? 0);
+        const realizedPnl = Number(f.realizedPnl ?? 0);
         const riskPerUnit = stopPrice && entryPrice ? Math.abs(entryPrice - stopPrice) : undefined;
         const rMultiple = riskPerUnit && riskPerUnit > 0 ? realizedPnl / (riskPerUnit * quantity) : undefined;
 
         return {
-          id: f['id'],
-          symbol: f['symbol'],
-          side: f['side'],
+          id: f.id,
+          symbol: f.symbol,
+          side: f.side,
           quantity,
           entryPrice,
           exitPrice,
           stopPrice: stopPrice ?? null,
           realizedPnl,
           rMultiple: rMultiple !== undefined ? Number(rMultiple.toFixed(2)) : null,
-          fillTsUtc: f['fillTsUtc'],
+          fillTsUtc: f.fillTsUtc,
         };
       });
 
@@ -785,13 +797,17 @@ export class ApiServer {
 
     this.app.get('/api/v1/win-rate', async () => {
       try {
-        const fills = this.events?.getEvents({ type: 'FILL_CREATED', limit: 500 }) ?? [];
+        let fills: Array<{ realizedPnl?: number }> = [];
+        if (this.broker && 'getFills' in this.broker && typeof this.broker.getFills === 'function') {
+          fills = await this.broker.getFills();
+        } else {
+          fills = (this.events?.getEvents({ type: 'FILL_CREATED', limit: 500 }) ?? []).map((e) => (e.payload ?? {}) as { realizedPnl?: number });
+        }
         let wins = 0;
         let losses = 0;
 
         for (const fill of fills) {
-          const p = (fill?.payload ?? {}) as Record<string, unknown>;
-          const realizedPnl = Number(p['realizedPnl'] || 0);
+          const realizedPnl = Number(fill.realizedPnl || 0);
           if (realizedPnl > 0) wins++;
           else if (realizedPnl < 0) losses++;
         }

@@ -125,6 +125,29 @@ describe('wsRouting — autonomous event dispatch', () => {
     expect(useTradingStore.getState().positions['pos-1']).toBeDefined();
   });
 
+  it('WS-ROUTE-05: account.reset resets tradingStore positions and open orders', () => {
+    useTradingStore.getState().upsertPosition({
+      id: 'pos-1',
+      symbol: 'BTCUSDT',
+      side: 'LONG' as const,
+      quantity: 1.5,
+      entryPrice: 50_000,
+      markPrice: 51_000,
+      unrealizedPnl: 1500,
+      status: 'OPEN' as const,
+    });
+    expect(Object.keys(useTradingStore.getState().positions).length).toBe(1);
+
+    dispatch({
+      type: 'account.reset',
+      payload: { startingBalance: 10000 },
+      timestampUtc: new Date().toISOString(),
+    });
+
+    expect(Object.keys(useTradingStore.getState().positions).length).toBe(0);
+    expect(useTradingStore.getState().openOrders.length).toBe(0);
+  });
+
   // Regression: agent.step was broadcast by the backend (engine.ts onCycleStep,
   // server.ts trigger route) but was absent from WsMessageSchema, so
   // wsConnection's `WsMessageSchema.parse()` threw and the bare `catch {}`

@@ -589,4 +589,87 @@ describe('ApiServer Dashboard and WebSocket Endpoints', () => {
     db.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it('GET /api/v1/fills, /journal, and /win-rate reflect broker fills and clear on account reset', async () => {
+    let mockBrokerFills: Fill[] = [
+      {
+        id: 'fill-1',
+        orderId: 'ord-1',
+        accountId: 'paper-main',
+        symbol: 'SOLUSDT',
+        side: 'SELL',
+        quantity: 2,
+        price: 150,
+        notional: 300,
+        fee: 0.1,
+        feeAsset: 'USDT',
+        liquidity: 'TAKER',
+        realizedPnl: 20,
+        positionQtyBefore: 2,
+        positionQtyAfter: 0,
+        positionEntryBefore: 140,
+        fillTsUtc: new Date().toISOString(),
+      },
+    ];
+
+    const mockBrokerWithFills: ExecutionBroker = {
+      ...mockBroker,
+      getFills: vi.fn((symbol?: string) =>
+        symbol ? mockBrokerFills.filter((f) => f.symbol === symbol) : [...mockBrokerFills]
+      ),
+      resetAccount: vi.fn(() => {
+        mockBrokerFills = [];
+        return { walletBalance: 10000, equity: 10000 } as any;
+      }),
+    };
+
+    const server = new ApiServer({
+      broker: mockBrokerWithFills,
+      engine: mockEngine,
+      signals: mockSignals,
+      events: mockEvents,
+      port: 0,
+    });
+
+    await server.start();
+    const app = server.getApp();
+
+    // 1. Verify fills, journal, win-rate before reset
+    const fillsRes = await app.inject({ method: 'GET', url: '/api/v1/fills' });
+    expect(fillsRes.statusCode).toBe(200);
+    const fillsData = JSON.parse(fillsRes.body);
+    expect(fillsData.length).toBe(1);
+    expect(fillsData[0].id).toBe('fill-1');
+
+    const journalRes = await app.inject({ method: 'GET', url: '/api/v1/journal' });
+    expect(journalRes.statusCode).toBe(200);
+    const journalData = JSON.parse(journalRes.body);
+    expect(journalData.length).toBe(1);
+    expect(journalData[0].realizedPnl).toBe(20);
+
+    const winRateRes = await app.inject({ method: 'GET', url: '/api/v1/win-rate' });
+    expect(winRateRes.statusCode).toBe(200);
+    const winRateData = JSON.parse(winRateRes.body);
+    expect(winRateData.wins).toBe(1);
+    expect(winRateData.total).toBe(1);
+    expect(winRateData.winRate).toBe(100);
+
+    // 2. Reset account
+    const resetRes = await app.inject({ method: 'POST', url: '/api/v1/account/reset', payload: { startingBalance: 10000 } });
+    expect(resetRes.statusCode).toBe(200);
+
+    // 3. Verify fills, journal, win-rate are cleared
+    const postResetFills = await app.inject({ method: 'GET', url: '/api/v1/fills' });
+    expect(JSON.parse(postResetFills.body).length).toBe(0);
+
+    const postResetJournal = await app.inject({ method: 'GET', url: '/api/v1/journal' });
+    expect(JSON.parse(postResetJournal.body).length).toBe(0);
+
+    const postResetWinRate = await app.inject({ method: 'GET', url: '/api/v1/win-rate' });
+    const postResetWinRateData = JSON.parse(postResetWinRate.body);
+    expect(postResetWinRateData.wins).toBe(0);
+    expect(postResetWinRateData.total).toBe(0);
+
+    await server.stop();
+  });
 });

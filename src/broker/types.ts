@@ -468,6 +468,7 @@ export interface ExecutionBroker {
   getPositions(): Promise<Position[]> | Position[];
   getPosition(symbol: string): Promise<Position | undefined> | Position | undefined;
   getAccount(): Promise<AccountState> | AccountState;
+  getFills?(symbol?: string): Promise<Fill[]> | Fill[];
   resetAccount?(startingUsdt?: number): Promise<AccountState> | AccountState;
   adjustWalletBalance?(delta: number): Promise<number> | number;
 }

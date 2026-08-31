@@ -794,6 +794,7 @@ describe('PaperBroker reduce-only clamping', () => {
     expect(account.openOrdersCount).toBe(0);
     expect(broker.getPositions().length).toBe(0);
     expect(broker.getOpenOrders().length).toBe(0);
+    expect(broker.getFills().length).toBe(0);
   });
 });
 

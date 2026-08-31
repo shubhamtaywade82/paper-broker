@@ -118,4 +118,35 @@ describe('Persistence layer: shared SQLite connection (C-03)', () => {
 
     db.close();
   });
+
+  it('SnapshotStore.resetAccountSnapshots clears snapshots for the account', () => {
+    const db = new DatabaseManager(dataDir);
+    const snapshots = new SnapshotStore(`${dataDir}/snapshots`, db.raw);
+
+    snapshots.saveAccountSnapshot(
+      {
+        walletBalance: 10000,
+        unrealizedPnl: 0,
+        equity: 10000,
+        initialMargin: 0,
+        maintenanceMargin: 0,
+        availableBalance: 10000,
+        totalFees: 0,
+        totalFunding: 0,
+        totalRealizedPnl: 0,
+        openPositionsCount: 0,
+        openOrdersCount: 0,
+        liquidations: 0,
+      },
+      'paper-main'
+    );
+
+    expect(snapshots.queryAccountSnapshots('paper-main')).toHaveLength(1);
+
+    snapshots.resetAccountSnapshots('paper-main');
+
+    expect(snapshots.queryAccountSnapshots('paper-main')).toHaveLength(0);
+
+    db.close();
+  });
 });

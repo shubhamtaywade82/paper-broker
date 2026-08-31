@@ -706,7 +706,15 @@ export function useResetAccount() {
       queryClient.invalidateQueries({ queryKey: ['account'] });
       queryClient.invalidateQueries({ queryKey: ['positions'] });
       queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['open-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['fills'] });
+      queryClient.invalidateQueries({ queryKey: ['journal'] });
+      queryClient.invalidateQueries({ queryKey: ['winRate'] });
+      queryClient.invalidateQueries({ queryKey: ['win-rate'] });
+      queryClient.invalidateQueries({ queryKey: ['equity-curve'] });
+      queryClient.invalidateQueries({ queryKey: ['performance'] });
       queryClient.invalidateQueries({ queryKey: ['riskSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['risk-summary'] });
       queryClient.invalidateQueries({ queryKey: ['autonomousSnapshot'] });
     },
   });

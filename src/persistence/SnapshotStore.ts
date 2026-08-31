@@ -250,6 +250,10 @@ export class SnapshotStore {
     }));
   }
 
+  resetAccountSnapshots(accountId = 'paper-main'): void {
+    this.db.prepare(`DELETE FROM account_snapshots WHERE account_id = ?`).run(accountId);
+  }
+
   /** No-op: the underlying connection is shared and owned/closed by DatabaseManager. */
   close(): void {
     // intentionally does not close `this.db` — see constructor doc.

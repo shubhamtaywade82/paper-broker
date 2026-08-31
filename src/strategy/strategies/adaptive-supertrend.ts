@@ -56,7 +56,7 @@ export function createAdaptiveSupertrendStrategy(deps: AdaptiveSupertrendDeps): 
     name: 'AI-Based Adaptive Supertrend',
     enabled: true,
     symbols: deps.symbols ?? ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
-    intervals: deps.intervals ?? ['1m', '5m', '15m'],
+    intervals: deps.intervals ?? ['15m'],
     priority: 8,
     cooldownMs: 30_000,
     onCandleClose: (ctx, candle) => evaluateCandle(deps, paramAI, signalAI, pendingLearns, ctx, candle),

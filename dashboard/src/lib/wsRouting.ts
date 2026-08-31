@@ -36,6 +36,9 @@ export function setupWsRouting(): () => void {
       case 'signal.created':
         useTradingStore.getState().pushSignal(m.payload);
         break;
+      case 'account.reset':
+        useTradingStore.getState().reset();
+        break;
 
       // --- System --------------------------------------------------------
       case 'incident.alert':

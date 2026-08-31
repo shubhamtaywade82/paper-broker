@@ -5,6 +5,7 @@ import type {
   Order,
   Position,
   AccountState,
+  Fill,
 } from '../broker/types.js';
 import { LiveTradingGuard } from './LiveTradingGuard.js';
 import { ulid } from 'ulid';
@@ -121,6 +122,14 @@ export class ExecutionRouter implements ExecutionBroker {
 
   public async getAccount(): Promise<AccountState> {
     return this.getActiveBroker().getAccount();
+  }
+
+  public async getFills(symbol?: string): Promise<Fill[]> {
+    const broker = this.getActiveBroker();
+    if ('getFills' in broker && typeof (broker as unknown as { getFills: (sym?: string) => Promise<Fill[]> | Fill[] }).getFills === 'function') {
+      return (broker as unknown as { getFills: (sym?: string) => Promise<Fill[]> | Fill[] }).getFills(symbol);
+    }
+    return [];
   }
 
   public async resetAccount(startingUsdt?: number): Promise<AccountState> {

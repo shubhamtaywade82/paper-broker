@@ -474,7 +474,10 @@ export class PaperBroker implements ExecutionBroker {
     });
   }
 
-  getFills(): Fill[] {
+  getFills(symbol?: string): Fill[] {
+    if (symbol) {
+      return this.fills.filter((f) => f.symbol === symbol);
+    }
     return [...this.fills];
   }
 

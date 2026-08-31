@@ -933,7 +933,7 @@ export async function startEngine(): Promise<EngineHandle> {
     createAdaptiveSupertrendStrategy({
       getInstrument: (symbol) => broker.getInstrument(symbol),
       symbols,
-      intervals: timeframes,
+      intervals: ['15m'],
       isAggressive: () => aggressiveMode,
       persistencePath: `${dataDir}/adaptive_supertrend_qtable.json`,
       onSignalGenerated: (signal, sym) => {
@@ -1127,6 +1127,11 @@ export async function startEngine(): Promise<EngineHandle> {
       const startUsdt = startingBalance && startingBalance > 0 ? startingBalance : 10_000;
       const account = broker.resetAccount(startUsdt);
 
+      if (snapshots) {
+        snapshots.resetAccountSnapshots('paper-main');
+        snapshots.saveAccountSnapshot(account, 'paper-main');
+      }
+
       if (profitGoals) {
         profitGoals.resetDaily(startUsdt);
         profitGoals.resetWeekly(startUsdt);
@@ -1137,6 +1142,14 @@ export async function startEngine(): Promise<EngineHandle> {
       for (const stat of strategyPerformance.listStats()) {
         if (stat.quarantined) {
           strategyPerformance.release(stat.strategyId);
+        }
+      }
+
+      if (setupPerformance) {
+        for (const stat of setupPerformance.listStats()) {
+          if (stat.quarantined) {
+            setupPerformance.release(stat.strategyId);
+          }
         }
       }
 
