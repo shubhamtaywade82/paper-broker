@@ -50,7 +50,6 @@ import {
   createOnChainWhaleTool,
   createDocsLookupTool,
 } from './ai/tools/index.js';
-import type { ToolContext } from './ai/tools/types.js';
 import { AgentMemoryStore } from './ai/memory/AgentMemoryStore.js';
 import { SelfImprovementLoop } from './ai/SelfImprovementLoop.js';
 import { StrategyParamLearner } from './strategy/learning/StrategyParamLearner.js';
