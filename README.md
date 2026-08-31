@@ -97,7 +97,9 @@ pnpm docker:down
 | --- | --- |
 | `pnpm build` | Type-check and compile `src/` → `dist/` |
 | `pnpm start` | **Run the compiled engine — autonomous by default** |
-| `pnpm dev` | Watch-mode development (`tsx watch`) — autonomous by default |
+| `pnpm dev` | Watch-mode backend development (`tsx watch`) — autonomous by default |
+| `pnpm dev:frontend` | Launch Vite frontend dashboard (`dashboard/`) |
+| `pnpm dev:all` | **Launch both backend engine & frontend dashboard concurrently** |
 | `pnpm lint` | ESLint over `src/` |
 | `pnpm test` | Vitest unit tests (100 tests across 17 suites) |
 | `pnpm verify:complete` | Canonical 7-step full verification suite |
