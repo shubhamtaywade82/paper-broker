@@ -192,7 +192,7 @@ const EnvSchema = z.object({
   // Default 10%.
   SIZING_FALLBACK_RISK_PER_TRADE: z.coerce.number().min(0).max(1).default(0.1),
 
-  PAPER_STARTING_USDT: z.coerce.number().positive().default(10000),
+  PAPER_STARTING_USDT: z.coerce.number().positive().default(1000),
 
   // Profit goals (src/trading/goals). Disabled by default so existing
   // deployments keep their current always-trading behaviour until opted in.

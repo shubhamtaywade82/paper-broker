@@ -1696,7 +1696,7 @@ export class ApiServer {
       const startingBalance =
         typeof body.startingBalance === 'number' && body.startingBalance > 0
           ? body.startingBalance
-          : 10_000;
+          : 1_000;
 
       let account: AccountState;
       if (this.options.onResetPaperAccount) {

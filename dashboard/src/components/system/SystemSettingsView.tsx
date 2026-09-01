@@ -520,13 +520,13 @@ export function SystemSettingsView() {
       <ConfirmationModal
         isOpen={isResetModalOpen}
         title="Reset Paper Trading Account"
-        message="This will cancel all active paper orders, close all open paper positions, and reset your simulated balance back to $10,000 USDT. Daily profit goals and circuit limits will also be cleared."
-        confirmLabel="Reset Account ($10,000)"
+        message="This will cancel all active paper orders, close all open paper positions, and reset your simulated balance back to $1,000 USDT (~₹89,500 - ₹1,00,000 INR). Daily profit goals and circuit limits will also be cleared."
+        confirmLabel="Reset Account ($1,000 / ~₹1 Lakh)"
         confirmVariant="warning"
         isLoading={resetAccount.isPending}
         error={errorMessage(resetAccount.error)}
         onConfirm={() => {
-          resetAccount.mutate(10000, {
+          resetAccount.mutate(1000, {
             onSuccess: () => setIsResetModalOpen(false),
           });
         }}

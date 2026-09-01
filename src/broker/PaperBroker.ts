@@ -77,7 +77,7 @@ export class PaperBroker implements ExecutionBroker {
   constructor(config: PaperBrokerConfig) {
     this.accountId = config.accountId ?? 'paper-main';
     const fallback = (config as unknown as Record<string, unknown>)['initialBalance'];
-    const startBalance = config.startingUsdt ?? (typeof fallback === 'number' ? fallback : 10_000);
+    const startBalance = config.startingUsdt ?? (typeof fallback === 'number' ? fallback : 1_000);
     this.walletBalance = startBalance;
     this.dayStartEquity = startBalance;
     this.peakEquity = startBalance;

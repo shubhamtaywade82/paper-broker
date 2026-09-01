@@ -65,8 +65,8 @@ export function DashboardView() {
     tickers,
     account?.unrealizedPnl ?? 0
   );
-  const rawBalance = account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 10000);
-  const liveEquity = account ? rawBalance + totalUnrealizedPnl : 10000;
+  const rawBalance = account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 1000);
+  const liveEquity = account ? rawBalance + totalUnrealizedPnl : 1000;
 
   const { data: klines = [], isLoading: klinesLoading } = useKlines(selectedSymbol, timeframe, 80);
   const [beforeTs, setBeforeTs] = React.useState<number | null>(null);

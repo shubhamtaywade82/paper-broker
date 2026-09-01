@@ -59,8 +59,8 @@ export function Header() {
     account?.unrealizedPnl ?? 0
   );
   const rawBalance =
-    account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 10000);
-  const liveEquity = rawBalance + totalUnrealizedPnl;
+    account?.balance ?? account?.walletBalance ?? (account ? account.equity - account.unrealizedPnl : 1000);
+  const liveEquity = account ? rawBalance + totalUnrealizedPnl : 1000;
 
   return (
     <>
@@ -260,7 +260,7 @@ export function Header() {
               <button
                 onClick={() => setIsResetModalOpen(true)}
                 disabled={resetAccount.isPending}
-                title="Reset Paper Trading Account back to initial balance ($10,000 USDT) and clear all simulated positions"
+                title="Reset Paper Trading Account back to initial balance ($1,000 USDT / ~₹1 Lakh) and clear all simulated positions"
                 className="flex items-center gap-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -308,12 +308,12 @@ export function Header() {
       <ConfirmationModal
         isOpen={isResetModalOpen}
         title="Reset Paper Trading Account"
-        message="This will cancel all simulated orders, close all open paper positions, and reset your paper wallet balance to $10,000 USDT. Daily profit goals and circuit limits will also be reset."
-        confirmLabel="Reset Account ($10,000)"
+        message="This will cancel all simulated orders, close all open paper positions, and reset your paper wallet balance to $1,000 USDT (~₹89,500 - ₹1,00,000 INR). Daily profit goals and circuit limits will also be reset."
+        confirmLabel="Reset Account ($1,000 / ~₹1 Lakh)"
         confirmVariant="warning"
         isLoading={resetAccount.isPending}
         onConfirm={() => {
-          resetAccount.mutate(10000, {
+          resetAccount.mutate(1000, {
             onSuccess: () => setIsResetModalOpen(false),
           });
         }}
