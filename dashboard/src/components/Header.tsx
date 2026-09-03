@@ -164,7 +164,7 @@ export function Header() {
             </select>
             {Boolean(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price) && (
               <span className="text-amber-400 font-bold text-xs border-l border-[#1b2537] pl-2">
-                ${(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                {formatCurrency(livePrice[selectedSymbol] ?? tickers[selectedSymbol]?.price, selectedSymbol)}
               </span>
             )}
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />

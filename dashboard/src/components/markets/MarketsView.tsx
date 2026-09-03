@@ -77,7 +77,7 @@ export function MarketsView() {
                 )}
               </div>
               <div className="text-sm font-black text-white">
-                ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                {formatCurrency(price, sym)}
               </div>
               <div className={`text-[10px] font-bold mt-0.5 ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
                 {isPos ? '+' : ''}{(t?.change24h || 0).toFixed(2)}%
@@ -103,15 +103,15 @@ export function MarketsView() {
             <div className="flex flex-wrap items-center gap-6 text-[11px]">
               <div>
                 <span className="text-gray-500 text-[10px] block">Mark Price</span>
-                <span className="font-bold text-white">${activeLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
+                <span className="font-bold text-white">{formatCurrency(activeLtp, selectedSymbol)}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-[10px] block">24h High</span>
-                <span className="font-bold text-gray-300">${activeTicker?.high24h || 0}</span>
+                <span className="font-bold text-gray-300">{formatCurrency(activeTicker?.high24h, selectedSymbol)}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-[10px] block">24h Low</span>
-                <span className="font-bold text-gray-300">${activeTicker?.low24h || 0}</span>
+                <span className="font-bold text-gray-300">{formatCurrency(activeTicker?.low24h, selectedSymbol)}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-[10px] block">Funding Rate</span>

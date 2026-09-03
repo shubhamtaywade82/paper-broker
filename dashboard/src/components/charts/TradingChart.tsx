@@ -15,7 +15,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts';
-import { useStore } from '../../store/useStore';
+import { useStore, formatCurrency } from '../../store/useStore';
 
 export interface ChartMarker {
   time: number;
@@ -343,7 +343,7 @@ export function TradingChart({
             {symbol}
             {livePrice && (
               <span className="text-emerald-400 font-bold ml-1 text-xs">
-                ${livePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                {formatCurrency(livePrice, symbol)}
               </span>
             )}
           </span>
