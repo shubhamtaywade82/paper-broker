@@ -690,6 +690,42 @@ export class ApiServer {
       incidents: this.errorNormalizer?.getRecentIncidents(50) ?? [],
     }));
 
+    // POST /api/v1/screener/run — full-universe scan, real price/volume
+    // data only (see src/screener/), no fundamentals, no LLM. Read-only:
+    // does not place orders, does not feed the strategy engine.
+    this.app.post('/api/v1/screener/run', { preHandler: this.requireApiKey }, async (_request, reply) => {
+      if (!this.binanceClient) {
+        return reply.code(503).send({ error: 'BINANCE_CLIENT_UNAVAILABLE' });
+      }
+      const { screen } = await import('../screener/screener.js');
+      try {
+        const result = await screen(this.binanceClient, (message) => {
+          this.events.append('SCREENER_STEP', { message, engine: 'deterministic' }, { aggregateType: 'screener' });
+        });
+        this.events.append('SCREENER_RESULT', result, { aggregateType: 'screener' });
+        return result;
+      } catch (error) {
+        this.events.append('SCREENER_STEP', { message: `Scan failed: ${(error as Error).message}`, engine: 'deterministic' }, { aggregateType: 'screener' });
+        return reply.code(500).send({ error: (error as Error).message });
+      }
+    });
+
+    // GET /api/v1/screener/watchlist — the latest completed scan. Every scan
+    // is an immutable append (SCREENER_RESULT); "current" is simply "most
+    // recent" — no separate mutable watchlist row to drift out of sync.
+    this.app.get('/api/v1/screener/watchlist', async () => {
+      const events = this.events.getEvents({ type: 'SCREENER_RESULT', limit: 1 });
+      return { result: events[0]?.payload ?? null };
+    });
+
+    // GET /api/v1/screener/activity — mirrors GET /api/v1/agents/steps exactly.
+    this.app.get('/api/v1/screener/activity', async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = parseLimit(query.limit, 100);
+      const events = this.events.getEvents({ type: 'SCREENER_STEP', limit });
+      return { steps: events.map((e) => e.payload) };
+    });
+
     this.app.get('/api/v1/klines', async (request, reply) => {
       const query = request.query as { symbol?: string; interval?: string; limit?: string; before?: string };
       const symbol = (query.symbol || 'SOLUSDT').toUpperCase();
