@@ -1113,6 +1113,7 @@ export async function startEngine(): Promise<EngineHandle> {
     strategyParamLearner,
     strategySelector,
     abTestRunner,
+    binanceClient: client,
     getAggressiveMode: () => aggressiveMode,
     onSetAggressiveMode: (enabled) => {
       aggressiveMode = enabled;

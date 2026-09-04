@@ -40,6 +40,7 @@ import type { SelfImprovementLoop } from '../ai/SelfImprovementLoop.js';
 import type { StrategyParamLearner } from '../strategy/learning/StrategyParamLearner.js';
 import type { StrategySelector } from '../strategy/learning/StrategySelector.js';
 import type { ABTestRunner } from '../strategy/abtesting/ABTestRunner.js';
+import type { BinanceClient } from '@nemesis-oss/binance-sdk';
 
 const CreateOrderSchema = z.object({
   symbol: z.string().min(1),
@@ -197,6 +198,10 @@ export interface ApiServerOptions {
   strategySelector?: StrategySelector;
   /** A/B testing runner (when AGENT_AB_TESTING_ENABLED). */
   abTestRunner?: ABTestRunner;
+  /** Used by the screener routes for live universe resolution
+   * (exchangeInfo()) — optional so ApiServer can still construct in tests
+   * or contexts with no Binance client available. */
+  binanceClient?: BinanceClient;
 }
 
 export class ApiServer {
@@ -220,6 +225,7 @@ export class ApiServer {
   private indexHtmlCache?: string;
   private readonly assetCache = new Map<string, Buffer>();
   private rateLimiter?: RateLimiter;
+  private binanceClient?: BinanceClient;
 
   constructor(options: ApiServerOptions) {
     this.options = options;
@@ -233,6 +239,7 @@ export class ApiServer {
     this.supervisor = options.supervisor;
     this.errorNormalizer = options.errorNormalizer;
     this.marketState = options.marketState;
+    this.binanceClient = options.binanceClient;
     this.wsGateway = options.wsGateway ?? new WebSocketGateway();
     this.host = options.host ?? '127.0.0.1';
     this.port = options.port ?? 8080;
