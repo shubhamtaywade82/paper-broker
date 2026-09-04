@@ -83,4 +83,49 @@ describe('screen', () => {
     expect(messages.length).toBeGreaterThan(0);
     expect(messages.some((m) => /universe/i.test(m))).toBe(true);
   });
+
+  it('retries a failed benchmark fetch once, then proceeds normally on success', async () => {
+    vi.spyOn(universeModule, 'resolveUniverse').mockResolvedValue(['STRONGCOIN']);
+    let benchmarkCalls = 0;
+    vi.spyOn(candlesModule, 'fetchDailyCandles').mockImplementation(async (symbol) => {
+      if (symbol === 'BTCUSDT') {
+        benchmarkCalls++;
+        if (benchmarkCalls === 1) throw new Error('429 rate limited');
+        return series(300, 100, 0.05);
+      }
+      return series(300, 100, 0.4);
+    });
+
+    const result = await screen({} as any);
+
+    expect(benchmarkCalls).toBe(2);
+    expect(result.candidates.find((c) => c.symbol === 'STRONGCOIN')!.passed).toBe(true);
+  });
+
+  it('throws a specific error when the benchmark fetch fails persistently, not a generic fetch error', async () => {
+    vi.spyOn(universeModule, 'resolveUniverse').mockResolvedValue(['STRONGCOIN']);
+    vi.spyOn(candlesModule, 'fetchDailyCandles').mockImplementation(async (symbol) => {
+      if (symbol === 'BTCUSDT') throw new Error('429 rate limited');
+      return series(300, 100, 0.4);
+    });
+
+    await expect(screen({} as any)).rejects.toThrow(/benchmark.*BTCUSDT.*could not be fetched after retry/i);
+  });
+
+  it('retries a failed per-symbol fetch once, then treats the coin as a normal, non-skipped candidate', async () => {
+    vi.spyOn(universeModule, 'resolveUniverse').mockResolvedValue(['BTCUSDT', 'RETRYCOIN']);
+    let retryCoinCalls = 0;
+    vi.spyOn(candlesModule, 'fetchDailyCandles').mockImplementation(async (symbol) => {
+      if (symbol === 'BTCUSDT') return series(300, 100, 0.05);
+      retryCoinCalls++;
+      if (retryCoinCalls === 1) throw new Error('429 rate limited');
+      return series(300, 100, 0.4);
+    });
+
+    const result = await screen({} as any);
+
+    expect(retryCoinCalls).toBe(2);
+    expect(result.skippedFetchFailed).toEqual([]);
+    expect(result.candidates.find((c) => c.symbol === 'RETRYCOIN')!.passed).toBe(true);
+  });
 });

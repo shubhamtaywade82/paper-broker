@@ -52,7 +52,11 @@ export async function screen(
   const universe = await resolveUniverse(client);
   onProgress(`Resolved ${universe.length} USDT-M perpetuals from the live universe`);
 
-  const benchmark = await fetchDailyCandles(BENCHMARK_SYMBOL, HISTORY_DAYS);
+  const benchmarkResult = await fetchWithRetry(BENCHMARK_SYMBOL);
+  if (benchmarkResult === 'FETCH_FAILED') {
+    throw new Error(`Screener aborted: benchmark (${BENCHMARK_SYMBOL}) candles could not be fetched after retry — every candidate's relative strength depends on this.`);
+  }
+  const benchmark = benchmarkResult;
   onProgress(`Benchmark loaded: ${benchmark.length} BTCUSDT sessions for relative strength`);
 
   const candidates: ScreenerCandidate[] = [];
