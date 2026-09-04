@@ -469,6 +469,59 @@ export function useActivity(limit = 50) {
   });
 }
 
+export interface ScreenerCandidate {
+  symbol: string;
+  passed: boolean;
+  score: number;
+  horizons: Array<'SWING' | 'SHORT_TERM' | 'LONG_TERM'>;
+  metrics: {
+    close: number;
+    return20d: number | null;
+    return60d: number | null;
+    return250d: number | null;
+    pctFrom52wHigh: number | null;
+    relativeStrength60d: number | null;
+    relativeStrength250d: number | null;
+    avgTradedValue: number;
+  };
+}
+
+export interface ScreenerResult {
+  totalScreened: number;
+  totalPassed: number;
+  skippedNoHistory: string[];
+  skippedFetchFailed: string[];
+  candidates: ScreenerCandidate[];
+  topPicks: string[];
+  screenedAt: number;
+}
+
+export function useScreenerWatchlist() {
+  return useQuery({
+    queryKey: ['screener', 'watchlist'],
+    queryFn: () => fetchJson<{ result: ScreenerResult | null }>('/api/v1/screener/watchlist'),
+    refetchInterval: 30000,
+  });
+}
+
+export function useScreenerActivity(limit = 100) {
+  return useQuery({
+    queryKey: ['screener', 'activity', limit],
+    queryFn: () => fetchJson<{ steps: Array<{ message: string; engine: string }> }>(`/api/v1/screener/activity?limit=${limit}`),
+    refetchInterval: 3000,
+  });
+}
+
+export function useRunScreener() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchJson<ScreenerResult>('/api/v1/screener/run', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['screener'] });
+    },
+  });
+}
+
 export function useCreateOrder() {
   const queryClient = useQueryClient();
 
