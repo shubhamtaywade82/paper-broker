@@ -39,7 +39,12 @@ export class DiagnosticFunnelEngine {
   static runDiagnostic(rawDataset: HistoricalDataset): DiagnosticReport {
     const dataset = HistoricalDataLoader.sanitizeDataset(rawDataset);
     const store = new KlineStore();
-    const inst = this.makeDefaultInstrument(dataset.symbol);
+    // Unlike ReplayEngine, this ignored dataset.instrument entirely and
+    // always used the static config fallback (flat maintenanceMarginRate for
+    // every symbol) — matching ReplayEngine's "prefer the caller-supplied
+    // instrument" pattern so a live-resolved instrument (see
+    // binance/bootstrap.ts's resolveInstruments) is actually usable here too.
+    const inst = dataset.instrument ?? this.makeDefaultInstrument(dataset.symbol);
     const stateManager = new MarketStateManager([inst]);
     const mtfEngine = new MtfStateEngine(store, stateManager);
     const structureEngine = new MarketStructureEngine(store);

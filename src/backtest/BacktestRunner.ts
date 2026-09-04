@@ -29,6 +29,12 @@ export interface BacktestConfig {
   takerFeeRate?: number;
   makerFeeRate?: number;
   marketSlippageBps?: number;
+  /** Falls back to the static config/instruments.ts table when omitted, so a
+   * backtest stays runnable fully offline. The static table's
+   * maintenanceMarginRate is a flat 0.005 for every symbol regardless of its
+   * real risk tier — pass live-fetched instruments (see
+   * binance/bootstrap.ts's resolveInstruments) for backtest fidelity. */
+  instruments?: Instrument[];
 }
 
 interface BacktestEquityPoint {
@@ -111,7 +117,7 @@ export class BacktestRunner {
       dataDir: config.dataDir,
       accountId: config.accountId,
       startingUsdt: config.startingUsdt,
-      instruments: defaultInstruments,
+      instruments: config.instruments ?? defaultInstruments,
       takerFeeRate: config.takerFeeRate ?? 0.0004,
       makerFeeRate: config.makerFeeRate ?? 0.0002,
       marketSlippageBps: config.marketSlippageBps ?? 2,
@@ -160,7 +166,7 @@ export class BacktestRunner {
       }
     );
 
-    this.instruments = defaultInstruments;
+    this.instruments = config.instruments ?? defaultInstruments;
     this.registerStrategies();
   }
 

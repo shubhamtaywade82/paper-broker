@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { env, symbols } from './config/env.js';
-import { defaultInstruments } from './config/instruments.js';
 import { BinanceClient } from '@nemesis-oss/binance-sdk';
+import { resolveInstruments } from './binance/bootstrap.js';
 import { BinanceStreamHandler } from './binance/streams.js';
 import { MarketStateManager } from './market/MarketState.js';
 import { startEngine } from './engine.js';
@@ -79,7 +79,7 @@ async function runMonitor(): Promise<void> {
     apiSecret: env.BINANCE_API_SECRET,
   });
 
-  const marketState = new MarketStateManager(defaultInstruments);
+  const marketState = new MarketStateManager(await resolveInstruments(client, SYMBOLS));
 
   const streams = new BinanceStreamHandler(client, {
     symbols: SYMBOLS,
@@ -120,6 +120,14 @@ async function runSmcBacktest(symbol: string, days: number): Promise<void> {
   const dataset = await BinanceHistoricalFetcher.loadSolusdtDataset(days, symbol);
   const now = Date.now();
   const startTime = now - days * 24 * 60 * 60 * 1000;
+
+  // Real tick/step/margin data for backtest fidelity — the static config's
+  // maintenanceMarginRate is a flat placeholder for every symbol otherwise.
+  // No API keys required: instrumentDetails is a public endpoint, only
+  // leverageBrackets needs auth (falls back to the placeholder just for that
+  // one field if unauthenticated — see resolveInstruments).
+  const instrumentClient = new BinanceClient({ testnet: env.BINANCE_ENV === 'testnet', apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET });
+  dataset.instrument = (await resolveInstruments(instrumentClient, [symbol]))[0];
 
   const config: ReplayConfig = {
     symbol,
@@ -196,6 +204,7 @@ async function runBacktestCmd(): Promise<void> {
   console.log(`Symbols:    ${SYMBOLS.join(', ')}`);
   console.log('='.repeat(60));
 
+  const instrumentClient = new BinanceClient({ testnet: env.BINANCE_ENV === 'testnet', apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET });
   const config: BacktestConfig = {
     dataDir: './data',
     accountId: 'paper-main',
@@ -204,6 +213,7 @@ async function runBacktestCmd(): Promise<void> {
     startTime,
     endTime,
     strategies,
+    instruments: await resolveInstruments(instrumentClient, SYMBOLS),
   };
 
   const result = await runBacktest(config);

@@ -2,9 +2,8 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env, symbols, timeframes, runtimeProfile } from './config/env.js';
-import { defaultInstruments } from './config/instruments.js';
 import { BinanceClient } from '@nemesis-oss/binance-sdk';
-import { bootstrapFromBinance } from './binance/bootstrap.js';
+import { resolveInstruments } from './binance/bootstrap.js';
 import { BinanceStreamHandler } from './binance/streams.js';
 import { PaperBroker } from './broker/PaperBroker.js';
 import { MarketStateManager } from './market/MarketState.js';
@@ -114,14 +113,10 @@ export async function startEngine(): Promise<EngineHandle> {
     apiSecret: env.BINANCE_API_SECRET,
   });
 
-  let instruments = defaultInstruments;
-  const bootstrap = await bootstrapFromBinance(client, symbols);
-
-  if (bootstrap.instruments.length > 0) {
-    instruments = bootstrap.instruments;
-  } else {
-    logger.warn('Bootstrap returned no instruments, using defaults');
-  }
+  // Per-symbol fallback: a single symbol's fetch failure no longer drops it
+  // from the universe entirely, it falls back to the static config for just
+  // that symbol (see resolveInstruments doc comment in binance/bootstrap.ts).
+  const instruments = await resolveInstruments(client, symbols);
 
   const marketState = new MarketStateManager(instruments);
 

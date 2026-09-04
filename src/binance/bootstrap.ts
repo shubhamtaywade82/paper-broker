@@ -1,6 +1,7 @@
 import type { BinanceClient } from '@nemesis-oss/binance-sdk';
 import type { Instrument } from '../broker/types.js';
 import { env } from '../config/env.js';
+import { getInstrumentConfig } from '../config/instruments.js';
 
 export interface BootstrapResult {
   instruments: Instrument[];
@@ -54,6 +55,13 @@ export async function bootstrapFromBinance(
       const allBrackets = leverageBracket ?? [];
       const symbolBracket = allBrackets.find((b) => b.symbol === symbol);
       const bracket = symbolBracket ?? allBrackets[0];
+      if (!bracket) {
+        // No leverage-bracket data (typically: no API credentials, since that
+        // endpoint requires auth). 0.005 here is a placeholder, not a fetched
+        // value — every symbol would otherwise silently share one flat
+        // maintenance-margin rate regardless of its real risk tier.
+        console.warn(`[Bootstrap] ${symbol}: no leverage brackets available (auth=${hasAuth}) — using placeholder maintMarginRate=0.005, not a real per-symbol value`);
+      }
       const maintMarginRate = String(bracket?.brackets?.[0]?.maintMarginRatio ?? 0.005);
 
       const instrument: Instrument = {
@@ -93,4 +101,44 @@ export async function bootstrapFromBinance(
   }
 
   return { instruments, markPrices, fundingRates };
+}
+
+/**
+ * Live instrument config, per symbol, falling back to the static table
+ * (config/instruments.ts) only for symbols the live fetch didn't cover.
+ *
+ * `bootstrapFromBinance` already fetches real tick/step sizes and leverage
+ * brackets, but only `engine.ts` (the live trading path) ever called it — the
+ * backtest/replay/diagnostic paths always used the static table, whose
+ * `maintenanceMarginRate` is a flat 0.005 for every symbol regardless of its
+ * real risk tier. That silently mispriced every backtest's liquidation
+ * distance and available margin. This makes the live data the default
+ * everywhere a client is available, while staying fully offline (using only
+ * the static table) when one is not — a backtest must still be runnable
+ * without network access or API keys.
+ *
+ * Also fixes a narrower bug in the caller pattern this replaces: falling back
+ * to the static table only when the ENTIRE bootstrap failed (`instruments.
+ * length > 0` in engine.ts) meant a single symbol's fetch failure silently
+ * dropped that symbol from the universe instead of falling back to a static
+ * entry for just that one symbol.
+ */
+export async function resolveInstruments(
+  client: BinanceClient | undefined,
+  symbols: string[]
+): Promise<Instrument[]> {
+  if (!client) {
+    console.log(`[Instruments] No Binance client provided — using static config for ${symbols.length} symbol(s) (offline mode)`);
+    return symbols.map((symbol) => getInstrumentConfig(symbol));
+  }
+
+  const { instruments: live } = await bootstrapFromBinance(client, symbols);
+  const bySymbol = new Map(live.map((i) => [i.symbol, i]));
+
+  return symbols.map((symbol) => {
+    const fetched = bySymbol.get(symbol);
+    if (fetched) return fetched;
+    console.warn(`[Instruments] ${symbol}: live fetch failed — falling back to static config for this symbol only`);
+    return getInstrumentConfig(symbol);
+  });
 }
