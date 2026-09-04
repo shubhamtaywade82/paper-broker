@@ -66,4 +66,33 @@ describe('performanceScore', () => {
     expect(score).toBeGreaterThanOrEqual(0);
     expect(score).toBeLessThanOrEqual(100);
   });
+
+  it('scores lower when relative strength is null (no benchmark) than with a known outperformance', () => {
+    const bench = series(300, 100, 0.05);
+    const withBenchmark = computePerformance(series(300, 100, 0.3), bench)!;
+    const withoutBenchmark = computePerformance(series(300, 100, 0.3))!;
+
+    // Both have same internal returns/trend, but withoutBenchmark has null relativeStrength fields
+    expect(withoutBenchmark.relativeStrength60d).toBeNull();
+    expect(withoutBenchmark.relativeStrength250d).toBeNull();
+    expect(withBenchmark.relativeStrength60d).not.toBeNull();
+    expect(withBenchmark.relativeStrength250d).not.toBeNull();
+
+    // Null relative strength should score lower than a measured outperformance
+    const scoreWithBench = performanceScore(withBenchmark, classifyHorizons(withBenchmark));
+    const scoreWithoutBench = performanceScore(withoutBenchmark, classifyHorizons(withoutBenchmark));
+    expect(scoreWithoutBench).toBeLessThan(scoreWithBench);
+  });
+
+  it('handles partial relative strength history (60d but not 250d)', () => {
+    const p = computePerformance(series(120, 100, 0.3), series(120, 100, 0.05))!;
+
+    // 120 candles: enough for 60d return but not 250d
+    expect(p.relativeStrength60d).not.toBeNull();
+    expect(p.relativeStrength250d).toBeNull();
+
+    const score = performanceScore(p, classifyHorizons(p));
+    expect(score).toBeGreaterThanOrEqual(0);
+    expect(score).toBeLessThanOrEqual(100);
+  });
 });

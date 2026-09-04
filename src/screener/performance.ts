@@ -126,8 +126,8 @@ export function classifyHorizons(p: PerformanceMetrics): TradeHorizon[] {
 export function performanceScore(p: PerformanceMetrics, _horizons: TradeHorizon[]): number {
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-  const rs60 = clamp((p.relativeStrength60d ?? 0) + 10, 0, 40);
-  const rs250 = clamp(((p.relativeStrength250d ?? 0) + 20) / 2, 0, 25);
+  const rs60 = p.relativeStrength60d != null ? clamp(p.relativeStrength60d + 10, 0, 40) : 0;
+  const rs250 = p.relativeStrength250d != null ? clamp((p.relativeStrength250d + 20) / 2, 0, 25) : 0;
   const trend = [
     p.sma20 != null && p.close > p.sma20,
     p.sma50 != null && p.close > p.sma50,
