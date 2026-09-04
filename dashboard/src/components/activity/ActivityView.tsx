@@ -35,6 +35,12 @@ function formatEventSummary(evt: LiveEventItem): string {
   if (evt.type === 'risk' || evt.type === 'risk.alert') {
     return `${p.symbol || 'GLOBAL'} ${p.rule || 'ALERT'}: ${p.message || p.action || ''}`;
   }
+  if (evt.type === 'SCREENER_STEP') {
+    return `[SCREENER] ${p.message || ''}`;
+  }
+  if (evt.type === 'SCREENER_RESULT') {
+    return `[SCREENER] Scan complete: ${p.totalPassed}/${p.totalScreened} passed. Top: ${(p.topPicks as string[] | undefined)?.join(', ') || 'none'}`;
+  }
   return JSON.stringify(p);
 }
 
