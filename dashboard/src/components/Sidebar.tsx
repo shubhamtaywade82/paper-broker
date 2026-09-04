@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   Bot,
   FlaskConical,
+  Radar,
   ShieldAlert,
   Radio,
   Settings,
@@ -23,6 +24,7 @@ const mainNavItems: NavItem[] = [
   { id: 'trading', label: 'Trading', icon: ArrowLeftRight },
   { id: 'agent', label: 'Agent', badge: 'AI', icon: Bot },
   { id: 'research', label: 'Research', icon: FlaskConical },
+  { id: 'screener', label: 'Screener', icon: Radar },
   { id: 'risk', label: 'Risk Engine', icon: ShieldAlert },
 ];
 

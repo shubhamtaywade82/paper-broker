@@ -6,6 +6,7 @@ export type WorkspaceTab =
   | 'trading'
   | 'agent'
   | 'research'
+  | 'screener'
   | 'risk'
   | 'activity'
   | 'system';
@@ -265,6 +266,7 @@ const VALID_TABS: WorkspaceTab[] = [
   'trading',
   'agent',
   'research',
+  'screener',
   'risk',
   'activity',
   'system',

@@ -11,6 +11,7 @@ import { TradingView } from './components/trading/TradingView';
 import { AgentControlCenterView } from './components/agent/AgentControlCenterView';
 import { AgentActivityToasts } from './components/agent/AgentActivityToasts';
 import { ResearchView } from './components/research/ResearchView';
+import { ScreenerView } from './components/screener/ScreenerView';
 import { RiskView } from './components/risk/RiskView';
 import { ActivityView } from './components/activity/ActivityView';
 import { SystemSettingsView } from './components/system/SystemSettingsView';
@@ -43,6 +44,7 @@ function AppContent() {
         'trading',
         'agent',
         'research',
+        'screener',
         'risk',
         'activity',
         'system',
@@ -71,6 +73,7 @@ function AppContent() {
         'trading',
         'agent',
         'research',
+        'screener',
         'risk',
         'activity',
         'system',
@@ -99,6 +102,7 @@ function AppContent() {
           {activeTab === 'trading' && <TradingView />}
           {activeTab === 'agent' && <AgentControlCenterView />}
           {activeTab === 'research' && <ResearchView />}
+          {activeTab === 'screener' && <ScreenerView />}
           {activeTab === 'risk' && <RiskView />}
           {activeTab === 'activity' && <ActivityView />}
           {activeTab === 'system' && <SystemSettingsView />}
