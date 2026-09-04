@@ -373,7 +373,16 @@ export class PaperBroker implements ExecutionBroker {
       this.totalFunding = D(this.totalFunding).add(payment).toNumber();
 
       position.totalFunding = D(position.totalFunding).add(payment).toNumber();
-      position.unrealizedPnl = D(position.unrealizedPnl).sub(payment).toNumber();
+      // Found live: this method's own trailing recalculateAccount() call
+      // unconditionally recomputes unrealizedPnl as pure qty*(mark-entry) for
+      // every open position, immediately overwriting whatever this line set —
+      // so it never survives past applyFunding() returning. Worse, the
+      // persister?.savePosition() call a few lines below fires BEFORE that
+      // overwrite, so the persisted row briefly disagreed with the in-memory
+      // value the very next read would see. Deleting it changes nothing about
+      // what a caller ever actually observed; unrealizedPnl staying
+      // funding-free also matches how real exchanges report it (funding is a
+      // wallet-balance transfer, tracked separately via totalFunding here).
 
       const fundingPayment: FundingPayment = {
         id: ulid(),

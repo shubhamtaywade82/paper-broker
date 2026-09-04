@@ -458,6 +458,46 @@ describe('PaperBroker', () => {
     expect(broker.getAccount().totalFunding).toBeCloseTo(0.01, 8);
   });
 
+  it('leaves position.unrealizedPnl as pure price PnL after funding, and persists that same value', () => {
+    // Found live: applyFunding() used to subtract the funding payment from
+    // position.unrealizedPnl, but its own trailing recalculateAccount() call
+    // immediately overwrote that with the pure qty*(mark-entry) value — the
+    // subtraction never survived past applyFunding() returning. Worse, the
+    // persister.savePosition() call fired BEFORE that overwrite, so a
+    // reloaded position briefly disagreed with what getPosition() returned
+    // for the exact same instant.
+    const savedPositions: Array<{ unrealizedPnl: number }> = [];
+    const persister = {
+      savePosition: vi.fn((p: any) => savedPositions.push({ unrealizedPnl: p.unrealizedPnl })),
+      saveFundingPayment: vi.fn(),
+      saveOrder: vi.fn(),
+      saveFill: vi.fn(),
+      saveLedgerEntry: vi.fn(),
+      saveTransaction: vi.fn(),
+    };
+
+    const fundedBroker = new PaperBroker({
+      dataDir: '/tmp/paper-broker-test',
+      accountId: 'test-account',
+      startingUsdt: 10000,
+      instruments: [BTC],
+      persister: persister as any,
+    });
+
+    fundedBroker.onMarket({ symbol: 'BTCUSDT', bid: 100, ask: 100.1, last: 100.05, mark: 100, fundingRate: 0.001 });
+    fundedBroker.submitOrder({ symbol: 'BTCUSDT', side: 'BUY', type: 'MARKET', quantity: 0.1, leverage: 5 });
+
+    const pureUnrealizedPnl = fundedBroker.getPosition('BTCUSDT')!.unrealizedPnl;
+    savedPositions.length = 0; // isolate to the savePosition call(s) applyFunding() itself triggers
+    fundedBroker.applyFunding();
+
+    expect(fundedBroker.getPosition('BTCUSDT')!.unrealizedPnl).toBeCloseTo(pureUnrealizedPnl, 8); // unaffected by funding
+    expect(savedPositions.length).toBeGreaterThan(0);
+    for (const saved of savedPositions) {
+      expect(saved.unrealizedPnl).toBeCloseTo(pureUnrealizedPnl, 8); // persisted value matches live value
+    }
+  });
+
   it('emits order, fill, and position events to the event sink', () => {
     const sink: OrderEventSink = {
       appendOrderEvent: vi.fn(),
