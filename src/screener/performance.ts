@@ -30,15 +30,20 @@ const TRADING_DAYS = { swing: 20, short: 60, long: 250 } as const;
 function sma(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   let sum = 0;
-  for (let i = closes.length - period; i < closes.length; i++) sum += closes[i];
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const val = closes[i];
+    if (val == null) return null;
+    sum += val;
+  }
   return sum / period;
 }
 
 function pctReturn(closes: number[], period: number): number | null {
   if (closes.length <= period) return null;
   const past = closes[closes.length - 1 - period];
-  if (!(past > 0)) return null;
-  return ((closes[closes.length - 1] - past) / past) * 100;
+  const latest = closes[closes.length - 1];
+  if (past == null || latest == null || !(past > 0)) return null;
+  return ((latest - past) / past) * 100;
 }
 
 function volatilityPct(closes: number[], period = 20): number | null {
@@ -46,7 +51,9 @@ function volatilityPct(closes: number[], period = 20): number | null {
   const rets: number[] = [];
   for (let i = closes.length - period; i < closes.length; i++) {
     const prev = closes[i - 1];
-    if (prev > 0) rets.push((closes[i] - prev) / prev);
+    const current = closes[i];
+    if (prev == null || current == null || !(prev > 0)) continue;
+    rets.push((current - prev) / prev);
   }
   if (rets.length < 2) return null;
   const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
@@ -58,7 +65,7 @@ export function computePerformance(candles: Candle[], benchmark?: Candle[]): Per
   if (candles.length < 60) return null;
   const closes = candles.map((c) => c.close);
   const close = closes[closes.length - 1];
-  if (!(close > 0)) return null;
+  if (close == null || !(close > 0)) return null;
 
   const window = candles.slice(-TRADING_DAYS.long);
   const high52w = Math.max(...window.map((c) => c.high));
