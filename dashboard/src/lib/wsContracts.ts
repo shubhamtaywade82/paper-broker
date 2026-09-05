@@ -149,6 +149,19 @@ export const AutonomousRegimeSchema = z.object({
   confirmations: z.number().optional(),
 });
 
+/**
+ * Market-intelligence analysis broadcast (feature/market-intelligence-layer).
+ * The full MarketAnalysis payload is rendered defensively by the UI — only
+ * the envelope is validated here, mirroring how the other autonomous event
+ * schemas stay permissive about fields the panel doesn't read directly.
+ */
+export const AutonomousAnalysisSchema = z.object({
+  cycleId: z.string(),
+  symbol: z.string(),
+  /** Full MarketAnalysis object — see src/analysis/types.ts on the backend. */
+  analysis: z.unknown(),
+});
+
 export const AutonomousSignalSchema = z.object({
   cycleId: z.string(),
   symbol: z.string(),
@@ -262,6 +275,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('agent.autonomous.cycle'), payload: AutonomousCycleSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.forming'), payload: AutonomousFormingSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.regime'), payload: AutonomousRegimeSchema, timestampUtc: z.string().optional() }),
+  z.object({ type: z.literal('agent.autonomous.analysis'), payload: AutonomousAnalysisSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.signal'), payload: AutonomousSignalSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.rejected'), payload: AutonomousRejectedSchema, timestampUtc: z.string().optional() }),
   z.object({ type: z.literal('agent.autonomous.circuit_breaker'), payload: AutonomousCircuitBreakerSchema, timestampUtc: z.string().optional() }),
@@ -289,6 +303,7 @@ export type Incident = z.infer<typeof IncidentSchema>;
 export type AutonomousCycle = z.infer<typeof AutonomousCycleSchema>;
 export type AutonomousForming = z.infer<typeof AutonomousFormingSchema>;
 export type AutonomousRegime = z.infer<typeof AutonomousRegimeSchema>;
+export type AutonomousAnalysis = z.infer<typeof AutonomousAnalysisSchema>;
 export type AutonomousSignal = z.infer<typeof AutonomousSignalSchema>;
 export type AutonomousRejected = z.infer<typeof AutonomousRejectedSchema>;
 export type AutonomousCircuitBreaker = z.infer<typeof AutonomousCircuitBreakerSchema>;

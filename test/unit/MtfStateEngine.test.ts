@@ -57,7 +57,7 @@ function populateCandles(
 }
 
 describe('Phase 2 — Multi-Timeframe State Synchronization Engine', () => {
-  it('computes isolated timeframe states for 4h, 1h, 15m, and 5m', () => {
+  it('computes isolated timeframe states for 4h, 2h, 1h, 15m, and 5m', () => {
     const store = new KlineStore();
     const inst = makeMockInstrument();
     const manager = new MarketStateManager([inst]);
@@ -67,6 +67,7 @@ describe('Phase 2 — Multi-Timeframe State Synchronization Engine', () => {
     const endTs = 1700208000000;
     // Populate backward from endTs so all timeframes finish at endTs
     populateCandles(store, 'SOLUSDT', '4h', MIN_CLOSED_CANDLES['4h'], endTs - MIN_CLOSED_CANDLES['4h'] * TIMEFRAME_MS['4h']);
+    populateCandles(store, 'SOLUSDT', '2h', MIN_CLOSED_CANDLES['2h'], endTs - MIN_CLOSED_CANDLES['2h'] * TIMEFRAME_MS['2h']);
     populateCandles(store, 'SOLUSDT', '1h', MIN_CLOSED_CANDLES['1h'], endTs - MIN_CLOSED_CANDLES['1h'] * TIMEFRAME_MS['1h']);
     populateCandles(store, 'SOLUSDT', '15m', MIN_CLOSED_CANDLES['15m'], endTs - MIN_CLOSED_CANDLES['15m'] * TIMEFRAME_MS['15m']);
     populateCandles(store, 'SOLUSDT', '5m', MIN_CLOSED_CANDLES['5m'], endTs - MIN_CLOSED_CANDLES['5m'] * TIMEFRAME_MS['5m']);
@@ -77,11 +78,29 @@ describe('Phase 2 — Multi-Timeframe State Synchronization Engine', () => {
     const state = engine.computeState('SOLUSDT', endTs);
     expect(state.symbol).toBe('SOLUSDT');
     expect(state.timeframes['4h'].candleCount).toBe(MIN_CLOSED_CANDLES['4h']);
+    expect(state.timeframes['2h'].candleCount).toBe(MIN_CLOSED_CANDLES['2h']);
     expect(state.timeframes['1h'].candleCount).toBe(MIN_CLOSED_CANDLES['1h']);
     expect(state.timeframes['15m'].candleCount).toBe(MIN_CLOSED_CANDLES['15m']);
     expect(state.timeframes['5m'].candleCount).toBe(MIN_CLOSED_CANDLES['5m']);
     expect(state.isFullySynchronized).toBe(true);
     expect(state.overallSyncStatus).toBe('SYNCHRONIZED');
+  });
+
+  it('treats a missing 2h series as MISSING_DATA and degrades the overall state', () => {
+    const store = new KlineStore();
+    const engine = new MtfStateEngine(store);
+    const endTs = 1700208000000;
+
+    // Everything EXCEPT 2h.
+    populateCandles(store, 'SOLUSDT', '4h', MIN_CLOSED_CANDLES['4h'], endTs - MIN_CLOSED_CANDLES['4h'] * TIMEFRAME_MS['4h']);
+    populateCandles(store, 'SOLUSDT', '1h', MIN_CLOSED_CANDLES['1h'], endTs - MIN_CLOSED_CANDLES['1h'] * TIMEFRAME_MS['1h']);
+    populateCandles(store, 'SOLUSDT', '15m', MIN_CLOSED_CANDLES['15m'], endTs - MIN_CLOSED_CANDLES['15m'] * TIMEFRAME_MS['15m']);
+    populateCandles(store, 'SOLUSDT', '5m', MIN_CLOSED_CANDLES['5m'], endTs - MIN_CLOSED_CANDLES['5m'] * TIMEFRAME_MS['5m']);
+
+    const state = engine.computeState('SOLUSDT', endTs);
+    expect(state.timeframes['2h'].syncStatus).toBe('MISSING_DATA');
+    expect(state.isFullySynchronized).toBe(false);
+    expect(state.overallSyncStatus).toBe('MISSING_DATA');
   });
 
   it('strictly separates developing candles from confirmed closed candles', () => {

@@ -3,6 +3,7 @@ import type {
   AutonomousCycle,
   AutonomousForming,
   AutonomousRegime,
+  AutonomousAnalysis,
   AutonomousSignal,
   AutonomousRejected,
   AutonomousCircuitBreaker,
@@ -66,6 +67,8 @@ export interface AutonomousStore {
   exits: AutonomousExit[];
   /** Recent learning-loop adjustments — newest first. */
   learning: AutonomousLearning[];
+  /** Latest market-intelligence analysis per symbol (kept per-symbol). */
+  analyses: Record<string, AutonomousAnalysis['analysis']>;
 
   /** Circuit breaker current state. */
   breaker: CircuitBreakerState;
@@ -80,6 +83,7 @@ export interface AutonomousStore {
   pushRejection: (r: AutonomousRejected) => void;
   pushExit: (e: AutonomousExit) => void;
   pushLearning: (l: AutonomousLearning) => void;
+  pushAnalysis: (a: AutonomousAnalysis) => void;
   setCircuitBreaker: (cb: AutonomousCircuitBreaker) => void;
   setHealth: (h: AutonomousHealth) => void;
   /**
@@ -126,6 +130,7 @@ export const useAutonomousStore = create<AutonomousStore>()((set) => ({
   rejections: [],
   exits: [],
   learning: [],
+  analyses: {},
   breaker: INITIAL_BREAKER,
   health: null,
 
@@ -152,6 +157,9 @@ export const useAutonomousStore = create<AutonomousStore>()((set) => ({
 
   pushLearning: (l) =>
     set((st) => ({ learning: [l, ...st.learning].slice(0, MAX_LEARNING) })),
+
+  pushAnalysis: (a) =>
+    set((st) => ({ analyses: { ...st.analyses, [a.symbol]: a.analysis } })),
 
   setCircuitBreaker: (cb) =>
     set(() => {
@@ -217,6 +225,7 @@ export const useAutonomousStore = create<AutonomousStore>()((set) => ({
       rejections: [],
       exits: [],
       learning: [],
+      analyses: {},
       breaker: INITIAL_BREAKER,
       health: null,
     })),
