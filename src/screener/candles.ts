@@ -18,7 +18,8 @@ export async function fetchDailyCandles(symbol: string, limit = 400): Promise<Ca
   if (!Array.isArray(data)) {
     throw new Error(`Binance klines response for ${symbol} was not an array — malformed or an error payload: ${JSON.stringify(data)}`);
   }
-  return (data as Array<[number, string, string, string, string, string, number]>).map((item) => ({
+  // Binance's real kline row has 12 fields; only indices 0-6 are read here.
+  return (data as Array<[number, string, string, string, string, string, number, string, number, string, string, string]>).map((item) => ({
     symbol,
     interval: '1d',
     openTime: item[0],

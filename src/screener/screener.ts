@@ -20,6 +20,7 @@ export interface ScreenerCandidate {
 }
 
 export interface ScreenerResult {
+  universeSize: number;
   totalScreened: number;
   totalPassed: number;
   skippedNoHistory: string[];
@@ -65,7 +66,8 @@ export async function screen(
   let done = 0;
 
   for (const symbol of universe) {
-    const candles = await fetchWithRetry(symbol);
+    // BTCUSDT was already fetched above as the benchmark — avoid fetching it twice.
+    const candles = symbol === BENCHMARK_SYMBOL ? benchmark : await fetchWithRetry(symbol);
     done++;
 
     if (candles === 'FETCH_FAILED') {
@@ -80,7 +82,7 @@ export async function screen(
         candidates.push({
           symbol,
           passed: liquid && horizons.length > 0,
-          score: performanceScore(metrics, horizons),
+          score: performanceScore(metrics),
           horizons,
           metrics,
         });
@@ -102,6 +104,7 @@ export async function screen(
   const passedList = candidates.filter((c) => c.passed);
 
   return {
+    universeSize: universe.length,
     totalScreened: candidates.length,
     totalPassed: passedList.length,
     skippedNoHistory,

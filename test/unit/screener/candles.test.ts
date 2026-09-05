@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fetchDailyCandles } from '../../../src/screener/candles.js';
 
+// Real Binance klines rows have 12 fields; fetchDailyCandles only reads 0-6.
+// The trailing 5 (quoteAssetVolume..ignore) are realistic placeholders.
 function rawKline(closeTime: number, open: number, high: number, low: number, close: number, volume: number) {
-  return [closeTime - 86400000, String(open), String(high), String(low), String(close), String(volume), closeTime];
+  return [
+    closeTime - 86400000, String(open), String(high), String(low), String(close), String(volume), closeTime,
+    '0', 0, '0', '0', '0',
+  ];
 }
 
 describe('fetchDailyCandles', () => {

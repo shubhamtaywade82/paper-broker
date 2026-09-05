@@ -31,7 +31,7 @@ function AppContent() {
   useDashboard();
   const { activeTab, setActiveTab } = useStore();
 
-  // Keyboard navigation shortcuts: 1-8 for workspace switching
+  // Keyboard navigation shortcuts: 1-9 for workspace switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
@@ -51,7 +51,7 @@ function AppContent() {
       ];
 
       const keyNum = parseInt(e.key, 10);
-      if (keyNum >= 1 && keyNum <= 8) {
+      if (keyNum >= 1 && keyNum <= 9) {
         const targetTab = tabs[keyNum - 1];
         if (targetTab) {
           setActiveTab(targetTab);

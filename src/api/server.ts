@@ -33,6 +33,7 @@ import type { ExchangeReconciler } from '../execution/ExchangeReconciler.js';
 import type { RiskConfig } from '../trading/risk/types.js';
 import { DEFAULT_RISK_CONFIG } from '../trading/risk/RiskLimits.js';
 import { RateLimiter, DEFAULT_RATE_LIMITS, type RateLimiterOptions, type RateLimitScope } from './RateLimiter.js';
+import { screen } from '../screener/screener.js';
 // Agentic layer imports (feature/agentic-upgrade)
 import type { ToolRegistry } from '../ai/tools/registry.js';
 import type { AgentMemoryStore } from '../ai/memory/AgentMemoryStore.js';
@@ -222,6 +223,7 @@ export class ApiServer {
   private startedAt = Date.now();
   private options: ApiServerOptions;
   private backtestInFlight = false;
+  private screenerInFlight = false;
   private indexHtmlCache?: string;
   private readonly assetCache = new Map<string, Buffer>();
   private rateLimiter?: RateLimiter;
@@ -697,16 +699,36 @@ export class ApiServer {
       if (!this.binanceClient) {
         return reply.code(503).send({ error: 'BINANCE_CLIENT_UNAVAILABLE' });
       }
-      const { screen } = await import('../screener/screener.js');
+      // Each scan makes ~500+ sequential Binance calls; a second concurrent scan
+      // risks IP rate-limiting/banning, which would also degrade the live
+      // trading engine's market data (shared IP). Mirrors backtestInFlight above.
+      if (this.screenerInFlight) {
+        return reply.code(429).send({ error: 'SCREENER_IN_PROGRESS', message: 'A screener scan is already in progress' });
+      }
+      this.screenerInFlight = true;
       try {
         const result = await screen(this.binanceClient, (message) => {
           this.events.append('SCREENER_STEP', { message, engine: 'deterministic' }, { aggregateType: 'screener' });
         });
-        this.events.append('SCREENER_RESULT', result, { aggregateType: 'screener' });
+        // Persist a slimmed view: the dashboard's global activity feed polls
+        // this every 5s, and ScreenerView only ever reads `.passed` candidates
+        // — the full ~522-candidate/16-field payload was dead weight there.
+        this.events.append('SCREENER_RESULT', {
+          totalScreened: result.totalScreened,
+          totalPassed: result.totalPassed,
+          skippedNoHistory: result.skippedNoHistory,
+          skippedFetchFailed: result.skippedFetchFailed,
+          candidates: result.candidates.filter((c) => c.passed),
+          topPicks: result.topPicks,
+          screenedAt: result.screenedAt,
+          engine: 'deterministic',
+        }, { aggregateType: 'screener' });
         return result;
       } catch (error) {
         this.events.append('SCREENER_STEP', { message: `Scan failed: ${(error as Error).message}`, engine: 'deterministic' }, { aggregateType: 'screener' });
         return reply.code(500).send({ error: (error as Error).message });
+      } finally {
+        this.screenerInFlight = false;
       }
     });
 

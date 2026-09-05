@@ -1,4 +1,12 @@
-import type { BinanceClient } from '@nemesis-oss/binance-sdk';
+import type { BinanceClient, ExchangeSymbol } from '@nemesis-oss/binance-sdk';
+
+/** `contractType` is real on the live exchangeInfo response but not part of
+ * the SDK's typed ExchangeSymbolSchema — widen just that one field instead
+ * of casting the whole symbol object to `any` (which would also swallow a
+ * typo in `symbol`/`status`/`baseAsset`/`quoteAsset`, all of which ARE typed). */
+interface PerpetualSymbol extends ExchangeSymbol {
+  contractType?: string;
+}
 
 /**
  * Every live, tradable USDT-margined perpetual on Binance Futures — resolved
@@ -9,7 +17,7 @@ import type { BinanceClient } from '@nemesis-oss/binance-sdk';
  */
 export async function resolveUniverse(client: BinanceClient): Promise<string[]> {
   const info = await client.futures.market.exchangeInfo();
-  return info.symbols
-    .filter((s: any) => s.status === 'TRADING' && s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT')
-    .map((s: any) => s.symbol);
+  return (info.symbols as PerpetualSymbol[])
+    .filter((s) => s.status === 'TRADING' && s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT')
+    .map((s) => s.symbol);
 }

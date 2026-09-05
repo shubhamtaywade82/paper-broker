@@ -49,7 +49,7 @@ function classifyStream(type: string, explicitStream?: string): string {
     return explicitStream;
   }
   const t = type.toLowerCase();
-  if (t.includes('agent') || t.includes('cycle') || t.includes('signal') || t.includes('debate') || t.includes('analyst')) {
+  if (t.includes('agent') || t.includes('cycle') || t.includes('signal') || t.includes('debate') || t.includes('analyst') || t.includes('screener')) {
     return 'agent';
   }
   if (t.includes('order') || t.includes('position') || t.includes('fill') || t.includes('trade_intent')) {

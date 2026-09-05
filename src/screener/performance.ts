@@ -96,7 +96,10 @@ export function computePerformance(candles: Candle[], benchmark?: Candle[]): Per
     sma200Rising: sma200 != null && sma200Prev != null ? sma200 > sma200Prev : null,
     high52w,
     low52w,
-    pctFrom52wHigh: high52w > 0 ? ((close - high52w) / high52w) * 100 : null,
+    // A high/low computed from fewer than 250 sessions isn't a real 52-week
+    // range — a newly-listed coin would trivially look "near its high" with
+    // no real year of history to have fallen from. Fail closed like sma200Rising.
+    pctFrom52wHigh: candles.length >= TRADING_DAYS.long && high52w > 0 ? ((close - high52w) / high52w) * 100 : null,
     volatilityPct: volatilityPct(closes),
     avgTradedValue,
     relativeStrength60d: relativeStrength(TRADING_DAYS.short),
@@ -130,7 +133,7 @@ export function classifyHorizons(p: PerformanceMetrics): TradeHorizon[] {
 
 /** 0-100 composite, weighted toward relative strength with trend alignment
  * as confirmation. */
-export function performanceScore(p: PerformanceMetrics, _horizons: TradeHorizon[]): number {
+export function performanceScore(p: PerformanceMetrics): number {
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
   const rs60 = p.relativeStrength60d != null ? clamp(p.relativeStrength60d + 10, 0, 40) : 0;

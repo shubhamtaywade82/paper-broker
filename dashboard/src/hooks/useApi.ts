@@ -487,6 +487,7 @@ export interface ScreenerCandidate {
 }
 
 export interface ScreenerResult {
+  universeSize: number;
   totalScreened: number;
   totalPassed: number;
   skippedNoHistory: string[];

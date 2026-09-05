@@ -76,6 +76,65 @@ describe('screener routes', () => {
     await server.stop();
   });
 
+  it('POST /api/v1/screener/run rejects a concurrent scan with 429 SCREENER_IN_PROGRESS', async () => {
+    let resolveScreen!: (v: unknown) => void;
+    vi.spyOn(screenerModule, 'screen').mockImplementation(
+      () => new Promise((resolve) => { resolveScreen = resolve; })
+    );
+
+    const { server } = makeServer({ apiKey: 'test-key' });
+    await server.start();
+    const app = server.getApp();
+
+    const firstRequest = app.inject({
+      method: 'POST', url: '/api/v1/screener/run',
+      headers: { 'x-api-key': 'test-key' },
+    });
+    await new Promise((r) => setImmediate(r)); // let the first request enter the handler
+
+    const secondRes = await app.inject({
+      method: 'POST', url: '/api/v1/screener/run',
+      headers: { 'x-api-key': 'test-key' },
+    });
+    expect(secondRes.statusCode).toBe(429);
+    expect(JSON.parse(secondRes.body).error).toBe('SCREENER_IN_PROGRESS');
+
+    resolveScreen({
+      totalScreened: 0, totalPassed: 0, skippedNoHistory: [], skippedFetchFailed: [],
+      candidates: [], topPicks: [], screenedAt: Date.now(), universeSize: 0,
+    });
+    const firstRes = await firstRequest;
+    expect(firstRes.statusCode).toBe(200);
+
+    await server.stop();
+  });
+
+  it('POST /api/v1/screener/run allows a new scan once the previous one finished (even after an error)', async () => {
+    vi.spyOn(screenerModule, 'screen').mockRejectedValueOnce(new Error('boom'));
+
+    const { server } = makeServer({ apiKey: 'test-key' });
+    await server.start();
+    const app = server.getApp();
+
+    const failedRes = await app.inject({
+      method: 'POST', url: '/api/v1/screener/run',
+      headers: { 'x-api-key': 'test-key' },
+    });
+    expect(failedRes.statusCode).toBe(500);
+
+    vi.spyOn(screenerModule, 'screen').mockResolvedValueOnce({
+      totalScreened: 0, totalPassed: 0, skippedNoHistory: [], skippedFetchFailed: [],
+      candidates: [], topPicks: [], screenedAt: Date.now(), universeSize: 0,
+    } as never);
+    const okRes = await app.inject({
+      method: 'POST', url: '/api/v1/screener/run',
+      headers: { 'x-api-key': 'test-key' },
+    });
+    expect(okRes.statusCode).toBe(200);
+
+    await server.stop();
+  });
+
   it('POST /api/v1/screener/run rejects without the API key, matching every other mutating route', async () => {
     const { server } = makeServer({ apiKey: 'test-key' });
     await server.start();
