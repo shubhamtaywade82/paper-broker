@@ -692,6 +692,21 @@ export class ApiServer {
       incidents: this.errorNormalizer?.getRecentIncidents(50) ?? [],
     }));
 
+    // GET /api/v1/analysis — the market-intelligence layer's full
+    // MarketAnalysis per symbol (regime, per-TF narrative, bias, key levels,
+    // thesis, ranked scenarios, execution state, risk envelope). Read-only;
+    // empty when the autonomous agent (or the layer) isn't wired.
+    this.app.get('/api/v1/analysis', async (request) => {
+      const agent = this.options.autonomousAgent;
+      if (!agent) return { enabled: false, analyses: {} };
+      const symbol = (request.query as { symbol?: string }).symbol;
+      const analyses = agent.getAnalyses();
+      if (symbol) {
+        return { enabled: true, analyses: analyses[symbol] ? { [symbol]: analyses[symbol] } : {} };
+      }
+      return { enabled: true, analyses };
+    });
+
     // POST /api/v1/screener/run — full-universe scan, real price/volume
     // data only (see src/screener/), no fundamentals, no LLM. Read-only:
     // does not place orders, does not feed the strategy engine.

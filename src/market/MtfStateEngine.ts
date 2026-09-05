@@ -2,23 +2,55 @@ import type { Candle } from '../strategy/indicators.js';
 import { floorToInterval, type KlineInterval, type KlineStore } from './Klines.js';
 import type { DataHealthState, MarketStateManager } from './MarketState.js';
 
-export type AnalysisTimeframe = '4h' | '1h' | '15m' | '5m';
+/**
+ * Canonical analysis timeframes, ordered high → low.
+ *
+ * The 2h timeframe was added as the dedicated "structural context" layer
+ * between the 4h macro regime and the 1h directional thesis. Role separation
+ * (see TIMEFRAME_ROLES): each timeframe answers a different question instead
+ * of all of them being treated equally, which is what turns a stack of raw
+ * candle series into a hierarchical market narrative.
+ */
+export type AnalysisTimeframe = '4h' | '2h' | '1h' | '15m' | '5m';
 
-export const CANONICAL_TIMEFRAMES: readonly AnalysisTimeframe[] = ['4h', '1h', '15m', '5m'] as const;
+export const CANONICAL_TIMEFRAMES: readonly AnalysisTimeframe[] = ['4h', '2h', '1h', '15m', '5m'] as const;
 
 export const TIMEFRAME_MS: Record<AnalysisTimeframe, number> = {
   '5m': 300_000,
   '15m': 900_000,
   '1h': 3_600_000,
+  '2h': 7_200_000,
   '4h': 14_400_000,
 };
 
 export const MIN_CLOSED_CANDLES: Record<AnalysisTimeframe, number> = {
   '4h': 20,
+  '2h': 30,
   '1h': 30,
   '15m': 50,
   '5m': 50,
 };
+
+/**
+ * Role each canonical timeframe plays in the analysis hierarchy. Consumers
+ * (ThesisEngine, ScenarioEngine, HierarchicalConfluenceScorer, dashboard)
+ * should read a timeframe's contribution THROUGH its role rather than
+ * treating every timeframe as an equal vote.
+ */
+export const TIMEFRAME_ROLES: Record<AnalysisTimeframe, TimeframeRole> = {
+  '4h': 'MACRO_REGIME',
+  '2h': 'STRUCTURAL_CONTEXT',
+  '1h': 'DIRECTIONAL_THESIS',
+  '15m': 'SETUP_FORMATION',
+  '5m': 'EXECUTION_TRIGGER',
+};
+
+export type TimeframeRole =
+  | 'MACRO_REGIME'
+  | 'STRUCTURAL_CONTEXT'
+  | 'DIRECTIONAL_THESIS'
+  | 'SETUP_FORMATION'
+  | 'EXECUTION_TRIGGER';
 
 export type TimeframeSyncStatus = 'SYNCHRONIZED' | 'DEGRADED' | 'STALE' | 'MISSING_DATA' | 'NOT_READY';
 export type OverallSyncStatus = 'SYNCHRONIZED' | 'DEGRADED' | 'STALE' | 'MISSING_DATA' | 'NOT_READY';

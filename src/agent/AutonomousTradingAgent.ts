@@ -19,6 +19,8 @@ import type { CircuitBreaker } from './CircuitBreaker.js';
 import type { ExitManager, ScaleInDecision } from './ExitManager.js';
 import type { RegimeAdaptation, MarketRegime } from '../analysis/MarketRegimeDetector.js';
 import { regimeConfirmationBarsFor } from '../analysis/MarketRegimeDetector.js';
+import type { MarketAnalysisEngine } from '../analysis/MarketAnalysisEngine.js';
+import type { MarketAnalysis } from '../analysis/types.js';
 import type { HealthMonitor } from './HealthMonitor.js';
 import type {
   MarketFactContext,
@@ -131,6 +133,14 @@ export interface AutonomousTradingAgentDeps {
    * count-based maxOpenPositions gate is the only portfolio check.
    */
   correlationGuard?: PortfolioCorrelationGuard;
+  /**
+   * Market-intelligence layer (feature/market-intelligence-layer). When
+   * wired, every cycle computes a full MarketAnalysis per symbol, broadcasts
+   * it to the dashboard, gates entries on the hierarchical thesis, and uses
+   * the qualified-setup pipeline + structural invalidation for trade plans.
+   * Optional so existing constructions (and tests) keep working unchanged.
+   */
+  marketAnalysisEngine?: MarketAnalysisEngine;
 }
 
 /**
@@ -230,8 +240,18 @@ export class AutonomousTradingAgent {
         trackingSetup: null,
         trackingPlan: null,
         regimeObservationCount: 0,
+        lastAnalysis: null,
       });
     }
+  }
+
+  /** Latest MarketAnalysis per symbol (empty when the layer isn't wired). */
+  getAnalyses(): Record<string, MarketAnalysis | null> {
+    const out: Record<string, MarketAnalysis | null> = {};
+    for (const [symbol, state] of this.perSymbol) {
+      out[symbol] = state.lastAnalysis;
+    }
+    return out;
   }
 
   /** Start the polling loop. Idempotent. */
@@ -380,6 +400,24 @@ export class AutonomousTradingAgent {
 
       // 6. Detect regime.
       const regime = this.deps.regimeDetector.detect(symbol, mtf, now);
+
+      // 6.5 Market-intelligence layer — compute the full hierarchical
+      // analysis (context → thesis → scenarios) once per symbol per cycle,
+      // broadcast it for the dashboard, and reuse it for gating below.
+      let analysis: MarketAnalysis | null = null;
+      if (this.deps.marketAnalysisEngine) {
+        try {
+          analysis = this.deps.marketAnalysisEngine.computeAnalysis(symbol, now);
+          symState.lastAnalysis = analysis;
+          this.deps.wsGateway.broadcast('agent.autonomous.analysis', {
+            cycleId,
+            symbol,
+            analysis,
+          });
+        } catch (err) {
+          logger.warn({ err, symbol }, 'MarketAnalysis computation failed — continuing without it');
+        }
+      }
 
       // 7. Track regime change + confirmation.
       if (regime) {
@@ -531,9 +569,15 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 13. Pull setups for this symbol.
-      const setups = this.deps.setupEngine.getSetupsAsOf(symbol, now);
-      const ready = setups.filter((s) => s.status === 'READY');
+      // 13. Pull setups for this symbol. With the intelligence layer wired,
+      // use the QUALIFIED pipeline (hierarchical confluence + thesis gates);
+      // discovery-only otherwise.
+      const setups = this.deps.marketAnalysisEngine
+        ? this.deps.setupEngine.getQualifiedSetupsAsOf(symbol, now)
+        : this.deps.setupEngine.getSetupsAsOf(symbol, now);
+      const ready = setups.filter(
+        (s) => s.status === 'READY' && !s.qualification?.rejected
+      );
       const forming = setups.filter(
         (s) => s.status === 'ACTIVE' && s.state !== 'INVALIDATED' && s.state !== 'EXPIRED'
       );
@@ -555,8 +599,11 @@ export class AutonomousTradingAgent {
         });
       }
 
-      // 14. Pick the highest-confluence READY setup.
-      const best = ready.sort((a, b) => b.confluence.totalScore - a.confluence.totalScore)[0];
+      // 14. Pick the highest-confluence READY setup. The hierarchical
+      // evidence-quality score (when present) ranks above the legacy count.
+      const scoreOf = (s: SetupCandidate): number =>
+        s.hierarchicalConfluence?.totalScore ?? s.confluence.totalScore;
+      const best = ready.sort((a, b) => scoreOf(b) - scoreOf(a))[0];
 
       if (!best) {
         symState.state = 'monitoring';
@@ -573,6 +620,33 @@ export class AutonomousTradingAgent {
         continue;
       }
 
+      // 14.5 Thesis gate — the directional thesis must back the entry. A
+      // READY setup inside a RANGE / TRANSITION / NO_CLEAR_THESIS market is
+      // exactly the "FVG alone became LONG READY" failure the intelligence
+      // layer exists to prevent. Qualification already enforces this for the
+      // qualified pipeline; this gate also covers the discovery-only path.
+      if (analysis) {
+        const thesisBacks =
+          analysis.thesis.type === 'BULLISH_CONTINUATION' ||
+          analysis.thesis.type === 'BULLISH_REVERSAL' ||
+          analysis.thesis.type === 'BEARISH_CONTINUATION' ||
+          analysis.thesis.type === 'BEARISH_REVERSAL';
+        if (!thesisBacks) {
+          symState.state = 'monitoring';
+          decisions.push({
+            symbol,
+            state: 'monitoring',
+            regime: currentRegime,
+            setupState: best.state,
+            setupType: best.setupType,
+            confluenceScore: scoreOf(best),
+            action: 'MONITOR',
+            reason: `Thesis ${analysis.thesis.type} (conf ${(analysis.thesis.confidence * 100).toFixed(0)}%) does not support an entry`,
+          });
+          continue;
+        }
+      }
+
       // 15. Weighted HTF alignment (AUTONOMY_AUDIT Finding 5) — the 4h trend
       // scales the setup's confluence instead of gating it binary-style:
       // aligned gets full weight, RANGE/UNKNOWN context gets htfRangeWeight
@@ -586,7 +660,8 @@ export class AutonomousTradingAgent {
       const htfTrend = best.timeframes.regime4h;
       const isReversal = best.setupType.includes('REVERSAL');
       const alignment = this.alignmentWeightFor(direction, htfTrend, isReversal);
-      const effectiveConfluence = Math.round(best.confluence.totalScore * alignment.weight);
+      const rawScore = scoreOf(best);
+      const effectiveConfluence = Math.round(rawScore * alignment.weight);
 
       if (effectiveConfluence < this.config.minConfluence) {
         symState.state = 'monitoring';
@@ -596,12 +671,12 @@ export class AutonomousTradingAgent {
           regime: currentRegime,
           setupState: best.state,
           setupType: best.setupType,
-          confluenceScore: best.confluence.totalScore,
+          confluenceScore: rawScore,
           action: 'MONITOR',
           reason:
             alignment.weight <= 0
               ? `HTF trend ${htfTrend} misaligns with ${direction} ${best.setupType} (binary gate)`
-              : `HTF alignment ${alignment.label}: confluence ${best.confluence.totalScore} × ${alignment.weight.toFixed(2)} = ${effectiveConfluence} < min ${this.config.minConfluence}`,
+              : `HTF alignment ${alignment.label}: score ${rawScore} × ${alignment.weight.toFixed(2)} = ${effectiveConfluence} < min ${this.config.minConfluence}`,
         });
         continue;
       }
@@ -629,7 +704,11 @@ export class AutonomousTradingAgent {
         continue;
       }
 
-      // 17. Build the trade plan.
+      // 17. Build the trade plan. With the intelligence layer wired, the
+      // setup's STRUCTURAL invalidation (zone edge / sweep extreme) and
+      // scenario targets feed the risk engine — the setup defines the risk,
+      // the risk manager only sizes it (finding: "risk consumes the setup,
+      // it doesn't invent it").
       // SetupDirection includes 'AVOID' but we've already filtered to READY
       // setups with aligned HTF, so direction is guaranteed to be LONG/SHORT.
       if (direction !== 'LONG' && direction !== 'SHORT') {
@@ -640,16 +719,30 @@ export class AutonomousTradingAgent {
           regime: currentRegime,
           setupState: best.state,
           setupType: best.setupType,
-          confluenceScore: best.confluence.totalScore,
+          confluenceScore: scoreOf(best),
           action: 'REJECTED',
           reason: `Setup direction ${direction} is not actionable`,
         });
         continue;
       }
+      const structuralRisk = best.executionPlan?.stopZone
+        ? {
+            stopPrice: best.executionPlan.stopZone.price,
+            stopReason: best.executionPlan.stopZone.reason,
+            entryPrice: best.executionPlan.entryZone
+              ? (best.executionPlan.entryZone.upper + best.executionPlan.entryZone.lower) / 2
+              : undefined,
+            takeProfitPrice: best.executionPlan.targetZones?.length
+              ? best.executionPlan.targetZones[best.executionPlan.targetZones.length - 1]!.price
+              : undefined,
+          }
+        : undefined;
       const plan = this.deps.riskManager.computeTradePlan(
         symbol,
         direction,
-        adaptation
+        adaptation,
+        '1h',
+        structuralRisk
       );
 
       if (!plan) {
@@ -773,7 +866,7 @@ export class AutonomousTradingAgent {
         stopLossPrice: String(plan.stopLossPrice.toFixed(8)),
         takeProfitPrice: String(plan.takeProfitPrice.toFixed(8)),
         ttlMs: this.config.cycleMs * 2,
-        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore}×htfAlign=${alignment.weight.toFixed(2)}→${effectiveConfluence} RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)} regimeBias=${plan.regimeBias.toFixed(2)} | ${adaptation.rationale}`,
+        reasoning: `[AutonomousAgent] ${best.setupType} ${direction} | regime=${currentRegime} conf=${best.confluence.totalScore}/${best.confluence.maxScore}×htfAlign=${alignment.weight.toFixed(2)}→${effectiveConfluence}${best.grade ? ` grade=${best.grade} (hier=${best.hierarchicalConfluence?.totalScore})` : ''}${analysis ? ` thesis=${analysis.thesis.type}@${(analysis.thesis.confidence * 100).toFixed(2)} loc=${analysis.marketState.location}` : ''}${plan.structuralStopUsed ? ` structuralStop=${plan.stopLossPrice.toFixed(4)}` : ''} RR=${plan.rr.toFixed(2)} riskMult=${this.runtimeRiskMultiplier.toFixed(2)} regimeBias=${plan.regimeBias.toFixed(2)} | ${adaptation.rationale}`,
         features: {
           ...this.deps.riskManager.planToFeatures(plan),
           sizePct,
