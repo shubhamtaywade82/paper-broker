@@ -215,6 +215,7 @@ interface StoreState {
   aggressiveMode: boolean;
   liveEvents: LiveEventItem[];
   livePrice: Record<string, number>;
+  livePriceTs: Record<string, number>;
   closedCandle: Record<string, ClosedCandle>;
   tickers: Record<string, TickerData>;
   orderbook: OrderbookDepth | null;
@@ -246,6 +247,7 @@ interface StoreState {
    */
   hydrateLiveEvents: (events: Array<{ type: string; payload: Record<string, unknown>; id: string; timestamp: number }>) => void;
   setLivePrice: (symbol: string, price: number) => void;
+  setLivePricesBulk: (prices: Record<string, number>) => void;
   setClosedCandle: (candle: ClosedCandle) => void;
   setTickers: (tickers: Record<string, TickerData>) => void;
   setOrderbook: (orderbook: OrderbookDepth | null) => void;
@@ -417,6 +419,7 @@ export const useStore = create<StoreState>((set) => ({
   aggressiveMode: getInitialAggressiveMode(),
   liveEvents: [],
   livePrice: {},
+  livePriceTs: {},
   closedCandle: {},
   tickers: {},
   orderbook: null,
@@ -490,7 +493,30 @@ export const useStore = create<StoreState>((set) => ({
       return { liveEvents: [...state.liveEvents, ...fresh].slice(0, 200) };
     }),
   setLivePrice: (symbol, price) =>
-    set((state) => ({ livePrice: { ...state.livePrice, [symbol]: price } })),
+    set((state) => ({
+      livePrice: { ...state.livePrice, [symbol]: price },
+      livePriceTs: { ...state.livePriceTs, [symbol]: Date.now() },
+    })),
+  setLivePricesBulk: (prices) =>
+    set((state) => {
+      const now = Date.now();
+      const updates: Record<string, number> = {};
+      let changed = false;
+
+      for (const sym in prices) {
+        const lastWs = state.livePriceTs[sym] ?? 0;
+        // Avoid overwriting fresher WebSocket ticks with delayed REST poll snapshots
+        if (now - lastWs < 8000) continue;
+
+        const p = prices[sym];
+        if (state.livePrice[sym] !== p) {
+          updates[sym] = p;
+          changed = true;
+        }
+      }
+
+      return changed ? { livePrice: { ...state.livePrice, ...updates } } : state;
+    }),
   setClosedCandle: (candle) =>
     set((state) => ({
       closedCandle: { ...state.closedCandle, [`${candle.symbol}:${candle.interval}`]: candle },

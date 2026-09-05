@@ -178,6 +178,7 @@ export function useTickers() {
     queryFn: async () => {
       const raw = await fetchJson<Array<Record<string, unknown>>>('/api/v1/tickers');
       const tickersMap: Record<string, TickerData> = {};
+      const pricesMap: Record<string, number> = {};
       if (Array.isArray(raw)) {
         for (const item of raw) {
           const sym = String(item.symbol || '');
@@ -194,11 +195,12 @@ export function useTickers() {
             markPrice: item.markPrice ? parseFloat(String(item.markPrice)) : undefined,
           };
           if (p > 0) {
-            useStore.getState().setLivePrice(sym, p);
+            pricesMap[sym] = p;
           }
         }
       }
       setTickers(tickersMap);
+      useStore.getState().setLivePricesBulk(pricesMap);
       return tickersMap;
     },
     refetchInterval: 8000,

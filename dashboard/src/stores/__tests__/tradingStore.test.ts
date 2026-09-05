@@ -188,3 +188,41 @@ describe('Store isolation & TradingStore (God-store regression)', () => {
     expect(formatQty(100, 'DOGEUSDT')).toBe('100');
   });
 });
+
+describe('useStore live price freshness & bulk update', () => {
+  it('should record timestamp when setLivePrice is called', async () => {
+    const { useStore } = await import('../../store/useStore.js');
+    const start = Date.now();
+    useStore.getState().setLivePrice('SOLUSDT', 180.5);
+
+    const state = useStore.getState();
+    expect(state.livePrice['SOLUSDT']).toBe(180.5);
+    expect(state.livePriceTs['SOLUSDT']).toBeGreaterThanOrEqual(start);
+  });
+
+  it('should skip symbols with fresh WS ticks and update non-WS symbols in bulk', async () => {
+    const { useStore } = await import('../../store/useStore.js');
+    useStore.getState().setLivePrice('SOLUSDT', 185.0);
+
+    useStore.getState().setLivePricesBulk({
+      SOLUSDT: 170.0,
+      ADAUSDT: 0.75,
+    });
+
+    const state = useStore.getState();
+    expect(state.livePrice['SOLUSDT']).toBe(185.0);
+    expect(state.livePrice['ADAUSDT']).toBe(0.75);
+  });
+
+  it('should allow REST fallback when WS tick is older than 8s', async () => {
+    const { useStore } = await import('../../store/useStore.js');
+    useStore.setState({
+      livePrice: { BTCUSDT: 60000 },
+      livePriceTs: { BTCUSDT: Date.now() - 9000 },
+    });
+
+    useStore.getState().setLivePricesBulk({ BTCUSDT: 60500 });
+    expect(useStore.getState().livePrice['BTCUSDT']).toBe(60500);
+  });
+});
+
