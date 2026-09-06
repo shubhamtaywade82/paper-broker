@@ -132,6 +132,14 @@ function build1hCandles(): Candle[] {
   return buildSeries('1h', 3_600_000, repeat(FLAT, 80));
 }
 
+// 2h is part of the canonical analysis hierarchy (MtfStateEngine
+// CANONICAL_TIMEFRAMES), so a fully-synchronized MTF state requires a 2h
+// series too — 40 × 7.2M ms = 288,000,000 = the shared asOf, same as the
+// other timeframes.
+function build2hCandles(): Candle[] {
+  return buildSeries('2h', 7_200_000, repeat(FLAT, 40));
+}
+
 function build4hCandles(): Candle[] {
   return buildSeries('4h', 14_400_000, repeat(FLAT, 20));
 }
@@ -180,7 +188,7 @@ function makeApprovingAgentPipeline(direction: 'LONG' | 'SHORT'): AgentDebatePip
 
 function buildPipeline() {
   const klines = new KlineStore(1000);
-  for (const c of [...build4hCandles(), ...build1hCandles(), ...build15mCandles(), ...build5mCandles()]) {
+  for (const c of [...build4hCandles(), ...build2hCandles(), ...build1hCandles(), ...build15mCandles(), ...build5mCandles()]) {
     klines.upsertCandle(c);
   }
   const marketState = new MarketStateManager([FAKE_INSTRUMENT]);

@@ -20,6 +20,7 @@ export type WebSocketEventType =
   | 'agent.autonomous.cycle'
   | 'agent.autonomous.forming'
   | 'agent.autonomous.regime'
+  | 'agent.autonomous.analysis'
   | 'agent.autonomous.signal'
   | 'agent.autonomous.rejected'
   | 'agent.autonomous.circuit_breaker'

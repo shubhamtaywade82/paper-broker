@@ -20,6 +20,14 @@ import { MtfStateEngine } from './market/MtfStateEngine.js';
 import { MarketStructureEngine } from './market/structure/MarketStructureEngine.js';
 import { SmcLocationEngine } from './market/smc/SmcLocationEngine.js';
 import { SetupEngine } from './market/setup/SetupEngine.js';
+import { LiquidityMapEngine } from './market/liquidity/LiquidityMapEngine.js';
+import { ZoneAggregationEngine } from './analysis/ZoneAggregationEngine.js';
+import { MarketLocationEngine } from './analysis/MarketLocationEngine.js';
+import { MarketContextEngine } from './analysis/MarketContextEngine.js';
+import { ThesisEngine } from './analysis/ThesisEngine.js';
+import { ScenarioEngine } from './analysis/ScenarioEngine.js';
+import { HierarchicalConfluenceScorer } from './analysis/HierarchicalConfluenceScorer.js';
+import { MarketAnalysisEngine } from './analysis/MarketAnalysisEngine.js';
 import { ExecutionPlanEngine } from './market/execution/ExecutionPlanEngine.js';
 import { TradeIntentEngine } from './trading/TradeIntentEngine.js';
 import { ExecutionRouter } from './execution/ExecutionRouter.js';
@@ -673,6 +681,43 @@ export async function startEngine(): Promise<EngineHandle> {
     env.AUTONOMOUS_REGIME_CONFIRMATION_BARS
   );
 
+  // --- Market-intelligence layer (feature/market-intelligence-layer) ------
+  // Deterministic understanding stack: liquidity map + zone aggregation +
+  // location feed the Market Context Engine, which the Thesis / Scenario /
+  // hierarchical-confluence engines reason over. The SetupEngine gets the
+  // two-stage qualification pipeline and the agent gets the MarketAnalysis
+  // object (thesis gating + structural invalidation + dashboard narrative).
+  const liquidityMapEngine = new LiquidityMapEngine();
+  const zoneAggregationEngine = new ZoneAggregationEngine();
+  const locationEngine = new MarketLocationEngine();
+  const marketContextEngine = new MarketContextEngine({
+    mtfEngine,
+    structureEngine,
+    smcEngine,
+    liquidityMapEngine,
+    zoneAggregationEngine,
+    locationEngine,
+    regimeDetector,
+  });
+  const thesisEngine = new ThesisEngine();
+  const scenarioEngine = new ScenarioEngine();
+  const hierarchicalConfluenceScorer = new HierarchicalConfluenceScorer();
+  setupEngine.setIntelligence({
+    contextEngine: marketContextEngine,
+    thesisEngine,
+    scenarioEngine,
+    confluenceScorer: hierarchicalConfluenceScorer,
+    minHierarchicalScore: env.AUTONOMOUS_MIN_CONFLUENCE,
+  });
+  const marketAnalysisEngine = new MarketAnalysisEngine({
+    contextEngine: marketContextEngine,
+    thesisEngine,
+    scenarioEngine,
+    setupEngine,
+    baseRiskPerTradePct: DEFAULT_RISK_CONFIG.riskPerTradePct,
+  });
+  logger.info('Market-intelligence layer wired: context → thesis → scenarios → qualified setups');
+
   // Wire the regime lookup outer ref so the broker.onFill closure can label
   // each closing trade with the regime in force at close time. Cheap call
   // (regimeDetector caches recent computations) and returns undefined when
@@ -693,7 +738,7 @@ export async function startEngine(): Promise<EngineHandle> {
     const healthMonitor = new HealthMonitor(
       {
         symbols,
-        timeframes: ['4h', '1h', '15m', '5m'],
+        timeframes: ['4h', '2h', '1h', '15m', '5m'],
         staleMs: env.AUTONOMOUS_HEALTH_STALE_MS,
         modelProbeIntervalMs: env.AUTONOMOUS_HEALTH_MODEL_PROBE_INTERVAL_MS,
       },
@@ -850,6 +895,8 @@ export async function startEngine(): Promise<EngineHandle> {
         getMarketState: (symbol) => marketState.getState(symbol),
         // Finding 8: correlation-aware portfolio cap.
         correlationGuard,
+        // Market-intelligence layer: thesis gating + analysis broadcasts.
+        marketAnalysisEngine,
       }
     );
     logger.info(

@@ -64,6 +64,10 @@ export interface TradePlan {
   entryPrice: number;
   /** Direction the plan is built for — used by callers to sanity-check. */
   direction: 'LONG' | 'SHORT';
+  /** True when the stop came from setup structure instead of ATR. */
+  structuralStopUsed: boolean;
+  /** Reason string for the structural stop (when used). */
+  stopReason?: string;
 }
 
 /**
@@ -76,6 +80,24 @@ export interface RegimePerformanceStats {
   trades: number;
   /** 0..1 share of winners. */
   winRate: number;
+}
+
+/**
+ * Structural context a setup hands to the risk engine. When present, the
+ * risk manager uses the SETUP's invalidation/entry/targets instead of
+ * inventing ATR-derived ones — "Setup → Entry → Structural invalidation →
+ * Risk engine → position size". The regime overlay still governs sizing,
+ * cost gates and leverage; it just no longer overrides the structure.
+ */
+export interface StructuralRiskContext {
+  /** Setup-defined entry (e.g. zone midpoint). Defaults to last price. */
+  entryPrice?: number;
+  /** Structural invalidation (zone low/high, sweep extreme). */
+  stopPrice?: number;
+  /** Structural target (final liquidity draw). */
+  takeProfitPrice?: number;
+  /** Why this stop — surfaced in the plan for the dashboard/LLM. */
+  stopReason?: string;
 }
 
 export interface AdaptiveRiskManagerDeps {
@@ -125,7 +147,8 @@ export class AdaptiveRiskManager {
     symbol: string,
     direction: 'LONG' | 'SHORT',
     adaptation: RegimeAdaptation,
-    timeframe: string = '1h'
+    timeframe: string = '1h',
+    structural?: StructuralRiskContext
   ): TradePlan | null {
     const candles = this.deps.getCandles(symbol, timeframe, 50);
     if (candles.length < 15) return null;
@@ -139,11 +162,39 @@ export class AdaptiveRiskManager {
     // false), handing the agent a plan with NaN stop and target.
     const rawAtr = atrRes[lastIdx];
     const atrVal = Number.isFinite(rawAtr) && rawAtr! > 0 ? rawAtr! : closes[lastIdx]! * 0.01;
-    const entry = this.deps.getLastPrice(symbol) ?? closes[lastIdx]!;
+    const entry = structural?.entryPrice ?? this.deps.getLastPrice(symbol) ?? closes[lastIdx]!;
     if (!Number.isFinite(entry) || entry <= 0) return null;
 
-    const stopDistance = atrVal * adaptation.stopAtrMultiplier;
-    const targetDistance = atrVal * adaptation.targetAtrMultiplier;
+    // Structural stop wins when the setup provides one; ATR stays as the
+    // fallback and for the minimum-distance sanity floor.
+    const atrStopDistance = atrVal * adaptation.stopAtrMultiplier;
+    let stopDistance: number;
+    let structuralStopUsed = false;
+    if (structural?.stopPrice && Number.isFinite(structural.stopPrice) && structural.stopPrice > 0) {
+      const structuralDistance = Math.abs(entry - structural.stopPrice);
+      // Reject degenerate structural stops (too tight to survive noise, or
+      // on the wrong side entirely).
+      const wrongSide =
+        direction === 'LONG' ? structural.stopPrice >= entry : structural.stopPrice <= entry;
+      if (!wrongSide && structuralDistance >= atrVal * 0.25) {
+        stopDistance = structuralDistance;
+        structuralStopUsed = true;
+      } else {
+        stopDistance = atrStopDistance;
+      }
+    } else {
+      stopDistance = atrStopDistance;
+    }
+
+    let targetDistance: number;
+    if (structural?.takeProfitPrice && Number.isFinite(structural.takeProfitPrice) && structural.takeProfitPrice > 0) {
+      const structuralTarget = Math.abs(structural.takeProfitPrice - entry);
+      const structuralTargetValid =
+        direction === 'LONG' ? structural.takeProfitPrice > entry : structural.takeProfitPrice < entry;
+      targetDistance = structuralTargetValid && structuralTarget > 0 ? structuralTarget : atrVal * adaptation.targetAtrMultiplier;
+    } else {
+      targetDistance = atrVal * adaptation.targetAtrMultiplier;
+    }
 
     const stopLossPrice =
       direction === 'LONG' ? entry - stopDistance : entry + stopDistance;
@@ -202,6 +253,8 @@ export class AdaptiveRiskManager {
       atr: atrVal,
       entryPrice: entry,
       direction,
+      structuralStopUsed,
+      stopReason: structuralStopUsed ? structural?.stopReason : undefined,
     };
   }
 

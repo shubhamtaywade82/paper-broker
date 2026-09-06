@@ -36,7 +36,7 @@ export interface HealthMonitorConfig {
   /** Symbols to probe each cycle. */
   symbols: string[];
   /** Timeframes to check for kline staleness. */
-  timeframes: Array<'4h' | '1h' | '15m' | '5m'>;
+  timeframes: Array<'4h' | '2h' | '1h' | '15m' | '5m'>;
 }
 
 export interface HealthMonitorDeps {

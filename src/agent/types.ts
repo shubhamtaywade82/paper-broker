@@ -1,6 +1,7 @@
 import type { RegimeSnapshot } from '../analysis/MarketRegimeDetector.js';
 import type { TradePlan } from '../risk/AdaptiveRiskManager.js';
 import type { SetupCandidate } from '../market/setup/types.js';
+import type { MarketAnalysis } from '../analysis/types.js';
 import type { ExitDecision } from './ExitManager.js';
 import type { HealthState } from './HealthMonitor.js';
 
@@ -30,6 +31,8 @@ export interface PerSymbolState {
   trackingPlan: TradePlan | null;
   /** Consecutive regime observations — used for confirmation gating. */
   regimeObservationCount: number;
+  /** Latest MarketAnalysis for this symbol (null when the layer is off). */
+  lastAnalysis: MarketAnalysis | null;
 }
 
 export interface AutonomousCycleSummary {

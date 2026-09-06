@@ -72,6 +72,11 @@ export function setupWsRouting(): () => void {
       case 'agent.autonomous.regime':
         useAutonomousStore.getState().pushRegime(m.payload);
         break;
+      case 'agent.autonomous.analysis':
+        // Market-intelligence layer: full per-symbol MarketAnalysis (thesis,
+        // scenarios, key levels). Kept per-symbol for the analysis panel.
+        useAutonomousStore.getState().pushAnalysis(m.payload);
+        break;
       case 'agent.autonomous.signal':
         useAutonomousStore.getState().pushSignal(m.payload);
         break;

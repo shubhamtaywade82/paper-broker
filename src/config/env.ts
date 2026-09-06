@@ -412,7 +412,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
 
   SYMBOLS: z.string().default('SOLUSDT,BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT'),
-  TIMEFRAMES: z.string().default('1m,5m,15m,1h,4h,1d'),
+  // '2h' is part of the canonical analysis hierarchy (see MtfStateEngine.TIMEFRAME_ROLES)
+  TIMEFRAMES: z.string().default('1m,5m,15m,1h,2h,4h,1d'),
 
   EMA_FAST_PERIOD: z.coerce.number().int().positive().default(9),
   EMA_SLOW_PERIOD: z.coerce.number().int().positive().default(21),
